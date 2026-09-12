@@ -39,4 +39,3 @@ worker/**/__pycache__/
 # Editor
 .vscode/*
 !.vscode/extensions.json
-apps/mobile/CLAUDE.md
