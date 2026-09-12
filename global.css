@@ -1,0 +1,61 @@
+/**
+ * MomentLens — global.css
+ * Lives in apps/mobile/, imported once in app/_layout.tsx (`import "../global.css"`)
+ * and wired into Metro via `withNativeWind(config, { input: "./global.css" })`.
+ *
+ * Values are space-separated RGB triples (not hex) so tailwind.config.js can
+ * apply Tailwind's opacity modifier, e.g. `bg-accent/20`. Do not change the
+ * format to hex or `rgb(a, b, c)` — that breaks the <alpha-value> substitution.
+ *
+ * These are the ONLY two places a color hex code should ever appear in the
+ * codebase. Everywhere else, use the Tailwind token (`bg-background`,
+ * `text-accentText`, ...).
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-background: 250 246 239;     /* #FAF6EF */
+  --color-surface: 255 255 255;        /* #FFFFFF */
+  --color-surfaceMuted: 241 235 224;   /* #F1EBE0 */
+
+  --color-textPrimary: 30 27 23;       /* #1E1B17 */
+  --color-textSecondary: 92 86 76;     /* #5C564C */
+  --color-textMuted: 143 136 123;      /* #8F887B */
+
+  --color-border: 231 224 211;         /* #E7E0D3 */
+  --color-borderStrong: 214 204 185;   /* #D6CCB9 */
+
+  --color-accent: 200 155 60;          /* #C89B3C */
+  --color-accentPressed: 173 131 48;   /* #AD8330 */
+  --color-accentTint: 243 228 192;     /* #F3E4C0 */
+  --color-accentText: 156 117 38;      /* #9C7526 */
+
+  --color-danger: 179 67 47;           /* #B3432F */
+  --color-dangerTint: 246 222 214;     /* #F6DED6 */
+  --color-success: 76 122 85;          /* #4C7A55 */
+}
+
+.dark:root {
+  --color-background: 23 20 15;        /* #17140F */
+  --color-surface: 33 29 22;           /* #211D16 */
+  --color-surfaceMuted: 43 38 28;      /* #2B261C */
+
+  --color-textPrimary: 244 239 229;    /* #F4EFE5 */
+  --color-textSecondary: 185 175 159;  /* #B9AF9F */
+  --color-textMuted: 134 125 110;      /* #867D6E */
+
+  --color-border: 51 44 34;            /* #332C22 */
+  --color-borderStrong: 71 60 44;      /* #473C2C */
+
+  --color-accent: 214 172 82;          /* #D6AC52 */
+  --color-accentPressed: 200 155 60;   /* #C89B3C */
+  --color-accentTint: 58 48 30;        /* #3A301E */
+  --color-accentText: 214 172 82;      /* #D6AC52 */
+
+  --color-danger: 221 99 73;           /* #DD6349 */
+  --color-dangerTint: 59 36 29;        /* #3B241D */
+  --color-success: 116 168 127;        /* #74A87F */
+}

@@ -1,0 +1,42 @@
+# Node
+node_modules/
+.pnpm-store/
+
+# Expo / React Native
+.expo/
+dist/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Native (regenerated via expo prebuild — don't hand-edit these)
+apps/mobile/ios/
+apps/mobile/android/
+
+# API / build output
+apps/api/dist/
+
+# Python / worker
+worker/.venv/
+worker/**/__pycache__/
+*.pyc
+
+# Env & secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Editor
+.vscode/*
+!.vscode/extensions.json
+apps/mobile/CLAUDE.md
