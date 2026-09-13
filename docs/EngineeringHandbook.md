@@ -1,6 +1,6 @@
 # MomentLens engineering handbook — v4
 > How to actually build it: stack, architecture, environment, workflow, and sequencing.
-> Companion to `Idea_V11.md` and `Decision_Log_V3.md`.
+> Companion to `Idea.md` (the spec), `DecisionLog.md` and `WorkSlices.md`.
 
 ## 0. How to use this document
 
@@ -16,7 +16,7 @@ One framing before anything else. Everything here assumes v11's scope. If buildi
 
 | Layer | Choice | Why |
 |---|---|---|
-| Mobile client | React Native (Expo SDK 56+, RN 0.85+), TypeScript | The team knows JS/TS/React, and React skills transfer to the Pakistani job market better than Flutter. Expo Custom Dev Client gives full native module access without leaving the managed workflow. |
+| Mobile client | React Native (Expo SDK 57, RN 0.86), TypeScript | The team knows JS/TS/React, and React skills transfer to the Pakistani job market better than Flutter. Expo Custom Dev Client gives full native module access without leaving the managed workflow. |
 | Navigation | Expo Router | File-based, matches how the spec already organizes screens as routes. |
 | Client UI state | Zustand | Tiny, no boilerplate. |
 | Server state | TanStack Query | Owns everything that comes from the API: fetching, caching, retries, pagination, background refetch. Do not duplicate this in Zustand. |
@@ -90,13 +90,15 @@ momentlens/
 ├── apps/
 │   ├── mobile/              # Expo app
 │   │   ├── CLAUDE.md
-│   │   ├── app/              # Expo Router screens
-│   │   ├── components/
-│   │   ├── stores/           # Zustand
-│   │   ├── hooks/            # TanStack Query hooks
-│   │   ├── lib/              # API client, SQLite queue, storage helpers
-│   │   ├── constants/        # NativeWind tokens, hard-coded limits (spec §4.17)
+│   │   ├── src/
+│   │   │   ├── app/          # Expo Router screens
+│   │   │   ├── components/
+│   │   │   ├── stores/       # Zustand
+│   │   │   ├── hooks/        # TanStack Query hooks
+│   │   │   ├── lib/          # API client, SQLite queue, storage helpers
+│   │   │   └── constants/    # hard-coded limits (spec §4.17)
 │   │   ├── __tests__/
+│   │   ├── tailwind.config.js, global.css   # the only two files with hex colors (§15)
 │   │   └── app.json / eas.json
 │   │
 │   └── api/                  # Express API
@@ -117,7 +119,7 @@ momentlens/
 │   ├── CLAUDE.md
 │   ├── app/
 │   │   ├── jobs/
-│   │   │   ├── thumbnail_dims.py # Phase 5 warm-up: dims, thumb, version, processed_at
+│   │   │   ├── thumbnail_dims.py # Phase 3 warm-up (D-72): dims, thumb, version, processed_at
 │   │   │   ├── face_process.py   # detect, embed, write public + subject variants
 │   │   │   └── reprocess.py      # retroactive blur; match only, never re-detect
 │   │   ├── ai/
@@ -141,10 +143,11 @@ momentlens/
 │   ├── deploy.sh              # the §13 update sequence, written down once
 │   └── provision.sh           # the §13 setup sequence, for the Azure standby
 ├── docs/
-│   ├── ARCHITECTURE.md        # see §18 — this file is load-bearing
-│   ├── Idea_V11.md            # the spec
-│   ├── Engineering_Handbook_V4.md
-│   └── Decision_Log.md
+│   ├── ARCHITECTURE.md        # see §18. This file is load-bearing
+│   ├── Idea.md                # the spec
+│   ├── EngineeringHandbook.md
+│   ├── DecisionLog.md
+│   └── WorkSlices.md
 ├── .env.example               # every variable, no values. Committed.
 ├── pnpm-workspace.yaml
 └── package.json
@@ -159,6 +162,8 @@ momentlens/
 **⚠ One structural decision to make before the first migration: who owns the R2 object key format.** The key carries a version (`{media_id}/public_v{n}.jpg`, D-60), and both the worker (writing files) and the API (signing URLs) need it. If each constructs the string in its own language, they will drift, and a drift there means a 404 at best and the wrong file at worst.
 
 **Do not construct the key in two places.** The worker writes `public_key` and the per-subject keys onto the media row as it uploads them. The API reads the column and presigns it. It never builds a key. This is one column against a whole class of cross-language bug, and it also means the version-bump logic lives in exactly one file.
+
+**Settled by D-70.** The API still has to name an upload key before the worker has seen the photo, so the rule is one builder per key family. The API builds the upload keys, the original and the client thumbnail, in one function. The worker builds every derived key. Each writes its keys onto the row, and whatever serves a file reads the column.
 
 There is **no `dedup.py`**. Deduplication is a SHA-256 lookup in Express and is not a worker job (§7).
 
@@ -198,6 +203,7 @@ There is **no `variant.py`** either. D-58 removed the client resize, so there is
 | `expo-image-picker` | "+ Add Media" per sub-event section. Not in the Viewfinder. |
 | `expo-image` | Cached, performant image rendering |
 | `expo-image-manipulator` | HEIC to JPEG, EXIF handling, the 300px thumbnail, and the 4096px guard resize that only fires on non-phone files. Native, off the JS thread. |
+| `expo-crypto` | SHA-256 over the upload bytes with `digest()`. Node's `crypto` does not exist in React Native. |
 | `expo-location` | Foreground GPS reads only. No background location APIs. |
 | `expo-file-system` | Local Only storage in the app sandbox (spec §4.12) |
 | `expo-sqlite` | Upload queue, offline QR scan records |
@@ -215,6 +221,8 @@ There is **no `variant.py`** either. D-58 removed the client resize, so there is
 
 **Row Level Security. Do this, it is not optional.** RLS policies are rules the database itself enforces regardless of which query arrives. If you only enforce permissions in Express, one buggy code path (or you in six months adding an endpoint and forgetting the check) leaks data. Given this app's core premise involves people's photos and face embeddings, that is not a corner worth cutting.
 
+**RLS only protects the API if the API's queries go through it** (D-71). The auth middleware builds a Supabase client from the caller's JWT for each request, so every API query runs under RLS as that user. The secret key bypasses RLS. The worker uses it, and so does one clearly named module in `apps/api/src/db/`, for the few operations that run before the caller has a membership row, such as resolving an invite token.
+
 **The good news: v10 made your RLS much smaller.** Because Photographer uploads now land in the shared album, there is no per-role media visibility rule. Write policies for:
 
 - **`media`**: `SELECT` allowed to any member of the event, with one exception. A Photographer can `SELECT` only rows where they are the uploader (spec §4.10). `UPDATE`/`DELETE` allowed to the uploader and to the Admin of that event.
@@ -224,7 +232,7 @@ There is **no `variant.py`** either. D-58 removed the client resize, so there is
 - **`face_reference`** (a user's reference embeddings): readable only by that user and by the worker's service role. Never exposed through any user-facing endpoint.
 - **There is no `dnp_crop` table.** v3 named its RLS policy as the single most sensitive rule in the system. D-57 deleted the table, and with it that policy. The danger did not disappear; it moved somewhere easier to reason about and easier to test, which was most of the point.
 - **The image-serving endpoint is now the most sensitive authorization check in the system**, and it is application logic rather than RLS. One endpoint answers "which file does this requester get for this photo." It checks whether the requesting user is a Do Not Publish subject on that media row, then presigns the corresponding key: the subject's own variant if so, the public file otherwise. Get this wrong and a subject's unblurred variant reaches somebody else, which is the exact thing the app promises not to do. Write the negative test before the endpoint (§11).
-- **`dnp_subject`** (which users are Do Not Publish subjects on which media row): readable by any event member, because the client needs to know a photo has personalization without learning who the subject is. Return the row without the subject identity unless the requester is that subject.
+- **`dnp_subject`** (which users are Do Not Publish subjects on which media row): readable by any event member, because the client needs to know a photo has personalization without learning who the subject is. Return the row without the subject identity unless the requester is that subject. RLS filters rows, not columns, and Realtime sends whole rows; read `docs/ARCHITECTURE.md` §1 before writing this policy.
 - **`subject`** (the person a blur applies to, with a **nullable** foreign key to the auth user). Create it with the nullable FK from the first migration even though Proxy Blur is deferred (D-63). Adding it now is a column definition; adding it later against live rows is a migration.
 - **The Recognized Faces read is viewer-scoped, not a stored exclusion.** Spec §4.11 hides a Do Not Publish user's face from every viewer except that user. Implement it as a predicate parameterized by the requesting user, never by omitting the row at write time. Getting this wrong does not throw an error; it silently returns nothing for Find My Photos for exactly the users the feature exists for.
 
@@ -246,8 +254,9 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 | Job | Trigger | Work |
 |---|---|---|
-| `face_process` | Any upload completes | Detect faces once, extract an embedding per face, match against event members' Do Not Publish reference sets, write the public blurred file plus one variant per matched subject, write `width`/`height`, then set `processed_at` |
-| `reprocess` | A user activates Do Not Publish, or a manual blur correction is confirmed or reverted | **Match only, never detect.** Compare the already-stored embeddings for that event against the newly-active reference set, then regenerate the public file and write the new per-subject variant for matched photos only, bumping `variant_version` |
+| `thumbnail_dims` | Any upload completes, from Phase 3 until S-21 retires it (D-72) | No ML. Write `width`/`height`, the thumbnail only if the client's is missing, bump `variant_version`, then set `processed_at`. Never runs on the same upload as `face_process` |
+| `face_process` | Any upload completes | Detect faces once, extract an embedding per face, match against event members' Do Not Publish reference sets, write the public blurred file plus one variant per matched subject and a blurred thumbnail for each (D-69), write `width`/`height`, then set `processed_at` |
+| `reprocess` | A user activates Do Not Publish, or a manual blur correction is confirmed or reverted | **Match only, never detect.** Compare the already-stored embeddings for that event against the newly-active reference set, then regenerate the public file, the new per-subject variant and the thumbnails of both for matched photos only, bumping `variant_version` |
 
 **Three rules inside `face_process` that are easy to get subtly wrong:**
 
@@ -269,9 +278,9 @@ Worth its own section because getting this wrong is the easiest way to make a fr
 
 **Do not route media bytes through Express.** If every photo flows through Node, you pay for that bandwidth and CPU twice, once receiving and once forwarding, on a box you are specifically keeping light. Instead:
 
-1. **Pre-flight** (small JSON, this *does* go through Express): content hash, album ID, sub-event ID, thumbnail, and the GPS reading taken at capture time. Express does two lookups. First, a SHA-256 match against existing media for this event; an exact match is silently rejected with no file transfer. Second, the verification check: a `VenueVerification` row for this user and sub-event, **or** `membership.admin_verified_at IS NOT NULL`, **or** `role = 'photographer'`. Both are single indexed lookups. Neither risks blocking the event loop.
-2. **Presigned URL.** If it passes, Express asks R2 for a presigned upload URL via `@aws-sdk/client-s3` (R2 is S3-API-compatible; this is standard SDK functionality) and returns it.
-3. **Direct upload.** The client PUTs the file straight to R2. Express is not in this path.
+1. **Pre-flight** (small JSON, this *does* go through Express): content hash, album ID, sub-event ID, and the GPS reading taken at capture time. No image bytes, the thumbnail included (D-69). Express does two lookups. First, a SHA-256 match against existing media for this event; an exact match is silently rejected with no file transfer. Second, the verification check: a `VenueVerification` row for this user and sub-event, **or** `membership.admin_verified_at IS NOT NULL`, **or** `role = 'photographer'`. Both are single indexed lookups. Neither risks blocking the event loop.
+2. **Presigned URLs.** If it passes, Express builds the upload keys for the photo and its thumbnail in its one key function, writes them onto the new media row (D-70), and presigns a PUT URL for each via `@aws-sdk/client-s3` (R2 is S3-API-compatible; this is standard SDK functionality).
+3. **Direct upload.** The client PUTs the photo and its thumbnail straight to R2. Express is not in this path.
 4. **Completion.** The client tells Express "done," and Express enqueues the `pgmq` job.
 
 **One client pipeline for every role.** v3 had two, split on the resize. D-58 removed the resize, so the only thing left that differs by role is the location gate, and that is a server-side check in pre-flight rather than a client behaviour.
@@ -281,7 +290,7 @@ Worth its own section because getting this wrong is the easiest way to make a fr
 | EXIF strip | Yes. Timestamp and orientation survive; everything else, including GPS, is stripped. |
 | HEIC to JPEG | Yes |
 | Client resize | **None**, unless the longest edge exceeds 4096px, in which case resize to 4096px. Never fires on a phone photo. |
-| Thumbnail | 300px WebP, for the grid |
+| Thumbnail | 300px WebP, for the grid. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face (D-69) |
 | Hash | SHA-256 over the **exact byte stream about to be uploaded**, after EXIF strip and HEIC conversion |
 | Location gate | Server-side in pre-flight. Photographers pass automatically. |
 
@@ -296,8 +305,8 @@ There is no role branch left to unit-test here. There is still a branch in the p
 ## 8. Development environment — macOS (Ukasha, M1)
 
 1. **Homebrew**, if not already installed.
-2. **Node via a version manager**, not a system install. `fnm` or `nvm`, current LTS. RN 0.85 requires Node 20.19.4 or newer.
-3. **pnpm**: `corepack enable`, then `corepack prepare pnpm@latest --activate`.
+2. **Node via a version manager**, not a system install. `fnm install && fnm use` reads the pinned version from `.nvmrc`.
+3. **pnpm**: the exact version pinned in `package.json` under `packageManager`. `corepack enable` picks it up, or run `npm install -g pnpm@<that version>`.
 4. **Watchman**: `brew install watchman`. Metro's file watcher; noticeably more reliable on macOS.
 5. **Xcode** from the App Store, for the iOS Simulator and local iOS builds. Unavoidably macOS-only.
 6. **Xcode Command Line Tools**: `xcode-select --install`.
@@ -306,6 +315,7 @@ There is no role branch left to unit-test here. There is still a branch in the p
 9. **Python 3.12+**: `brew install python@3.12`, then a venv per the worker's `requirements.txt`.
 10. **EAS CLI**: `npm install -g eas-cli`, then `eas login`.
 11. **VS Code** with ESLint, Prettier, Tailwind CSS IntelliSense, Python, and Expo Tools.
+12. **Check the machine** with `pnpm check:machine` (not `pnpm doctor`, which is pnpm's own command). It compares Node, pnpm, Python, Java, the Android SDK and Xcode against the repo pins.
 
 **One advantage worth exploiting.** Your M1 is ARM64 and so is the Oracle instance. Your local worker environment and production share an architecture, which eliminates a whole class of "works locally, segfaults on the server" bug for the Python side. Make yourself the primary owner of the AI worker for that reason alone.
 
@@ -356,14 +366,14 @@ Everything else (screens, components, styling, business logic, API calls, state)
 
 **Testing, proportionate to your timeline:**
 
-- **Unit tests, most of your test effort.** Pure logic, no UI, no network: Haversine distance for GPS verification, hard-coded limit checks, the pre-flight verification branch (§7), sub-event status computation from timestamps (spec §4.3, and this one has real edge cases because In Progress depends on the *next* sub-event's start). Jest with `jest-expo` for the app and API; `pytest` for the worker.
+- **Unit tests, most of your test effort.** Pure logic, no UI, no network: Haversine distance for GPS verification, hard-coded limit checks, the pre-flight verification branch (§7), sub-event status computation from timestamps (spec §4.3, and this one has real edge cases because In Progress depends on the *next* sub-event's start). Jest with the `jest-expo` preset for the app and plain Jest for the API, since `jest-expo` is an Expo preset with no place on an Express server; `pytest` for the worker.
   - There is no pHash Hamming distance test any more. Deduplication is a hash equality check.
   - There is no client-pipeline role branch to test any more either (D-58).
 - **Integration tests, some, and one of them is the most valuable test in the project.**
 
   **Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, and that a direct request for B's variant key returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
 
-  Then: does RLS actually block a Photographer from reading another user's media, and does RLS actually block one user from reading another user's `face_reference` rows.
+  Then: does RLS actually block a Photographer from reading another user's media, and does RLS actually block one user from reading another user's `face_reference` rows. Run each RLS test twice, once through the API and once directly against Supabase with the user's JWT. D-71 puts API queries under RLS, so a route that picks up the secret-key client passes the direct test and still leaks.
 
   Also worth an integration test, because it fails silently in the other direction: does the album query exclude rows with `processed_at` null (D-55), and does a Do Not Publish user's Find My Photos return their own photos (spec §4.11, the viewer-scoped filter).
 - **E2E tests, few, and only for flows that would be genuinely bad to break.** Maestro against a handful of critical paths: sign up, join event, capture, see it in the album. Verify a Do Not Publish face is blurred for a second viewer. Verify photos sit in the local queue when location permission is denied and only upload after a QR scan. Do not try to E2E everything.
@@ -391,7 +401,7 @@ main ← always deployable
 
 **Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. Not to gatekeep. To keep any area from becoming a black box.
 
-**Conventional commits** (`feat:`, `fix:`, `chore:`). Makes `git log` useful when you are trying to remember why something changed three weeks ago.
+**Conventional commits** (`feat:`, `fix:`, `chore:`). Makes `git log` useful when you are trying to remember why something changed three weeks ago. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits.
 
 **Issue tracking:** GitHub Projects, a simple Kanban board mapped to the phases in §14. Do not reach for Jira.
 
@@ -406,7 +416,7 @@ main ← always deployable
 **EAS Build profiles** in `eas.json`:
 - `development`: includes the dev client, for §10's iteration loop.
 - `preview`: internal distribution, for "here, try this build" moments without the dev client attached.
-- `production`: what you demo from at your defense, and what would go to stores if you get that far.
+- `production`: what you demo from at your defense. It builds an APK with internal distribution, because the demo phones get the app by sideload (D-61) and Android's store format, an app bundle, cannot be sideloaded.
 
 ### Backend: two environments, and both have to exist
 
@@ -535,7 +545,7 @@ Put that in `scripts/deploy.sh` on day one so nobody is typing it from memory th
 
 **Logs**: `journalctl -u momentlens-worker -f`. Learn this command in week one. It is where every mysterious failure will be explained.
 
-**Secrets**: EAS Secrets for anything the mobile build needs. A `.env` on the instance, owned by the `momentlens` user with `chmod 600`, referenced by both systemd units via `EnvironmentFile`. Never commit either.
+**Secrets**: EAS environment variables, which replaced EAS Secrets, one set per build profile. Only `EXPO_PUBLIC_` values reach the app and anyone holding the APK can read them, so no secret belongs in a mobile build at all. A `.env` on the instance, owned by the `momentlens` user with `chmod 600`, referenced by both systemd units via `EnvironmentFile`. Never commit either.
 
 **Supabase environments**: exactly two projects, which is the free-tier limit. A **dev** project (your daily database, fine to break) and a **stable** project (what the demo points at, treated carefully). Do not develop against the project you will demo from.
 
@@ -572,16 +582,20 @@ Auth (sign up, log in via Supabase Auth), create an event with bare-minimum fiel
 The informational schedule with the §4.3 status computation, both role-specific invite links, attendee management, Force Verify. Still mostly CRUD, and that is the point: this is where you get comfortable with RLS and permission patterns before the hard parts arrive.
 
 **Phase 3 — capture & upload**
-The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the full pipeline including the role branch, SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with the verification check temporarily disabled in the pre-flight endpoint**, so every upload goes through. Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
+The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with the verification check temporarily disabled in the pre-flight endpoint**, so every upload goes through. Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
+
+**The worker skeleton and the `thumbnail_dims` job land in this phase too** (D-72, slice S-18a), right after the upload endpoints. The album filters on `processed_at` and only the worker sets it. Without them the album built here shows nothing until Phase 5, and the tempting stopgap is setting `processed_at` in Express.
 
 **Phase 4 — location verification gating**
 Add the on-device GPS check, the server-side re-validation, the queue gate, the per-sub-event Venue QR with offline scan recording, and the Force Verify override. Because the gate is on the person and not the photo, you avoid complex per-photo retry logic. If the user is not verified, the queue simply waits.
 
 **Phase 5 — the AI worker and face blur**
 
-**The warm-up job changed, because D-58 deleted the old one.** v3 started this phase with the `variant` job, which no longer exists. Start instead with a **thumbnail-and-dimensions job**: consume from `pgmq`, open the file from R2, write `width` and `height` onto the media row, write the 300px WebP if the client's upload failed to include one, bump `variant_version`, set `processed_at`. No ML, real output, and it proves the whole `pgmq` round trip plus the two rules that everything else depends on: `processed_at` written last (D-55) and the version bumped on every write (D-60). If those two are right here, they will be right in the job that matters.
+**The warm-up job changed, because D-58 deleted the old one.** v3 started this phase with the `variant` job, which no longer exists. Start instead with a **thumbnail-and-dimensions job**, which D-72 moved into Phase 3 so it already exists by now: consume from `pgmq`, open the file from R2, write `width` and `height` onto the media row, write the 300px WebP if the client's upload failed to include one, bump `variant_version`, set `processed_at`. No ML, real output, and it proves the whole `pgmq` round trip plus the two rules that everything else depends on: `processed_at` written last (D-55) and the version bumped on every write (D-60). If those two are right here, they will be right in the job that matters.
 
-Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, the serving endpoint with its authorization check, the self-visible badge, and the manual correction flow with its threshold check against **curated** references (D-54).
+**Retire it in the same PR that turns on `face_process`** (D-72). Once Do Not Publish users exist, `thumbnail_dims` is a publishing bug. It sets `processed_at` without blurring anything, and if it runs on the same upload as `face_process` it can publish the photo first or point the public keys back at the unblurred upload afterwards.
+
+Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, a blurred thumbnail for each (D-69), the serving endpoint with its authorization check, the self-visible badge, and the manual correction flow with its threshold check against **curated** references (D-54).
 
 **Write the serving endpoint's negative test before the endpoint** (§11). It is the most valuable test in the project and it is twenty lines.
 
@@ -659,7 +673,7 @@ It is a **static badge on the photo**, not a box positioned over a crop region. 
 - **The grid renders square-cropped thumbnails on purpose.** Uniform heights mean the list computes total content height without measuring, so scroll position never needs correcting. If you ever switch to masonry, the packing math is trivial but the measurement is not, and you will need the `width`/`height` columns from spec §4.11 to avoid a collapse-then-expand reflow on every image load.
 - **Gestures and animations use Reanimated worklets**, not the JS-driven `Animated` API. Worklets run on the UI thread and keep animating even when the JS thread is briefly busy handling an incoming Realtime update. This is a real difference for how a burst of arriving photos feels.
 - **Keep Stage 1 image work in native modules** (`expo-image-manipulator`), never hand-rolled JS. HEIC conversion, EXIF handling, the 300px thumbnail, and the 4096px guard resize all run off the JS thread there.
-- **SHA-256 is computed over the uploaded byte stream, not the thumbnail** (D-53). v3 hashed the thumbnail to keep the input small, and the cost of that was a hash that is not reproducible across platforms. Hashing 1 to 3MB is a few milliseconds; do it in a native module or off the JS thread and stop worrying about it.
+- **SHA-256 is computed over the uploaded byte stream, not the thumbnail** (D-53). v3 hashed the thumbnail to keep the input small, and the cost of that was a hash that is not reproducible across platforms. Hashing 1 to 3MB is a few milliseconds. `expo-crypto`'s `digest()` takes the bytes and hashes them natively, so use it and stop worrying about it.
 - **Give `expo-image` an explicit cache key that includes `variant_version`** (D-60), or a retroactive blur leaves the pre-blur image sitting in every client's disk cache. This is a correctness requirement wearing a performance costume.
 - **`InteractionManager.runAfterInteractions`** for anything non-critical that would otherwise run during a screen transition.
 - **Hermes v1** is Expo's default engine as of SDK 56 and precompiles to bytecode ahead of time. Faster startup, lower memory, nothing to configure.
@@ -694,9 +708,9 @@ The two-tier navigation model is the most architecturally significant UI piece i
 Mobile (apps/mobile)
   expo, expo-router, expo-camera, expo-image, expo-image-picker,
   expo-image-manipulator, expo-location, expo-sqlite, expo-file-system,
-  expo-notifications, expo-haptics
+  expo-notifications, expo-haptics, expo-crypto, expo-dev-client
   zustand, @tanstack/react-query
-  nativewind, tailwindcss
+  nativewind (v4), tailwindcss (v3)
   react-native-mmkv
   react-hook-form, zod
   @shopify/flash-list          # v2
@@ -706,7 +720,7 @@ API (apps/api)
   express, typescript
   @supabase/supabase-js
   @aws-sdk/client-s3           # presigned R2 upload URLs
-  zod, zod-to-openapi
+  zod, @asteasolutions/zod-to-openapi
   pino, helmet
 
 Worker (worker/)
@@ -724,7 +738,7 @@ Tooling (root)
   eas-cli, supabase (CLI)
 ```
 
-No `imagehash`, no `Pillow`-based perceptual hashing. Deduplication is `crypto.createHash('sha256')` on the client and an indexed lookup on the server.
+No `imagehash`, no `Pillow`-based perceptual hashing. Deduplication is `expo-crypto`'s `digest()` over the upload bytes on the client, because Node's `crypto.createHash` does not exist in React Native, and an indexed lookup on the server.
 
 ---
 
@@ -752,7 +766,7 @@ Note that the serving check is application logic rather than SQL now that `dnp_c
 
 **Rule 2: one human-authored architecture document is the source of truth, not the agent's memory of the last session.**
 
-Create `docs/ARCHITECTURE.md` in Phase 0. It holds: the data model with every table and its RLS intent, the upload pipeline's two role branches, the blur pipeline's stages, your calibrated similarity thresholds and the date you measured them, and the deployment layout. You maintain it by hand. You paste it into context at the start of sessions that need it.
+Create `docs/ARCHITECTURE.md` in Phase 0. It holds: the data model with every table and its RLS intent, the upload pipeline and its R2 key families (D-70), the blur pipeline's stages, your calibrated similarity thresholds and the date you measured them, and the deployment layout. You maintain it by hand. You paste it into context at the start of sessions that need it.
 
 Without this, each agent session re-derives your design from whatever files it happened to read, and the derivations drift. Three weeks in you have two slightly different mental models of the same system living in two people's chat histories, and nobody notices until the field names stop matching.
 
@@ -764,7 +778,7 @@ Context is the scarcest resource in an agent session and most people waste it on
 
 **Start a fresh session per task, not per day.** A session that has been running for four hours contains three abandoned approaches, two files you no longer care about, and a bug you already fixed. All of it is competing for attention with your actual question. Finish a task, commit, start clean.
 
-**Front-load the constraints.** "Expo SDK 56, RN 0.85, FlashList v2 with no size estimates, NativeWind, TanStack Query for server state, Zustand for UI state, no localStorage" at the top of a session prevents an entire category of wrong output. Models were trained on a lot of FlashList v1 and legacy-architecture React Native, and they will reach for `estimatedItemSize` and `MasonryFlashList` unless told not to.
+**Front-load the constraints.** "Expo SDK 57, RN 0.86, FlashList v2 with no size estimates, NativeWind, TanStack Query for server state, Zustand for UI state, no localStorage" at the top of a session prevents an entire category of wrong output. Models were trained on a lot of FlashList v1 and legacy-architecture React Native, and they will reach for `estimatedItemSize` and `MasonryFlashList` unless told not to.
 
 **Ask for a plan before code on anything non-trivial.** "Before writing anything, describe how you would structure this and what you would touch." You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines. This is also how you learn the reasoning, which is what you will need in the viva.
 
@@ -776,7 +790,7 @@ Context is the scarcest resource in an agent session and most people waste it on
 
 **Good delegation.** Boilerplate CRUD screens and endpoints. Zod schemas from a described shape. Test scaffolding. Converting a design description into NativeWind components. Explaining an unfamiliar API. Reviewing your code for bugs, which is one of the highest-value uses and the most underused. Writing the systemd units and nginx config in §13. Migration SQL, which you then read.
 
-**Delegate carefully, and pair it with the negative test from §11.** Anything with RLS. The blur pipeline's crop coordinate math, where an off-by-a-few-pixels error means a face is partly visible. The upload queue's state machine, where a wrong transition means photos silently vanish. Anything touching money or identity, which here means auth and invite tokens.
+**Delegate carefully, and pair it with the negative test from §11.** Anything with RLS. The blur pipeline's box expansion and elliptical mask math, where an off-by-a-few-pixels error means a face is partly visible. The upload queue's state machine, where a wrong transition means photos silently vanish. Anything touching money or identity, which here means auth and invite tokens.
 
 **Do not delegate.** The similarity thresholds; measure those (§11). The architecture decisions, which are the ones you defend. The demo script. This document.
 
@@ -790,7 +804,7 @@ The habit that fixes this: when an agent gives you an API you have not personall
 
 Commit in small pieces even when the agent produced 400 lines at once. The reason is `git bisect` and revert granularity, not review: a 400-line commit that broke the album gives you nothing to bisect against.
 
-Write commit messages yourself. An agent-written message describes the diff; you want the message to describe the intent, and only you have that.
+Write commit messages yourself. An agent-written message describes the diff; you want the message to describe the intent, and only you have that. Never put anyone's name in a collaboration list or include co-author attribution (no `Co-authored-by:` trailers) in commits.
 
 If a PR is large because an agent generated a lot at once, split it along feature boundaries before requesting review.
 

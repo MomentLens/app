@@ -158,6 +158,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** Square-cropped uniform grid. The worker writes `width` and `height` onto every media row regardless.
 **Why.** Masonry's packing math is free, but FlashList v2 removed size estimates and measures items as they render, so a masonry layout without known heights produces a collapse-then-expand reflow on every image load. Worse for this app specifically: the album has sticky sub-event section headers, and sticky headers over independently-packed variable-height columns is a day or two of layout debugging on a screen nobody is grading.
 **Why store dimensions anyway.** The personalized-blur crop overlay needs to position an absolute box inside a known frame, and the worker is already opening every file, so it is free. Backfilling these columns against R2 once the table has real rows is a real job.
+**Amended (see D-57).** The overlay is gone, so that half of the reason no longer applies. The other half holds: masonry without known heights reflows on every image load, and the worker already opens every file (Handbook §4).
 **Reopen if.** Someone wants masonry later. It becomes a one-prop change because the data is already there.
 
 ---
@@ -185,6 +186,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** When a Do Not Publish user views their own unblurred crop, a lock icon renders on it and the metadata overlay reads "visible only to you."
 **Why.** Without it, a subject seeing their own clear face cannot tell whether personalized blur is working or whether the match failed and everyone can see them. **The two states are pixel-identical to the only person who can report the problem.** The marker is the entire discoverability mechanism for D-23; without it, every miss becomes a permanent, unreportable privacy failure.
 **Treat this as a correctness requirement, not a polish item.**
+**Amended (see D-57).** There is no crop now. The subject views their own personalized variant, and the marker is a static badge on the photo.
 
 ### D-27 — Retained originals are load-bearing, not speculative
 **Decision.** The pre-blur uploaded file stays in R2 and is the source every blur variant is generated from.
@@ -220,6 +222,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Amended (see D-53).** This originally hashed the 300px WebP thumbnail. WebP encoders differ across iOS, Android and library versions, so that hash is not reproducible and the dedup would have caught almost nothing. The hash is now computed over the exact byte stream being uploaded.
 **Why.** Perceptual hashing exists to find near-duplicates, and near-duplicate detection was cut. At distance zero, pHash catches exactly one case, the same file added twice, which a content hash catches better with no image-processing library.
 **Consequence.** Deduplication moved out of the worker and into Express. That removed the Phase 5 warm-up task, which is now the `variant` job instead.
+**Amended (see D-58, D-72).** The `variant` job was deleted as well. The warm-up is now `thumbnail_dims`, and D-72 moved it into Phase 3.
 **Reopen if.** Burst grouping (D-03) comes back. It needs perceptual distance, and it is the only thing that does.
 
 ### D-33 — Guest cap 150, upload cap 2,000
@@ -258,7 +261,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Rejected.** The rotation plan, where the team burns each member's credits in turn. Every migration means a new IP, DNS, TLS certificates, secrets, firewall rules, and a fresh install, for a team that has never done it once. Three rotations is a week of buffer spent on infrastructure, and the Supabase keep-alive cron lives on the box that keeps moving.
 **Why Singapore.** ARM capacity is contested and frequently returns "Out of host capacity." Singapore provisions faster than US regions and is closest to Lahore. **The home region is fixed at signup and cannot be changed later**, which is why this is a week-one task.
 **Bonus.** The instance is ARM64 and so is the M1, so local and production architecture match for the Python worker.
-**Amended (see D-60).** The instance is still provisioned in week one and still runs production, for reasons this entry gives that have not changed. The demo itself runs on the M1. Read D-60 before repeating any part of this entry in a viva.
+**Amended (see D-50).** The instance is still provisioned in week one and still runs production, for reasons this entry gives that have not changed. The demo itself runs on the M1. Read D-50 before repeating any part of this entry in a viva.
 
 ### D-39 — No Docker; systemd, nginx, and certbot instead
 **Decision.** Express and the worker run as systemd units behind nginx, with TLS from certbot.
@@ -291,6 +294,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** An eight-beat script lives in the spec, and anything not in it is not core scope.
 **Why.** Scope discussions without an anchor drift forever. With one, "is this core?" becomes "does it appear in a beat?", which is answerable in five seconds.
 **Corollary.** A seeded dataset that loads in ten seconds must exist before the defense, so that a WiFi failure does not become a live debugging session.
+**Amended.** The v11 script in spec §9 has nine beats. D-62 replaced this corollary's fallback with a recording.
 
 ### D-45 — Every AI-generated line must be explainable by a human on the team ~~(SUPERSEDED by D-68)~~
 > **Superseded.** The line-by-line comprehension gate is gone; see D-68. Two clauses survive there in a different form: the dangerous surfaces still get read before merging, and `ARCHITECTURE.md` is still the source of truth.
@@ -450,6 +454,37 @@ And the comprehension gate was solving a problem the team does not have. TypeScr
 
 ---
 
+# K. Found while scaffolding the repo (2026-09-13)
+
+Four gaps found by reading the spec, handbook and this log against each other before the first migration. Three would have failed silently. The fourth invited a stopgap that would have.
+
+### D-69: The client thumbnail is served only for photos with no Do Not Publish face ⚠
+**Decision.** The client keeps generating the 300px WebP thumbnail (spec §4.8 Stage 1) and PUTs it straight to R2 with its own presigned URL. It no longer travels in the pre-flight JSON. When `face_process` matches one or more Do Not Publish subjects, the worker also writes a blurred thumbnail for every file it writes, N+1 in total, at versioned keys, and points the rows at them. `reprocess` regenerates thumbnails along with the full files. A photo with no Do Not Publish face serves the client's thumbnail.
+**Why.** v11 blurred every full-size file and no thumbnail. The client builds the thumbnail from the unblurred photo and the album grid shows it to every member, so a Do Not Publish face would have been clear in the grid and blurred one tap later. The pre-flight JSON also carried the thumbnail through Express, against Handbook §7.
+**Rejected.** The worker writing every thumbnail, with the client never uploading one. One code path instead of two, and one fewer Stage 1 step. The reason it lost is not recorded yet (see Open items).
+**What keeps it safe.** A replacement thumbnail always gets a new versioned key; nothing is overwritten in place (D-60). The row stays invisible until `processed_at`, so before the worker decides, the unblurred thumbnail reaches only its uploader (D-55).
+**Cost.** ⚠ Two writers for one kind of file. The likely failure is `reprocess` regenerating the full files and forgetting the thumbnails, which throws nothing and exposes the face in the grid only. The S-25 negative test asserts on both.
+
+### D-70: R2 keys have one builder per key family
+**Decision.** Replaces the "one place" rule in Handbook §3 and root invariant 12. The API builds upload keys, the original photo and the client thumbnail, in one function, and writes them onto the media row at pre-flight before presigning the PUT URLs. The worker builds every derived key, blurred files and blurred thumbnails, and writes those onto the rows. Neither side builds the other's keys. Whatever serves a file reads the column.
+**Why.** Invariant 12 said only the worker builds keys, but the API has to presign an upload URL for a file the worker has never seen. The rule could not have been followed on the first upload, and an agent told to follow it would have invented a workaround.
+**Rejected.** A Postgres function returning every key format, called by both sides. One place in the literal sense, at the cost of a round trip per key and the version-bump logic living in SQL.
+**What still holds.** The drift the original rule prevented, two languages formatting the same key, still cannot happen, because each family has one builder in one language.
+
+### D-71: Express queries Supabase as the caller
+**Decision.** The auth middleware builds a Supabase client from the caller's JWT for each request, so RLS applies to every API query. The secret key, which bypasses RLS, is used by the worker and by one clearly named module in `apps/api/src/db/` for operations that run before the caller has a membership row, such as resolving an invite token.
+**Why.** Handbook §5 justifies RLS as the guard against one buggy Express path leaking data. With the secret key in Express, RLS would skip every API query and guard only Realtime and direct client queries.
+**Rejected.** The secret key for every Express query. Simpler wiring. The team picked it first and switched once the conflict with Handbook §5 was pointed out: every Express permission check would have been the only guard, and the RLS negative tests would have covered no API route.
+**Cost.** Policies now run on every API query, so the membership lookups inside them must stay indexed. Importing the secret-key module in an ordinary route skips RLS and throws nothing, so every call site counts as auth or invite-token handling and gets a human read (D-68).
+
+### D-72: The `thumbnail_dims` warm-up job ships in Phase 3
+**Decision.** Slice S-18a builds the worker skeleton (pgmq consumer loop, `/health`) and the `thumbnail_dims` job directly after S-12, with no ML dependency. Model loading and all face work stay in Phase 5. S-21 replaces `thumbnail_dims` with `face_process` on upload completion, and the two never run on the same upload.
+**Why.** The album shows a row only once `processed_at` is set (D-55), and only the worker sets it. With the worker in Phase 5, the album built in Phase 3 would show nothing for two phases, and the obvious stopgap, setting `processed_at` in the completion endpoint, is root invariant 1 broken under a "temporary" label.
+**Rejected.** Keeping the worker in Phase 5 and testing the album against seeded rows. It works, and it leaves the stopgap within reach for two phases.
+**Watch for.** Once Do Not Publish users exist, `thumbnail_dims` is a publishing bug. It sets `processed_at` without blurring and points the public keys at the unblurred upload. On the same upload as `face_process`, it can publish the photo first or overwrite the blurred keys afterwards. S-21 deletes its enqueue, and the S-21 PR confirms nothing else enqueues it.
+
+---
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -458,8 +493,9 @@ These are not settled and should not be treated as though they are.
 - **`buffalo_l` versus `buffalo_s`.** Decide with a measurement. Measure on the M1, since D-50 makes it the demo runtime, and separately on the Oracle instance if that box is ever going to serve a real request.
 - **Whether `insightface` compiles on aarch64.** Trivial on an M1 and still a Phase 0 spike for the Oracle instance, which D-50 keeps in the plan. If it fails there, the worker plan changes and that must be known in week one.
 - **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
-- **Who owns `docs/ARCHITECTURE.md`.** Assign in Phase 0. A source of truth with no owner becomes stale in about three weeks, and D-45 depends on it being current.
+- **Who owns `docs/ARCHITECTURE.md`.** Assign in Phase 0. A source of truth with no owner becomes stale in about three weeks, and D-68 depends on it being current. A generated skeleton was added on 2026-09-13; it still needs an owner to read and correct it.
 - **Whether the Azure fallback actually works.** D-38 calls it a hot standby. It is not one until `scripts/provision.sh` exists and has been run against a real Azure VM once. Half a day in Phase 7. Note that D-50 already gives the project a cheaper second fallback, since the Oracle instance and the laptop each cover for the other.
 - **The feature-complete date.** The plan is to build fast, harden afterwards, and hold a month of buffer. That buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Two things that plan gets wrong and that the team should settle before relying on it. AI velocity does almost nothing for the parts that actually consume months: the viewfinder, background upload, the SQLite queue's state machine, deep links, push certificates, and RLS, all of which fail at device and configuration boundaries rather than in code, with a debug loop that is manual and one device at a time. And "harden later" is false for anything with a shape, including D-60's version column, D-63's schema split, D-54's curated flag and D-55's visibility predicate; get those wrong and it is a migration against live rows, not a refactor.
 - ~~Whether D-45 survives contact with generated code volume.~~ **Settled by D-68.** Comprehension moves to the Phase 7 month; a named list of dangerous surfaces still gets read before merging.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
+- **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.

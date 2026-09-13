@@ -5,7 +5,7 @@
 
 This file names units of work and points at the spec sections that define them. **It never describes what a feature does.** If you want to know what Pending Approvals should look like, read spec §2.5, not this. That rule is what stops this file going stale: nothing in here can contradict the spec, because nothing in here repeats the spec.
 
-Create one GitHub issue per slice, titled with the slice ID and name, body containing only the spec references and the dependency list. The board (Backlog / In Progress / Review / Done) is per Handbook §12.
+Create one GitHub issue per slice from the **Work slice** issue template, titled with the slice ID and name, body containing only the spec references and the dependency list. The board (Backlog / In Progress / Review / Done) is per Handbook §12.
 
 ## Why a slice is not a screen
 
@@ -23,16 +23,18 @@ Corollary from the pre-Phase-0 setup: **an endpoint does not exist until its sch
 
 ## Definition of done
 
-A slice is not done when the screen renders. It is done when all of these are true. Put this list in your GitHub issue template so it is checked, not remembered.
+A slice is not done when the screen renders. It is done when all of these are true. The same list is in `.github/ISSUE_TEMPLATE/slice.md`, so every slice issue carries it as checkboxes.
 
 - [ ] zod schema merged in `packages/shared-types`
-- [ ] RLS policy written, or explicitly noted as not applicable, and **read by a human** if it touches `media`, `dnp_crop`, `face_reference`, or `membership` (D-45)
+- [ ] RLS policy written, or explicitly noted as not applicable
+- [ ] **Read by a human before merging** if the slice touches any RLS policy, the image-serving endpoint's authorization check, the upload queue's state machine, or auth and invite-token handling (D-68)
+- [ ] A negative test for each of those surfaces. RLS tests run through the API and directly against Supabase (Handbook §11, D-71)
 - [ ] Loading, empty, and error states exist, not just the happy path (Handbook §15)
 - [ ] Works on a physical device, not only a simulator, if it touches camera, GPS, or the queue (Handbook §10)
 - [ ] Unit test for any pure logic in it (Handbook §11)
 - [ ] Dark mode uses tokens, no hardcoded hex
-- [ ] Reviewed by one other person, who can explain what it does (Handbook §12, D-45)
-- [ ] `docs/ARCHITECTURE.md` updated if the slice added a table, a column, or a job type
+- [ ] Reviewed by one other person (Handbook §12)
+- [ ] `docs/ARCHITECTURE.md` updated if the slice added a table, a column, an R2 key, or a job type
 
 ## Ownership
 
@@ -50,12 +52,15 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Reference |
 |---|---|---|
-| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, §11 |
+| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky. `apps/api` and `packages/shared-types` still have no `package.json` or `tsconfig.json`, and no lint dependency is installed | HB §3, §11 |
 | P0-2 | Oracle instance, nginx, TLS, both systemd units running something trivial | HB §13 |
-| P0-3 | Supabase dev + stable projects, keep-alive cron | HB §13 |
+| P0-3 | Supabase dev + stable projects, keep-alive as a GitHub Actions scheduled workflow | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14 Phase 0 |
 | P0-5 | **InsightFace ARM spike.** Blocking. If this fails the worker plan changes | HB §14 Phase 0 |
-| P0-6 | `CLAUDE.md`, naming convention, Figma tokens into `tailwind.config.js`, `docs/ARCHITECTURE.md` skeleton | HB §18 |
+| P0-6 | Owner assigned for `docs/ARCHITECTURE.md`, who reviews the generated skeleton. Naming convention. Figma tokens into `apps/mobile/tailwind.config.js` | HB §18 |
+| P0-7 | Cloudflare named tunnel on the M1, used for everyday remote testing from the start | HB §13, D-50, D-51 |
+| P0-8 | Sentry free tier on the app and the API | HB §11 |
+| P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, §13 |
 
 ---
 
@@ -89,16 +94,21 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 Build this phase **with the verification check disabled** in the pre-flight endpoint (HB §14 Phase 3). Phase 4 adds the gate.
 
+S-18a is the one worker slice in this phase. Only the worker sets `processed_at`, so S-18a is what lets S-13 show any photo without someone setting it in Express (D-72).
+
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, session strip, FAB visibility rule | §4.7, §2.5 | B | S-08 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5 | C | S-04, S-08 |
-| S-11 | Client upload pipeline: EXIF strip, HEIC, resize, thumbnail, SHA-256, **role branch** | §4.8 Stage 1 | C | S-10 |
-| S-12 | Pre-flight endpoint, dedup lookup, presigned R2 URL, completion, pgmq enqueue | §4.8 Stage 2-3, HB §7 | U | S-11 |
-| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5 | B | S-12 |
+| S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8 Stage 1, D-58, D-69 | C | S-10 |
+| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8 Stage 2-3, HB §7, D-70 | U | S-11 |
+| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72 | U | S-12 |
+| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8 Stage 3 | C | S-12 |
 
-**S-11 is one function with a role branch, not two copies** (HB §7 has the table). Unit-test the branch.
+**S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69).
+
+**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70).
 
 ---
 
@@ -120,23 +130,25 @@ The heaviest phase. Ukasha owns most of it because of the ARM alignment, so hand
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-18 | Worker skeleton, pgmq consumer loop, `/health`, model resident at startup, `variant` job | HB §6, §14 Phase 5 | U | S-12, P0-5 |
+| S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, §14 Phase 5 | U | S-18a, P0-5 |
 | S-19 | **Manual blur box** (fallback rung 3). Build this before S-20 | HB §14 Phase 5 | B | S-13 |
-| S-20 | Face detection, embedding, reference photo upload (up to 5) | §4.11, §4.2 | U | S-18 |
-| S-21 | Blur pipeline: public blurred variant, per-face crops, `dnp_crop` RLS | §4.11 | U | S-20 |
-| S-22 | Client overlay: crop layered on blurred image, **self-visible marker** | §4.11, §2.5 | B | S-21 |
+| S-20 | Face detection, embedding, stored face boxes, reference photo upload (up to 5) | §4.11, §4.2 | U | S-18 |
+| S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11, §4.13, D-57, D-60, D-69, D-72 | U | S-20 |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5, §4.11, D-59 | B | S-21 |
 | S-23 | Find My Photos and Recognized Faces strip, **viewer-scoped filter** | §4.11 | C | S-20 |
 | S-24 | Manual correction: tap own face, threshold check, Review Queue Confirm/Revert | §4.11, §2.5 | C | S-22, S-23 |
-| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert | §4.11, HB §6 | U | S-21 |
+| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11, HB §6, D-69 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11 | U | S-20 |
 
 **S-19 first, before the ML work.** Half a day, cannot fail, and it is your escape hatch when automatic matching misses something live (HB §14).
+
+**S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5). Write its negative test before the endpoint (HB §11). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72). Before writing the `dnp_subject` policy, read `docs/ARCHITECTURE.md` §1 on subject identity leaking through Realtime.
 
 **S-22's marker is a correctness requirement, not polish** (D-26). Without it a missed match is undetectable by the only person who could report it.
 
 **S-23 fails silently if built wrong.** A global exclusion passes every test written from another viewer's perspective and returns nothing for the subject (D-46). Write the positive test: a DNP user runs Find My Photos and gets their photos.
 
-**S-25 looks skippable and is not.** Three things break at once without it (HB §14 Phase 5).
+**S-25 looks skippable and is not.** Three things break at once without it (HB §14 Phase 5). It regenerates thumbnails as well as full files. Forgetting them throws nothing and shows the face in the grid only (D-69).
 
 ---
 
@@ -145,7 +157,7 @@ The heaviest phase. Ukasha owns most of it because of the ARM alignment, so hand
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5 | C | S-07 |
-| S-28 | Download: multi-select, save to gallery, **authenticated composite endpoint for DNP photos** | §4.15, §4.13 | U | S-21 |
+| S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13 | U | S-21 |
 | S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5 | B | S-01 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12 | C | S-09 |
 | S-31 | Formalized screens, consent screens, album open/close confirm dialog, hard-coded limits | §2.5, §4.18, §4.9, §4.17 | B | S-08 |
@@ -160,24 +172,38 @@ Testing pass, performance pass, seeded demo dataset, Azure fallback rehearsal, d
 
 ---
 
+# Not in any slice yet
+
+The spec describes these and no slice above owns them. Fold each into a slice or give it its own before its phase starts.
+
+- The photo Flag action and the flagged-photos half of the Review Queue (spec §2.5, Single photo view and Manage)
+- Photo soft delete by the uploader, and Admin remove and restore (§2.1 Phase D, §4.9, §4.21)
+- Delete and archive event (§4.3, §4.21)
+- The retention job that permanently deletes media from R2 and rows from Postgres (§4.21). No runtime owns scheduled work yet. One option that fits the current design is `pg_cron` enqueuing a daily pgmq message for the worker, which already holds R2 credentials
+- Delay a sub-event (§4.3). Probably S-04; confirm
+- The Admin's album open/close toggle itself (§4.9). S-31 covers only the confirm dialog
+
+---
+
 # The handoff template
 
-This is what a teammate pastes at the start of a session. Fill the four blanks. Nothing else.
+In Claude Code, type `/slice S-XX` instead. The skill in `.claude/skills/slice/` follows the same order and reads only the sections the slice cites. Use the template below with any other tool. Fill the blanks. Nothing else.
 
 ```
 Building slice S-XX: <name>, from MomentLens.
 
-Read first, in this order:
-- Idea_V10.md sections <§X, §Y>  — what to build
-- Engineering_Handbook_V3.md sections <§X>  — how, and the stack constraints
-- CLAUDE.md  — pinned versions and conventions
-- packages/shared-types  — existing contracts, do not duplicate a type
+Read only these sections, in this order:
+What to build:    docs/Idea.md, sections <§X, §Y>
+How to build it:  docs/EngineeringHandbook.md, sections <§X>
+Rules:            CLAUDE.md, plus the CLAUDE.md of each package this touches
+Contracts:        packages/shared-types. Do not duplicate a type.
 
 Stack constraints that override your training data:
-Expo SDK 56, RN 0.85, New Architecture only. FlashList v2 (no
-estimatedItemSize, no MasonryFlashList). TanStack Query for server state,
-Zustand for UI state only, expo-sqlite for the upload queue. NativeWind
-tokens, no hardcoded hex. No localStorage or AsyncStorage anywhere.
+Expo SDK 57 (docs: https://docs.expo.dev/versions/v57.0.0/), RN 0.86, New
+Architecture only. FlashList v2 (no estimatedItemSize, no MasonryFlashList).
+TanStack Query for server state, Zustand for UI state only, expo-sqlite for
+the upload queue. NativeWind v4 tokens, no hardcoded hex. No localStorage or
+AsyncStorage anywhere. No Node APIs in the app.
 
 Order of work:
 1. Propose the zod schema for this slice. Stop. I will review and merge it
@@ -187,12 +213,13 @@ Order of work:
 3. Then build it.
 
 Done means: schema merged, RLS policy written or explicitly N/A, loading +
-empty + error states, unit test for any pure logic, dark mode via tokens.
+empty + error states, unit test for any pure logic, dark mode via tokens,
+a negative test for any human-read surface.
 
 [paste the Figma frame here]
 ```
 
-**Why the two stops.** You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines, and you learn the reasoning, which is what you need in June 2027 when an examiner points at a function (HB §18, D-45).
+**Why the two stops.** You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines, and you learn the reasoning, which is what you need in June 2027 when an examiner points at a function (HB §18).
 
 **Why the Figma frame goes last.** An image at the top of a session dominates everything after it, and the agent designs from the picture and backfills the logic. Constraints first, picture last.
 
@@ -200,10 +227,10 @@ empty + error states, unit test for any pure logic, dark mode via tokens.
 
 # Things that will go wrong with this routine
 
-**Three people will build the same component three times.** Date formatting, upload progress, avatar, empty state, section header. Agree in week one that shared components live in `apps/mobile/components/ui/` and that adding one is a five-line PR anyone can review in a minute. Cheaper than deduplicating in month six.
+**Three people will build the same component three times.** Date formatting, upload progress, avatar, empty state, section header. Agree in week one that shared components live in `apps/mobile/src/components/ui/` and that adding one is a five-line PR anyone can review in a minute. Cheaper than deduplicating in month six.
 
 **Someone will be blocked and not say so.** The dependency column exists so this is visible. If a slice's dependency is not merged, pick a different slice, do not build against an imagined interface.
 
-**An agent will add something nobody asked for.** This is what D-45 exists for. Small PRs, and nothing merges if none of you can explain it. A slice that produces a 900-line PR is a slice that was scoped too big; split it and re-review.
+**An agent will add something nobody asked for.** Small PRs are the defense. D-68 dropped the rule that someone must be able to explain every line, so PR size is what keeps a review meaningful. A slice that produces a 900-line PR was scoped too big; split it along feature boundaries and re-review (HB §18).
 
-**Ukasha will become the bottleneck.** He owns the worker, the docs, and most of Phase 5. Watch the board. If two slices are waiting on him for more than a few days, move S-25 or S-28 to someone else even though it is slower for them, because a team moving at one person's speed is the failure mode this whole file exists to prevent.
+**Ukasha will become the bottleneck.** He owns the worker, the docs, and most of Phase 5, and S-18a adds one more slice to his Phase 3. Watch the board. If two slices are waiting on him for more than a few days, move S-25 or S-28 to someone else even though it is slower for them, because a team moving at one person's speed is the failure mode this whole file exists to prevent.

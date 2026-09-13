@@ -547,17 +547,17 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - Retain only timestamp and orientation in EXIF; strip everything else, including GPS.
 - Convert HEIC/HEIF to JPEG.
 - **No resize, with one guard.** Phone JPEGs are already 1 to 3MB and do not need shrinking; modern JPEG compression is good enough that the resize was solving a problem this project does not have. If the longest edge exceeds **4096px**, resize to 4096px preserving native aspect. This never fires on a phone photo. It exists so a DSLR file dragged in during a rehearsal does not surprise anyone.
-- Generate a 300px WebP thumbnail for the album grid.
+- Generate a 300px WebP thumbnail for the album grid. It is made from the unblurred photo, so it is served only for photos with no Do Not Publish face; the worker writes blurred thumbnails for the rest (§4.13, D-69).
 - Compute a **SHA-256 hash of the exact byte stream about to be uploaded**, after EXIF stripping and HEIC conversion. v10 hashed the re-encoded 300px thumbnail, which is not reproducible: WebP encoders differ across iOS, Android and library versions, so the same photo would hash differently on two devices and deduplication would have caught almost nothing.
 
 #### Stage 2 — pre-flight
-- A single small JSON round-trip: content hash, album ID, sub-event ID, thumbnail, and the GPS reading captured with the photo.
+- A single small JSON round-trip: content hash, album ID, sub-event ID, and the GPS reading captured with the photo. No image bytes travel in it, the thumbnail included (D-69).
 - **Exact duplicate** (identical SHA-256) is silently rejected, with no upload and no user-facing prompt. This is one indexed lookup, not a distance computation. There is no near-duplicate detection of any kind; anything that isn't byte-identical after processing uploads.
 - **Verification check**: `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role = 'photographer')`. If it fails, the upload is rejected and the photo waits in the local queue.
-- If both checks pass, Express issues a presigned R2 upload URL.
+- If both checks pass, Express names the upload keys and issues presigned R2 upload URLs for the photo and its thumbnail (D-70).
 
 #### Stage 3 — upload
-- Direct to R2 via the presigned URL. Express never proxies media bytes.
+- Direct to R2 via the presigned URLs, one for the photo and one for its thumbnail. Express never proxies media bytes.
 - Sequential, not parallel, per photo in a session, so most of a session stays cancelable from My Media.
 - On completion the client notifies Express, which enqueues the processing job via `pgmq`.
 - **Background behavior, bounded deliberately:** iOS uses `beginBackgroundTask` (roughly 3 minutes of continued execution after backgrounding); Android uses a foreground service with a visible sticky notification. Neither attempts to guarantee completion hours later or survive a force-kill. If the app is force-killed mid-upload, the local SQLite queue resumes the remaining items on next launch.
@@ -636,7 +636,7 @@ This is the app's centerpiece feature and it is core scope, not a stretch goal.
 | `public` | Every Do Not Publish face in the photo is blurred | Everyone except the subjects |
 | `variant_<subject>` | Every Do Not Publish face blurred **except** that one subject's | That subject only |
 
-The count is linear, never combinatorial, because no viewer ever needs two different subjects unblurred in the same file. A photo containing no Do Not Publish faces produces no extra files at all: the uploaded file is what everyone sees.
+The count is linear, never combinatorial, because no viewer ever needs two different subjects unblurred in the same file. A photo containing no Do Not Publish faces produces no extra files at all: the uploaded file is what everyone sees. Each of the N+1 files also gets a blurred 300px thumbnail at a versioned key, written by the worker. For a photo with no Do Not Publish face, the client's own thumbnail is the one served (D-69).
 
 **Serving is one endpoint, and the client never chooses.** A request for a photo's image hits an endpoint that checks whether the requester is a Do Not Publish subject in that photo, then mints a short-lived presigned R2 URL for the correct file. Viewing and downloading use the same mechanism, which is why there is no compositing step anywhere in this system.
 
@@ -672,7 +672,7 @@ Two things this design is doing deliberately:
 **The confirmed crop becomes a new auto-added reference.** When a user taps their own face, that is a correctly-labeled face crop from a real event photo in real lighting, which is a far better reference than a profile selfie. It is added to their reference set as **auto-added**, so the match that failed once becomes less likely to fail again. It never becomes a curated reference and therefore never feeds the abuse check above.
 
 **Retroactive reprocessing is a match job, never a detection job.**
-Enabling Do Not Publish after photos are already published triggers asynchronous reprocessing. That job compares the **stored embeddings** for every face already on record in the event against the newly-active reference set, which is milliseconds of cosine comparison, then regenerates the public file and writes the new per-subject variant for the matched photos only. It never re-runs face detection, because every face in every photo already has an embedding from its original processing pass. Re-running the model would be the expensive version of a job that is nearly free.
+Enabling Do Not Publish after photos are already published triggers asynchronous reprocessing. That job compares the **stored embeddings** for every face already on record in the event against the newly-active reference set, which is milliseconds of cosine comparison, then regenerates the public file, the new per-subject variant and the thumbnails of both, for the matched photos only. It never re-runs face detection, because every face in every photo already has an embedding from its original processing pass. Re-running the model would be the expensive version of a job that is nearly free.
 
 **Other properties:**
 - Every uploaded photo is checked against the Do Not Publish reference sets of **users who are members of this event**, not globally. The system cannot protect anyone who has not installed the app and uploaded a reference (§8).
@@ -697,7 +697,7 @@ Renamed from "Private mode," because the previous design saved to the device cam
 ---
 
 ### 4.13 Media delivery
-- 300px WebP thumbnails via `expo-image`, center-cropped to square for grid uniformity across mixed-aspect sources.
+- 300px WebP thumbnails via `expo-image`, center-cropped to square for grid uniformity across mixed-aspect sources. They are served through the same endpoint as full images and follow the same personalization and versioning rules (D-69).
 - **There is one image per photo, not a display variant and an original.** §4.8 removed the client resize, so the file that was uploaded is the file that is served, zoomed, downloaded, and blurred from. The v10 distinction between a 2048px display version and a retained full-quality original no longer exists, and neither does the role-based routing that depended on it.
 - **Every image request goes through the serving endpoint in §4.11**, which checks whether the requester is a Do Not Publish subject in that photo and mints a presigned R2 URL for the correct file. Do not wire an image component or a download button directly to a bucket URL; personalization silently stops working for exactly the people it exists for, and nothing throws an error when it does.
 - **Blur variant object keys carry a version, and the version lives on the media row.** The public file is a mutable derived artifact: retroactive Do Not Publish regenerates it, and so does a confirmed manual blur. With a stable object key, every client that already loaded that photo keeps serving the pre-blur image out of its own `expo-image` disk cache, and any CDN in front of R2 keeps serving it too. That is the exact failure the whole feature exists to prevent, and it is invisible to any test written against a fresh client.
@@ -828,7 +828,7 @@ Consolidated here because four scattered numbers in four sections is how a three
 | A user without Do Not Publish taps a face in a photo | Nothing happens. The tap-to-blur affordance renders only for users with Do Not Publish active (§4.11). |
 | Do Not Publish match confidence is borderline at upload | Resolves automatically toward blurring. Never routed to a human. |
 | Do Not Publish match fails and the subject notices | Subject taps their own face; blur applies immediately. If similarity to their own **curated** reference set is low, the request also lands in the Admin's Review Queue for Confirm / Revert (§4.11). |
-| Someone enables Do Not Publish after 100 photos are already in the album | The reprocess job compares stored embeddings against the new reference set, regenerates the public file for matched photos, writes their per-subject variant, and bumps `variant_version` so clients holding a cached copy re-resolve (§4.11, §4.13). Detection is never re-run. |
+| Someone enables Do Not Publish after 100 photos are already in the album | The reprocess job compares stored embeddings against the new reference set, regenerates the public file and thumbnails for matched photos, writes their per-subject variant, and bumps `variant_version` so clients holding a cached copy re-resolve (§4.11, §4.13). Detection is never re-run. |
 | Someone abuses manual blur on another person | The similarity check catches it (near-zero score), so the request is queued; the Admin reverts it. The face stays blurred in the meantime. |
 | A legitimate request scores near zero anyway (bad angle, heavy occlusion) | The blur is applied and the request is queued. The Admin has no in-app reference to judge from (§4.11), so the requester contacts him out of band. Accepted, because the path is rare and fails toward privacy. |
 | Photo uploaded before a Do Not Publish flag is activated | Existing photos are reprocessed asynchronously to blur that face. |
@@ -927,7 +927,7 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 ### The beats
 
 1. **Create the event.** Two sub-events, one currently live. Show the Guest Link and Photographer Link, and the printed Venue QR.
-2. **Judges join.** Two judges scan or paste the Guest Link on the handed-around devices and land in the album. This is where deep links, auth, and role assignment all prove themselves at once.
+2. **Judges join.** Two judges open or paste the Guest Link on the handed-around devices and land in the album. This is where deep links, auth, and role assignment all prove themselves at once.
 3. **Capture and upload.** A judge takes a photo. Location verifies silently; the photo appears in the shared album on every device within seconds once the worker finishes and the row becomes visible (§4.9). Then show the queue gate: deny location permission, clear it with a Venue QR scan.
 4. **Find My Photos.** A judge with reference photos set taps once and sees only the photos they appear in.
 5. **Do Not Publish.** Use the pre-configured team account. Walk them through the consent screen without confirming it, including the reference-photo precondition (§4.2), then hand phones around: the subject sees their own face clearly with the lock badge and "visible only to you," every other phone shows it blurred. This is the moment the project earns its grade.
