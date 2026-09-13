@@ -10,9 +10,9 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 
 | Question | Read |
 |---|---|
-| What should this feature do? | `docs/Idea_V11.md`, the numbered section for that feature |
-| How do I build it here? | `docs/Engineering_Handbook_V4.md` |
-| Why is it this way, and what was rejected? | `docs/Decision_Log.md`, entry `D-nn` |
+| What should this feature do? | `docs/Idea.md`, the numbered section for that feature |
+| How do I build it here? | `docs/EngineeringHandbook.md` |
+| Why is it this way, and what was rejected? | `docs/DecisionLog.md`, entry `D-nn` |
 | Current schema, thresholds, deploy layout | `docs/ARCHITECTURE.md` — living source of truth, maintained by hand |
 
 | Working on | Read first |

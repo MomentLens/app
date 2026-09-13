@@ -1,6 +1,5 @@
 # MomentLens decision log
 > Why the system is the way it is.
-> Companion to `Idea_V11.md` and `Engineering_Handbook_V4.md`.
 
 ## How to use this file
 

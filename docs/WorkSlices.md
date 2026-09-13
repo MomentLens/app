@@ -1,6 +1,5 @@
 # MomentLens work slices
 > The assignable unit of work. One slice = one GitHub issue = one branch = one PR.
-> Companion to `Idea_V10.md`, `Engineering_Handbook_V3.md`, `Decision_Log.md`.
 
 ## What this file is and is not
 
