@@ -221,7 +221,7 @@ There is **no `variant.py`** either. D-58 removed the client resize, so there is
 
 **Row Level Security. Do this, it is not optional.** RLS policies are rules the database itself enforces regardless of which query arrives. If you only enforce permissions in Express, one buggy code path (or you in six months adding an endpoint and forgetting the check) leaks data. Given this app's core premise involves people's photos and face embeddings, that is not a corner worth cutting.
 
-**RLS only protects the API if the API's queries go through it** (D-71). The auth middleware builds a Supabase client from the caller's JWT for each request, so every API query runs under RLS as that user. The secret key bypasses RLS. The worker uses it, and so does one clearly named module in `apps/api/src/db/`, for the few operations that run before the caller has a membership row, such as resolving an invite token.
+**Superseded in part by D-73.** The API uses the secret key and enforces the rules below in its service layer, each with a negative authorization test. RLS stays on for every table, with `SELECT` policies only on `media` and `event` for Realtime, so the app cannot read or write any other table directly. The rules still describe who may see what; `docs/ARCHITECTURE.md` §1 has the current table.
 
 **The good news: v10 made your RLS much smaller.** Because Photographer uploads now land in the shared album, there is no per-role media visibility rule. Write policies for:
 
@@ -232,7 +232,7 @@ There is **no `variant.py`** either. D-58 removed the client resize, so there is
 - **`face_reference`** (a user's reference embeddings): readable only by that user and by the worker's service role. Never exposed through any user-facing endpoint.
 - **There is no `dnp_crop` table.** v3 named its RLS policy as the single most sensitive rule in the system. D-57 deleted the table, and with it that policy. The danger did not disappear; it moved somewhere easier to reason about and easier to test, which was most of the point.
 - **The image-serving endpoint is now the most sensitive authorization check in the system**, and it is application logic rather than RLS. One endpoint answers "which file does this requester get for this photo." It checks whether the requesting user is a Do Not Publish subject on that media row, then presigns the corresponding key: the subject's own variant if so, the public file otherwise. Get this wrong and a subject's unblurred variant reaches somebody else, which is the exact thing the app promises not to do. Write the negative test before the endpoint (§11).
-- **`dnp_subject`** (which users are Do Not Publish subjects on which media row): readable by any event member, because the client needs to know a photo has personalization without learning who the subject is. Return the row without the subject identity unless the requester is that subject. RLS filters rows, not columns, and Realtime sends whole rows; read `docs/ARCHITECTURE.md` §1 before writing this policy.
+- **`dnp_subject`** (which users are Do Not Publish subjects on which media row): readable by any event member, because the client needs to know a photo has personalization without learning who the subject is. Return the row without the subject identity unless the requester is that subject.
 - **`subject`** (the person a blur applies to, with a **nullable** foreign key to the auth user). Create it with the nullable FK from the first migration even though Proxy Blur is deferred (D-63). Adding it now is a column definition; adding it later against live rows is a migration.
 - **The Recognized Faces read is viewer-scoped, not a stored exclusion.** Spec §4.11 hides a Do Not Publish user's face from every viewer except that user. Implement it as a predicate parameterized by the requesting user, never by omitting the row at write time. Getting this wrong does not throw an error; it silently returns nothing for Find My Photos for exactly the users the feature exists for.
 
@@ -257,6 +257,8 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 | `thumbnail_dims` | Any upload completes, from Phase 3 until S-21 retires it (D-72) | No ML. Write `width`/`height`, the thumbnail only if the client's is missing, bump `variant_version`, then set `processed_at`. Never runs on the same upload as `face_process` |
 | `face_process` | Any upload completes | Detect faces once, extract an embedding per face, match against event members' Do Not Publish reference sets, write the public blurred file plus one variant per matched subject and a blurred thumbnail for each (D-69), write `width`/`height`, then set `processed_at` |
 | `reprocess` | A user activates Do Not Publish, or a manual blur correction is confirmed or reverted | **Match only, never detect.** Compare the already-stored embeddings for that event against the newly-active reference set, then regenerate the public file, the new per-subject variant and the thumbnails of both for matched photos only, bumping `variant_version` |
+
+`reference_process` and `manual_blur` joined these jobs later (D-74). `docs/ARCHITECTURE.md` §5 has the current list.
 
 **Three rules inside `face_process` that are easy to get subtly wrong:**
 
@@ -319,7 +321,7 @@ There is no role branch left to unit-test here. There is still a branch in the p
 
 **One advantage worth exploiting.** Your M1 is ARM64 and so is the Oracle instance. Your local worker environment and production share an architecture, which eliminates a whole class of "works locally, segfaults on the server" bug for the Python side. Make yourself the primary owner of the AI worker for that reason alone.
 
-**And one responsibility that comes with it.** Under D-50 this machine is also the demo runtime. That means two things for you specifically. Install and test the Cloudflare Tunnel early (§13), not in demo week. And do not let the Oracle instance rot just because the demo does not depend on it: the other two develop against it, it is the fallback that is not in the room, and the deployment claim has to survive an SSH-in-and-show-me.
+**And one responsibility that comes with it.** Under D-50 this machine is also the demo runtime. That means two things for you specifically. Set up the demo stack, tunnel included, one month before the demo (D-76), and rehearse it well before demo week. And do not let the Oracle instance rot just because the demo does not depend on it: the other two develop against it, it is the fallback that is not in the room, and the deployment claim has to survive an SSH-in-and-show-me.
 
 ---
 
@@ -373,7 +375,7 @@ Everything else (screens, components, styling, business logic, API calls, state)
 
   **Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, and that a direct request for B's variant key returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
 
-  Then: does RLS actually block a Photographer from reading another user's media, and does RLS actually block one user from reading another user's `face_reference` rows. Run each RLS test twice, once through the API and once directly against Supabase with the user's JWT. D-71 puts API queries under RLS, so a route that picks up the secret-key client passes the direct test and still leaks.
+  Then: does RLS actually block a Photographer from reading another user's media, and does RLS actually block one user from reading another user's `face_reference` rows. Under D-73 those rules live in the API's service layer, so these are negative API tests. The two RLS policies that remain, `SELECT` on `media` and `event`, get a Realtime test: a non-member receives nothing.
 
   Also worth an integration test, because it fails silently in the other direction: does the album query exclude rows with `processed_at` null (D-55), and does a Do Not Publish user's Find My Photos return their own photos (spec §4.11, the viewer-scoped filter).
 - **E2E tests, few, and only for flows that would be genuinely bad to break.** Maestro against a handful of critical paths: sign up, join event, capture, see it in the album. Verify a Do Not Publish face is blurred for a second viewer. Verify photos sit in the local queue when location permission is denied and only upload after a QR scan. Do not try to E2E everything.
@@ -424,7 +426,7 @@ main ← always deployable
 
 **Demo runtime setup, in order:**
 1. Express and the worker run locally on the M1, same commands you use in development.
-2. `cloudflared` with a **named tunnel** and a stable hostname, mapping that hostname to `localhost:3000`. Install this in Phase 0 and use it as your everyday remote-testing setup, not as a demo-week addition.
+2. `cloudflared` with a **named tunnel** and a stable hostname, mapping that hostname to `localhost:3000`. Set this up one month before the demo (D-76). Until then, everyday remote testing uses the Oracle instance.
 3. **Not ngrok** (D-51). Free ngrok URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
 
 **What the laptop does not buy you.** It moves compute out of the cloud. It does not remove the network dependency: Supabase, R2, and the phones on the other side of the tunnel are all still on the network. If campus WiFi dies, the laptop plan dies with it, which is why the fallback in §14's Phase 7 is a recorded walkthrough on local storage rather than a seeded dataset that lives in Supabase (D-62).
@@ -569,7 +571,7 @@ The single most important idea here: **build one thin slice through the entire s
 **Phase 0 — plumbing (days, not weeks)**
 Environment on all three machines (§8/§9). Repo scaffolded (§3). Oracle instance provisioned, nginx and TLS up, both systemd units running something trivial. Supabase projects created, keep-alive cron running. Express has one route, `GET /health`, that queries one table. The Expo app has one screen that calls it and displays the result, from a phone, over the internet, against the real deployed API. Nothing here is a feature. The entire goal is proving the wiring.
 
-Also in Phase 0: the **Cloudflare Tunnel** (§13), so remote testing works from day one rather than being a demo-week addition; **Sentry's free tier**; and the **GitHub Actions keep-alive** (D-67).
+Also in Phase 0: **Sentry's free tier** and the **GitHub Actions keep-alive** for both Supabase projects (D-67). The **Cloudflare Tunnel** (§13) waits for the M1 demo stack a month before the demo (D-76); the Oracle instance covers remote testing until then.
 
 Also in Phase 0: **create `docs/ARCHITECTURE.md` and assign it an owner.** It is referenced throughout this handbook as the source of truth (§18) and it does not write itself. Start it with headed but empty sections, filled in as each is decided: data model with every table and its RLS intent; the upload pipeline; the blur pipeline's stages and job types; measured similarity thresholds with the date they were measured; and deployment layout, which now means both environments and the DNS record. One person owns keeping it current, and updating it is part of the PR that changes the thing it describes, not a separate task nobody does.
 
@@ -621,10 +623,11 @@ Testing pass, performance pass (§16), UI polish, and demo rehearsal on real dev
 
 **This is also where the team reads the codebase** (D-68). Walk the subsystems in the order §14 built them, using `docs/ARCHITECTURE.md` and the decision log as the map. Ask an agent to explain anything unfamiliar; that is a good use of it and costs nothing.
 
-**Three Phase 7 items that are not polish and will be skipped if they are not named:**
+**Four Phase 7 items that are not polish and will be skipped if they are not named:**
 - **Judge devices** (D-61). The build installed on team-owned Android phones, accounts signed in, at least a week ahead. This is not testable on demo morning.
 - **The offline fallback** (D-62). A recorded walkthrough of the full script on a USB stick and on a laptop in the room. The seeded dataset lives in Supabase, so a network failure takes it too.
 - **The Azure rehearsal**, per the standby criteria above.
+- **The M1 demo stack** (D-76). API, worker and named tunnel on the M1 against the stable project, up at the start of this phase.
 
 Roughly: Phases 0 through 4 in the first semester, 5 through 7 in the second. A loose target, not a commitment.
 
@@ -765,9 +768,9 @@ The places where this matters most: the **image-serving endpoint's authorization
 
 Note that the serving check is application logic rather than SQL now that `dnp_crop` is gone (D-57). That makes it easier to test and no less dangerous to get wrong. An agent will happily write `if (isSubject) return subjectKey; return publicKey;` with `isSubject` derived from a client-supplied parameter, and it will look completely reasonable. The negative test is what catches that; nothing about how the code reads will.
 
-**Rule 2: one human-authored architecture document is the source of truth, not the agent's memory of the last session.**
+**Rule 2: one architecture document with a named owner is the source of truth, not the agent's memory of the last session.**
 
-Create `docs/ARCHITECTURE.md` in Phase 0. It holds: the data model with every table and its RLS intent, the upload pipeline and its R2 key families (D-70), the blur pipeline's stages, your calibrated similarity thresholds and the date you measured them, and the deployment layout. You maintain it by hand. You paste it into context at the start of sessions that need it.
+Create `docs/ARCHITECTURE.md` in Phase 0. It holds: the data model with every table and its RLS intent, the upload pipeline and its R2 key families (D-70), the blur pipeline's stages, your calibrated similarity thresholds and the date you measured them, and the deployment layout. Ukasha owns it and decides every change; agents write the text (D-75). You paste it into context at the start of sessions that need it.
 
 Without this, each agent session re-derives your design from whatever files it happened to read, and the derivations drift. Three weeks in you have two slightly different mental models of the same system living in two people's chat histories, and nobody notices until the field names stop matching.
 
