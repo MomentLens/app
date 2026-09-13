@@ -71,7 +71,14 @@ module.exports = defineConfig([
             'Prefer react-native-reanimated worklets over the JS-driven Animated API (Handbook §16) so animations keep running while the JS thread is briefly busy.',
         },
       ],
+    },
+  },
 
+  {
+    // eslint-config-expo registers the @typescript-eslint plugin for TypeScript files
+    // only. Any rule from it in a block that also matches .js files crashes ESLint.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
       // CLAUDE.md: "Correctness and efficiency come first... do not drop
       // error handling or an edge case to shorten a diff." A stray `any`
       // is exactly that kind of shortcut, so flag it rather than forbid it.
