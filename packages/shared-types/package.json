@@ -10,6 +10,13 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit"
   },
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": "prettier --write"
+  },
   "devDependencies": {
     "typescript": "6.0.3"
   }

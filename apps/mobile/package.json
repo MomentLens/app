@@ -42,5 +42,12 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit"
   },
+  "lint-staged": {
+    "*.{ts,tsx,js,jsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css}": "prettier --write"
+  },
   "private": true
 }

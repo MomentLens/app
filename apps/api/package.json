@@ -10,6 +10,13 @@
     "typecheck": "tsc --noEmit",
     "test": "jest"
   },
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": "prettier --write"
+  },
   "dependencies": {
     "@momentlens/shared-types": "workspace:*",
     "express": "5.2.1",
