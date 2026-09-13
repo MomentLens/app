@@ -28,13 +28,13 @@ A slice is not done when the screen renders. It is done when all of these are tr
 - [ ] zod schema merged in `packages/shared-types`
 - [ ] RLS policy written, or explicitly noted as not applicable
 - [ ] **Read by a human before merging** if the slice touches any RLS policy, the image-serving endpoint's authorization check, the upload queue's state machine, or auth and invite-token handling (D-68)
-- [ ] A negative test for each of those surfaces. RLS tests run through the API and directly against Supabase (Handbook §11, D-71)
+- [ ] A negative test for each of those surfaces, and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-73)
 - [ ] Loading, empty, and error states exist, not just the happy path (Handbook §15)
 - [ ] Works on a physical device, not only a simulator, if it touches camera, GPS, or the queue (Handbook §10)
 - [ ] Unit test for any pure logic in it (Handbook §11)
 - [ ] Dark mode uses tokens, no hardcoded hex
 - [ ] Reviewed by one other person (Handbook §12)
-- [ ] `docs/ARCHITECTURE.md` updated if the slice added a table, a column, an R2 key, or a job type
+- [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, with Ukasha reviewing that change (D-75)
 
 ## Ownership
 
@@ -52,13 +52,13 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Reference |
 |---|---|---|
-| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky. `apps/api` and `packages/shared-types` still have no `package.json` or `tsconfig.json`, and no lint dependency is installed | HB §3, §11 |
+| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, §11 |
 | P0-2 | Oracle instance, nginx, TLS, both systemd units running something trivial | HB §13 |
-| P0-3 | Supabase dev + stable projects, keep-alive as a GitHub Actions scheduled workflow | HB §13, D-67 |
+| P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14 Phase 0 |
 | P0-5 | **InsightFace ARM spike.** Blocking. If this fails the worker plan changes | HB §14 Phase 0 |
-| P0-6 | Owner assigned for `docs/ARCHITECTURE.md`, who reviews the generated skeleton. Naming convention. Figma tokens into `apps/mobile/tailwind.config.js` | HB §18 |
-| P0-7 | Cloudflare named tunnel on the M1, used for everyday remote testing from the start | HB §13, D-50, D-51 |
+| P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §18 |
+| P0-7 | Moved out of Phase 0. The M1 demo stack, tunnel included, goes up at the start of Phase 7 (D-76) | D-76 |
 | P0-8 | Sentry free tier on the app and the API | HB §11 |
 | P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, §13 |
 
@@ -132,23 +132,25 @@ The heaviest phase. Ukasha owns most of it because of the ARM alignment, so hand
 |---|---|---|---|---|
 | S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, §14 Phase 5 | U | S-18a, P0-5 |
 | S-19 | **Manual blur box** (fallback rung 3). Build this before S-20 | HB §14 Phase 5 | B | S-13 |
-| S-20 | Face detection, embedding, stored face boxes, reference photo upload (up to 5) | §4.11, §4.2 | U | S-18 |
+| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11, §4.2, D-74 | U | S-18 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11, §4.13, D-57, D-60, D-69, D-72 | U | S-20 |
-| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5, §4.11, D-59 | B | S-21 |
-| S-23 | Find My Photos and Recognized Faces strip, **viewer-scoped filter** | §4.11 | C | S-20 |
-| S-24 | Manual correction: tap own face, threshold check, Review Queue Confirm/Revert | §4.11, §2.5 | C | S-22, S-23 |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5, §4.11, D-77 | B | S-21 |
+| S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11, D-74 | C | S-20 |
+| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11, §2.5, D-74 | C | S-22, S-23 |
 | S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11, HB §6, D-69 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11 | U | S-20 |
 
 **S-19 first, before the ML work.** Half a day, cannot fail, and it is your escape hatch when automatic matching misses something live (HB §14).
 
-**S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5). Write its negative test before the endpoint (HB §11). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72). Before writing the `dnp_subject` policy, read `docs/ARCHITECTURE.md` §1 on subject identity leaking through Realtime.
+**S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5). Write its negative test before the endpoint (HB §11). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72).
 
 **S-22's marker is a correctness requirement, not polish** (D-26). Without it a missed match is undetectable by the only person who could report it.
 
 **S-23 fails silently if built wrong.** A global exclusion passes every test written from another viewer's perspective and returns nothing for the subject (D-46). Write the positive test: a DNP user runs Find My Photos and gets their photos.
 
 **S-25 looks skippable and is not.** Three things break at once without it (HB §14 Phase 5). It regenerates thumbnails as well as full files. Forgetting them throws nothing and shows the face in the grid only (D-69).
+
+**S-24's revert deletes the auto-added reference the request created.** Left in place, a fraudulent request keeps pulling the requester's matching toward someone else's face (D-54).
 
 ---
 
@@ -168,7 +170,7 @@ The heaviest phase. Ukasha owns most of it because of the ARM alignment, so hand
 
 # Phase 7 — nobody owns slices
 
-Testing pass, performance pass, seeded demo dataset, Azure fallback rehearsal, demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14).
+Testing pass, performance pass, seeded demo dataset, Azure fallback rehearsal, demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The M1 demo stack goes up at the start of it (D-76).
 
 ---
 
@@ -179,9 +181,9 @@ The spec describes these and no slice above owns them. Fold each into a slice or
 - The photo Flag action and the flagged-photos half of the Review Queue (spec §2.5, Single photo view and Manage)
 - Photo soft delete by the uploader, and Admin remove and restore (§2.1 Phase D, §4.9, §4.21)
 - Delete and archive event (§4.3, §4.21)
-- The retention job that permanently deletes media from R2 and rows from Postgres (§4.21). No runtime owns scheduled work yet. One option that fits the current design is `pg_cron` enqueuing a daily pgmq message for the worker, which already holds R2 credentials
+- The retention job that permanently deletes media from R2 and rows from Postgres (§4.21). No demo beat uses it (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes (`docs/ARCHITECTURE.md` §5)
 - Delay a sub-event (§4.3). Probably S-04; confirm
-- The Admin's album open/close toggle itself (§4.9). S-31 covers only the confirm dialog
+- The Admin's album open/close toggle itself (§4.9). S-31 covers only the confirm dialog, and beat 9 needs the toggle
 
 ---
 
@@ -214,7 +216,7 @@ Order of work:
 
 Done means: schema merged, RLS policy written or explicitly N/A, loading +
 empty + error states, unit test for any pure logic, dark mode via tokens,
-a negative test for any human-read surface.
+a negative authorization test for every endpoint.
 
 [paste the Figma frame here]
 ```

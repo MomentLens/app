@@ -3,11 +3,9 @@
 // MomentLens — mobile app lint config.
 // Base: eslint-config-expo/flat (Expo SDK 56+, RN 0.85+, New Architecture only).
 //
-// Install:
-//   pnpm --filter mobile add -D eslint-config-expo
-//   (eslint, @eslint/js, typescript-eslint, eslint-config-prettier, globals
-//   are expected to already be at the workspace root — see apps/api's config
-//   for the shared install command)
+// eslint-config-expo is a devDependency of this package. eslint and
+// eslint-config-prettier come from the workspace root, shared with apps/api
+// and packages/shared-types.
 //
 // The custom rules below aren't generic TS hygiene — they encode specific
 // rules from the root CLAUDE.md and Engineering Handbook §16 that are easy
@@ -71,7 +69,14 @@ module.exports = defineConfig([
             'Prefer react-native-reanimated worklets over the JS-driven Animated API (Handbook §16) so animations keep running while the JS thread is briefly busy.',
         },
       ],
+    },
+  },
 
+  {
+    // eslint-config-expo registers the @typescript-eslint plugin for TypeScript files
+    // only. Any rule from it in a block that also matches .js files crashes ESLint.
+    files: ['**/*.{ts,tsx}'],
+    rules: {
       // CLAUDE.md: "Correctness and efficiency come first... do not drop
       // error handling or an edge case to shorten a diff." A stray `any`
       // is exactly that kind of shortcut, so flag it rather than forbid it.

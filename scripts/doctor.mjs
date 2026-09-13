@@ -25,7 +25,9 @@ const firstVersion = (text) => text?.match(/(\d+)\.(\d+)(?:\.(\d+))?/) ?? null;
 let failures = 0;
 const report = (ok, name, got, want, hint = '') => {
   if (!ok) failures++;
-  console.log(`${ok ? 'OK  ' : 'FAIL'}  ${name.padEnd(12)} got ${got ?? 'not found'}   want ${want}${!ok && hint ? `\n      ${hint}` : ''}`);
+  console.log(
+    `${ok ? 'OK  ' : 'FAIL'}  ${name.padEnd(12)} got ${got ?? 'not found'}   want ${want}${!ok && hint ? `\n      ${hint}` : ''}`,
+  );
 };
 
 const nodeGot = process.version.slice(1);
@@ -36,10 +38,22 @@ report(pnpmGot === WANT.pnpm, 'pnpm', pnpmGot, WANT.pnpm, `npm install -g pnpm@$
 
 const uvPython = run(`uv python find ${WANT.python}`);
 const pyGot = uvPython ? firstVersion(run(`"${uvPython.split('\n')[0]}" --version`))?.[0] : null;
-report(pyGot?.startsWith(`${WANT.python}.`), 'python', pyGot, `${WANT.python}.x`, `uv python install ${WANT.python}`);
+report(
+  pyGot?.startsWith(`${WANT.python}.`),
+  'python',
+  pyGot,
+  `${WANT.python}.x`,
+  `uv python install ${WANT.python}`,
+);
 
 const javaGot = firstVersion(run('java -version'));
-report(javaGot?.[1] === WANT.java, 'java', javaGot?.[0], `${WANT.java}.x`, 'Install JDK 17 and point JAVA_HOME at it');
+report(
+  javaGot?.[1] === WANT.java,
+  'java',
+  javaGot?.[0],
+  `${WANT.java}.x`,
+  'Install JDK 17 and point JAVA_HOME at it',
+);
 
 const sdk = process.env.ANDROID_HOME;
 report(Boolean(sdk && existsSync(sdk)), 'ANDROID_HOME', sdk, 'an existing Android SDK folder');
@@ -50,14 +64,22 @@ if (process.platform === 'darwin') {
   const x = firstVersion(run('xcodebuild -version'));
   const maj = Number(x?.[1]);
   const min = Number(x?.[2]);
-  const ok = Boolean(x) && maj < WANT.xcode.belowMajor &&
+  const ok =
+    Boolean(x) &&
+    maj < WANT.xcode.belowMajor &&
     (maj > WANT.xcode.min[0] || (maj === WANT.xcode.min[0] && min >= WANT.xcode.min[1]));
   report(ok, 'xcode', x?.[0], '26.4 to 26.x', 'xcodes install 26.6 --select');
 }
 
 if (process.platform === 'win32') {
   const crlf = run('git config --get core.autocrlf');
-  report(crlf !== 'true', 'git autocrlf', crlf ?? 'unset', 'false or unset', 'git config --global core.autocrlf false');
+  report(
+    crlf !== 'true',
+    'git autocrlf',
+    crlf ?? 'unset',
+    'false or unset',
+    'git config --global core.autocrlf false',
+  );
 }
 
 console.log(failures ? `\n${failures} check(s) failed.` : '\nMachine matches the repo pins.');

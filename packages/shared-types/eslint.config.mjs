@@ -9,8 +9,7 @@
 // shared contract in the first place — both sides keep compiling, and the
 // mismatch only shows up at runtime.
 //
-// Install: this package uses the same root devDependencies as apps/api —
-//   pnpm add -D -w eslint @eslint/js typescript-eslint eslint-config-prettier
+// Uses the same root devDependencies as apps/api.
 
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
@@ -25,10 +24,7 @@ export default tseslint.config(
 
   {
     files: ['**/*.ts'],
-    extends: [
-      ...tseslint.configs.recommendedTypeChecked,
-      ...tseslint.configs.stylisticTypeChecked,
-    ],
+    extends: [...tseslint.configs.recommendedTypeChecked, ...tseslint.configs.stylisticTypeChecked],
     languageOptions: {
       parserOptions: {
         projectService: true,

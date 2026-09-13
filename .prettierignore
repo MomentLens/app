@@ -1,0 +1,9 @@
+# Prettier already skips everything .gitignore lists.
+pnpm-lock.yaml
+.claude/settings.local.json
+apps/mobile/expo-env.d.ts
+apps/mobile/assets/
+
+# The docs are edited by hand. Prettier re-pads every markdown table and rewrites
+# emphasis markers, which buries the real change in a whitespace diff.
+*.md

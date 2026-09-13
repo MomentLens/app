@@ -1,4 +1,12 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+# Each of these ships its native binary as a platform-specific optional dependency.
+# Their install scripts only verify that binary or build one from source when it is
+# missing, so none of them needs to run. Review this list when pnpm adds an entry.
+allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
+  esbuild: false
+  unrs-resolver: false
 engineStrict: true

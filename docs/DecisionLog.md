@@ -295,6 +295,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** Scope discussions without an anchor drift forever. With one, "is this core?" becomes "does it appear in a beat?", which is answerable in five seconds.
 **Corollary.** A seeded dataset that loads in ten seconds must exist before the defense, so that a WiFi failure does not become a live debugging session.
 **Amended.** The v11 script in spec §9 has nine beats. D-62 replaced this corollary's fallback with a recording.
+**Amended (see D-77).** Pinch-zoom is core without appearing in any beat, the one named exception to this rule.
 
 ### D-45 — Every AI-generated line must be explainable by a human on the team ~~(SUPERSEDED by D-68)~~
 > **Superseded.** The line-by-line comprehension gate is gone; see D-68. Two clauses survive there in a different form: the dangerous surfaces still get read before merging, and `ARCHITECTURE.md` is still the source of truth.
@@ -344,6 +345,7 @@ Two constraints settled a third of these before any of them were argued individu
 **Rejected.** Claiming a deployment without having one. "We deployed but chose our laptop due to compute costs" invites exactly one follow-up, and a panel that asks for the systemd unit and gets improvisation has learned something about the whole project rather than just about the server. D-45 is the team's own rule; this is that rule pointed at the deployment story.
 **Cost.** ⚠ The laptop moves compute out of the cloud. It does not remove the network dependency: Supabase, R2 and the phones are all still on it. See D-61.
 **The line to use.** Production runs on an Oracle ARM instance. The demo runs the API and worker locally behind a Cloudflare Tunnel because the M1 gives roughly four times the inference throughput of the free tier, and the panel should see real latency rather than free-tier latency.
+**Amended (see D-76).** Development runs on the Oracle instance and the M1 demo stack goes up one month before the demo, so dev and demo are no longer the same environment.
 
 ### D-51 — ngrok is not the tunnel
 **Decision.** Cloudflare Tunnel with a named hostname.
@@ -394,6 +396,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Decision.** The full-screen viewer supports pinch-zoom and pan. Supersedes D-06.
 **Why.** D-06 deferred them for exactly one reason: keeping an unblurred crop welded to the correct pixels through a gesture-driven transform. D-57 removed the crop, so the subject is looking at an ordinary image like everyone else and the self-visible marker is a static badge that cannot drift.
 **Cost.** None to the privacy design. It is now a normal feature with normal cost, built if there is time.
+**Amended (see D-77).** Core scope, not "if there is time."
 
 ### D-60 — Blur variant object keys carry a version ⚠
 **Decision.** `{media_id}/public_v{n}.jpg` and `{media_id}/{subject_id}_v{n}.jpg`, with `variant_version` as an integer column on the media row, bumped on every regeneration and carried in the Realtime row update.
@@ -471,7 +474,9 @@ Four gaps found by reading the spec, handbook and this log against each other be
 **Rejected.** A Postgres function returning every key format, called by both sides. One place in the literal sense, at the cost of a round trip per key and the version-bump logic living in SQL.
 **What still holds.** The drift the original rule prevented, two languages formatting the same key, still cannot happen, because each family has one builder in one language.
 
-### D-71: Express queries Supabase as the caller
+### D-71: Express queries Supabase as the caller ~~(SUPERSEDED by D-73)~~
+> **Superseded.** Writing as the caller needs RLS write policies that the app can also use directly, skipping pre-flight. D-73 moved every API query to the secret key and made RLS deny direct access except the two Realtime reads.
+
 **Decision.** The auth middleware builds a Supabase client from the caller's JWT for each request, so RLS applies to every API query. The secret key, which bypasses RLS, is used by the worker and by one clearly named module in `apps/api/src/db/` for operations that run before the caller has a membership row, such as resolving an invite token.
 **Why.** Handbook §5 justifies RLS as the guard against one buggy Express path leaking data. With the secret key in Express, RLS would skip every API query and guard only Realtime and direct client queries.
 **Rejected.** The secret key for every Express query. Simpler wiring. The team picked it first and switched once the conflict with Handbook §5 was pointed out: every Express permission check would have been the only guard, and the RLS negative tests would have covered no API route.
@@ -485,6 +490,42 @@ Four gaps found by reading the spec, handbook and this log against each other be
 
 ---
 
+# L. Decided while completing ARCHITECTURE.md (2026-09-13)
+
+The rule the team set for these: MomentLens is built for a demo, not a public deployment, so the more robust option wins only when it costs about the same to build.
+
+### D-73: Express uses the secret key, and RLS denies direct access ⚠
+**Decision.** Supersedes D-71. The API queries Supabase with the secret key and makes every authorization decision in its service layer. RLS is on for every table with no policies except `SELECT` on `media` and `event`, which Realtime needs. The app uses Supabase directly only for Auth and those two Realtime subscriptions.
+**Why.** D-71 ran API queries as the caller so RLS would cover them. That holds for reads only. Writing as the caller needs RLS write policies, and the app can use those same policies directly with its own login, skipping pre-flight, for example by inserting a media row with `processed_at` already set. Face and subject data also needs per-viewer column filtering, which RLS cannot express. Fixing both meant server-only writes plus Postgres functions for every sensitive read. That costs clearly more than this option, and the risk it covers belongs to a public deployment.
+**Rejected.** D-71 corrected as described above: more policies, SQL functions and two test paths. Per-table write policies with column revokes: more work than either, and a modified app could still make those writes.
+**Cost.** ⚠ Handbook §5's reason for RLS no longer covers the API. A service function with a missing check returns another user's data and the database does not stop it. Every endpoint ships with a negative authorization test (another user, another event, the wrong role), and the image-serving check stays on the human-read list (D-68).
+
+### D-74: The worker does all face matching and stores the results
+**Decision.** Embeddings are stored in pgvector `vector(512)` columns. The worker runs every comparison: when a photo is processed, when a subject's references change, and on a tap-to-blur. It writes the result onto the `face` row (matched subject, similarity, Unknown cluster). The API never compares vectors; Find My Photos and the face filters are indexed lookups.
+**Why.** The worker never serves live requests (Handbook §2), so request-time matching would have put the similarity logic and thresholds in SQL functions as well as in the worker. Stored results keep every threshold in one codebase.
+**Rejected.** pgvector similarity queries run by the API on each request. No re-match job, and two places to keep in sync.
+**Cost.** New reference photos show up in Find My Photos only after a `reprocess` run. At this scale that is milliseconds of work (D-66).
+
+### D-75: Ukasha owns ARCHITECTURE.md, and agents write it
+**Decision.** Settles the ownership open item and replaces "you maintain it by hand" in Handbook §18 Rule 2. Ukasha owns `docs/ARCHITECTURE.md` and decides what it says. Agents write the text. An agent changes the file only to record a decision Ukasha made or what merged code actually does, in the same PR. It never edits the file to match code that disagrees with it, and it asks instead of filling in anything undecided.
+**Why.** Rule 2 exists so the source of truth does not drift with each agent session. An owner deciding every change keeps that property. Typing the text by hand adds nothing to it.
+**Rejected.** Writing the file by hand, which costs the owner's time and protects nothing that the owner's review does not.
+**Cost.** Ukasha reviews every PR that touches the file, which adds to the bottleneck WorkSlices already warns about.
+
+### D-76: Development runs on the Oracle instance; the M1 demo stack goes up a month before the demo
+**Decision.** Amends D-50 and Handbook §13 and §14 Phase 0. All three developers build against the Oracle instance on the dev Supabase project and the dev R2 bucket. The M1 demo stack (API, worker, Cloudflare named tunnel, stable project and bucket) goes up one month before the demo, at the start of Phase 7. The tunnel leaves Phase 0.
+**Why.** Handbook §13 put the tunnel in Phase 0 for everyday remote testing, and the Oracle instance already gives the team a public HTTPS backend from Phase 0. The M1's advantage, faster inference (D-50), matters on demo day.
+**Rejected.** The tunnel in Phase 0 as the everyday remote-testing setup.
+**Cost.** The demo stack runs for the first time a month out. The M1 and Oracle share an architecture, so the remaining risk is configuration, which the Phase 7 rehearsal covers. If the M1 fails in demo week, Oracle only works as the fallback after its `.env` switches to the stable project, because the demo build logs in against stable.
+
+### D-77: Pinch-zoom is core, as a named exception to D-44
+**Decision.** Amends D-59 and D-44. The single photo viewer ships with pinch-zoom and pan (spec §2.5) in S-22, although no demo beat shows it. It is the one named exception to D-44's rule that scope is what the demo script shows.
+**Why.** Spec §0 and §2.5 already called it core while D-59 said "built if there is time." The team judged it small: an agent has already built it in another project.
+**Rejected.** Adding a zoom moment to beat 5, which would have changed the demo script.
+**Watch for.** Pan and the pager's swipe compete for the same gesture while zoomed in, and zoom has to reset when the pager moves to another photo.
+
+---
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -493,7 +534,7 @@ These are not settled and should not be treated as though they are.
 - **`buffalo_l` versus `buffalo_s`.** Decide with a measurement. Measure on the M1, since D-50 makes it the demo runtime, and separately on the Oracle instance if that box is ever going to serve a real request.
 - **Whether `insightface` compiles on aarch64.** Trivial on an M1 and still a Phase 0 spike for the Oracle instance, which D-50 keeps in the plan. If it fails there, the worker plan changes and that must be known in week one.
 - **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
-- **Who owns `docs/ARCHITECTURE.md`.** Assign in Phase 0. A source of truth with no owner becomes stale in about three weeks, and D-68 depends on it being current. A generated skeleton was added on 2026-09-13; it still needs an owner to read and correct it.
+- ~~Who owns `docs/ARCHITECTURE.md`.~~ **Settled by D-75.** Ukasha owns it; agents write it.
 - **Whether the Azure fallback actually works.** D-38 calls it a hot standby. It is not one until `scripts/provision.sh` exists and has been run against a real Azure VM once. Half a day in Phase 7. Note that D-50 already gives the project a cheaper second fallback, since the Oracle instance and the laptop each cover for the other.
 - **The feature-complete date.** The plan is to build fast, harden afterwards, and hold a month of buffer. That buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Two things that plan gets wrong and that the team should settle before relying on it. AI velocity does almost nothing for the parts that actually consume months: the viewfinder, background upload, the SQLite queue's state machine, deep links, push certificates, and RLS, all of which fail at device and configuration boundaries rather than in code, with a debug loop that is manual and one device at a time. And "harden later" is false for anything with a shape, including D-60's version column, D-63's schema split, D-54's curated flag and D-55's visibility predicate; get those wrong and it is a migration against live rows, not a refactor.
 - ~~Whether D-45 survives contact with generated code volume.~~ **Settled by D-68.** Comprehension moves to the Phase 7 month; a named list of dangerous surfaces still gets read before merging.

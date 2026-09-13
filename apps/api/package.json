@@ -1,0 +1,36 @@
+{
+  "name": "api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "build": "node scripts/build.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "lint-staged": {
+    "*.{ts,js,mjs,cjs}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.json": "prettier --write"
+  },
+  "dependencies": {
+    "@momentlens/shared-types": "workspace:*",
+    "express": "5.2.1",
+    "pino": "10.3.1"
+  },
+  "devDependencies": {
+    "@jest/globals": "30.5.1",
+    "@swc/core": "1.16.2",
+    "@swc/jest": "0.2.39",
+    "@types/express": "5.0.6",
+    "@types/node": "24.13.4",
+    "esbuild": "0.28.2",
+    "jest": "30.5.1",
+    "tsx": "4.23.13",
+    "typescript": "6.0.3"
+  }
+}

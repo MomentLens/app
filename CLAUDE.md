@@ -13,7 +13,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | What should this feature do? | `docs/Idea.md`, the numbered section for that feature |
 | How do I build it here? | `docs/EngineeringHandbook.md` |
 | Why is it this way, and what was rejected? | `docs/DecisionLog.md`, entry `D-nn` |
-| Current schema, R2 keys, jobs, thresholds, deploy layout | `docs/ARCHITECTURE.md`, the living source of truth, owned and maintained by a named person |
+| Current schema, data access, R2 keys, jobs, thresholds, deploy layout | `docs/ARCHITECTURE.md`, the living source of truth, owned by Ukasha (D-75) |
 | Which unit of work, who owns it, what it waits on | `docs/WorkSlices.md` |
 
 | Working on | Read first |
@@ -22,7 +22,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Blur, face detection, Do Not Publish | Spec §4.11 + Handbook §6 |
 | Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §2 + D-69 |
 | Album, grid, filters | Spec §4.9 + Handbook §16 |
-| RLS or any permission check | Handbook §5 + `docs/ARCHITECTURE.md` §1 + D-71 |
+| RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5 |
 | Navigation or screens | Spec §2.5 + Handbook §16.5 |
 | Deployment | Handbook §13 |
 
@@ -49,6 +49,7 @@ These fail **silently**. Wrong code here looks correct, throws nothing, and pass
 11. **N Do Not Publish subjects means N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. (D-57)
 12. **Each family of R2 keys has exactly one builder.** The API builds upload keys (the original and the client thumbnail) in one function and writes them onto the media row at pre-flight. The worker builds every derived key and writes those. Neither builds the other's, and whatever serves a file reads the column. (D-70)
 13. **The client thumbnail is unblurred.** It is served only for a photo with no Do Not Publish face. When the worker matches a subject it writes blurred thumbnails at new versioned keys, and `reprocess` regenerates thumbnails along with the full files. Nothing is overwritten in place. (D-69)
+14. **RLS denies everything except `SELECT` on `media` and `event`, which Realtime needs.** The API uses the secret key and enforces every rule in its service layer, with a negative test per endpoint. Never add a policy to make a client query work; add an endpoint. A direct table query from the app returns empty rows, not an error. (D-73)
 
 ---
 
@@ -59,7 +60,7 @@ Not a comprehension exercise. These four fail silently when they are wrong, so a
 - Any RLS policy
 - The image-serving endpoint's authorization check
 - The upload queue's state machine
-- Auth and invite-token handling, including every use of the API's secret-key Supabase client (D-71)
+- Auth and invite-token handling
 
 ---
 
@@ -95,7 +96,7 @@ docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 
 ## Commands
 
-<!-- TODO: `pnpm --filter api dev` and the worker command do not exist until P0-1 and P0-4. Verify both the day they do, then delete this comment. -->
+<!-- TODO: the worker command does not exist until P0-4. Verify it the day it does, then delete this comment. -->
 
 ```bash
 pnpm install
@@ -106,7 +107,7 @@ pnpm lint && pnpm typecheck && pnpm test
 cd worker && .venv/bin/python -m app.main
 ```
 
-The demo backend runs on the M1 behind a Cloudflare Tunnel; production is an Oracle ARM instance, and both stay working. Handbook §13, D-50.
+Development runs against the Oracle ARM instance on the dev Supabase project. The demo backend goes up on the M1 behind a Cloudflare Tunnel one month before the demo. Handbook §13, D-50, D-76.
 
 ---
 
@@ -133,4 +134,5 @@ Training data is older than these. Check real docs before building on an API you
 - **The spec is locked.** New features go to spec §6.2 as designed-and-deferred, not into the build.
 - If a decision here looks wrong, say which `D-nn` you think should be reopened and why. Do not quietly build the other thing.
 - Slice work starts with `/slice S-XX`.
+- **`docs/ARCHITECTURE.md` belongs to Ukasha.** Change it only to record a decision Ukasha made or what merged code does, in the same PR. If code and that file disagree, stop and ask; never edit the file to match the code. Ask about anything undecided instead of guessing. (D-75)
 - Conventional commits (`feat:`, `fix:`, `chore:`). Trunk-based, short-lived branches, one reviewer per PR. Small commits even when a lot was generated at once. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits.
