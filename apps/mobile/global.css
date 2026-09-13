@@ -1,6 +1,7 @@
 /**
  * MomentLens — global.css
- * Lives in apps/mobile/, imported once in app/_layout.tsx (`import "../global.css"`)
+ * Lives in apps/mobile/, imported once in src/app/_layout.tsx (`import "../../global.css"`)
+ * Not the same file as src/global.css, the Expo template's web font stylesheet, which goes with the template.
  * and wired into Metro via `withNativeWind(config, { input: "./global.css" })`.
  *
  * Values are space-separated RGB triples (not hex) so tailwind.config.js can

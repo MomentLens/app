@@ -3,5 +3,11 @@
   "private": true,
   "packageManager": "pnpm@11.26.0",
   "engines": { "node": ">=24.21.0 <25" },
+  "scripts": {
+    "check:machine": "node scripts/doctor.mjs",
+    "lint": "pnpm -r --if-present run lint",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test"
+  },
   "devDependencies": { "supabase": "2.117.0" }
 }

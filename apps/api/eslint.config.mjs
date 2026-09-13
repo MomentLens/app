@@ -1,6 +1,6 @@
 // apps/api/eslint.config.mjs
 //
-// MomentLens — API lint config (Express 5, TypeScript, Node 20.19.4+).
+// MomentLens — API lint config (Express 5, TypeScript, Node 24 as pinned in .nvmrc).
 // Type-checked via typescript-eslint + projectService, so this needs a real
 // tsconfig.json in apps/api to run against.
 //
