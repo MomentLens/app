@@ -52,7 +52,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Reference |
 |---|---|---|
-| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky. `apps/api` and `packages/shared-types` still have no `package.json` or `tsconfig.json`, and no lint dependency is installed | HB §3, §11 |
+| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, §11 |
 | P0-2 | Oracle instance, nginx, TLS, both systemd units running something trivial | HB §13 |
 | P0-3 | Supabase dev + stable projects, keep-alive as a GitHub Actions scheduled workflow | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14 Phase 0 |

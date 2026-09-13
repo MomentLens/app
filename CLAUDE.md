@@ -95,7 +95,7 @@ docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 
 ## Commands
 
-<!-- TODO: `pnpm --filter api dev` and the worker command do not exist until P0-1 and P0-4. Verify both the day they do, then delete this comment. -->
+<!-- TODO: the worker command does not exist until P0-4. Verify it the day it does, then delete this comment. -->
 
 ```bash
 pnpm install

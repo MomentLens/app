@@ -3,11 +3,9 @@
 // MomentLens — mobile app lint config.
 // Base: eslint-config-expo/flat (Expo SDK 56+, RN 0.85+, New Architecture only).
 //
-// Install:
-//   pnpm --filter mobile add -D eslint-config-expo
-//   (eslint, @eslint/js, typescript-eslint, eslint-config-prettier, globals
-//   are expected to already be at the workspace root — see apps/api's config
-//   for the shared install command)
+// eslint-config-expo is a devDependency of this package. eslint and
+// eslint-config-prettier come from the workspace root, shared with apps/api
+// and packages/shared-types.
 //
 // The custom rules below aren't generic TS hygiene — they encode specific
 // rules from the root CLAUDE.md and Engineering Handbook §16 that are easy

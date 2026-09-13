@@ -307,7 +307,7 @@ There is no role branch left to unit-test here. There is still a branch in the p
 1. **Homebrew**, if not already installed.
 2. **Node via a version manager**, not a system install. `fnm install && fnm use` reads the pinned version from `.nvmrc`.
 3. **pnpm**: the exact version pinned in `package.json` under `packageManager`. `corepack enable` picks it up, or run `npm install -g pnpm@<that version>`.
-4. **Watchman**: `brew install watchman`. Metro's file watcher; noticeably more reliable on macOS.
+4. **Skip Watchman.** Expo SDK 56 replaced it with a Node file watcher for Metro, and `apps/api` turns it off for Jest. A broken Homebrew install only prints dyld errors, so `brew uninstall watchman` rather than repairing it.
 5. **Xcode** from the App Store, for the iOS Simulator and local iOS builds. Unavoidably macOS-only.
 6. **Xcode Command Line Tools**: `xcode-select --install`.
 7. **CocoaPods**, usually handled by Expo's prebuild, but `sudo gem install cocoapods` if needed directly.
@@ -722,6 +722,7 @@ API (apps/api)
   @aws-sdk/client-s3           # presigned R2 upload URLs
   zod, @asteasolutions/zod-to-openapi
   pino, helmet
+  tsx, esbuild                 # dev server, and the dist/index.js bundle (§13)
 
 Worker (worker/)
   fastapi, uvicorn
@@ -733,7 +734,7 @@ Worker (worker/)
 
 Tooling (root)
   pnpm, eslint, prettier, husky, lint-staged
-  jest, jest-expo, pytest, ruff
+  jest, @swc/jest, jest-expo, pytest, ruff
   maestro
   eas-cli, supabase (CLI)
 ```

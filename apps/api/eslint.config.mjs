@@ -1,12 +1,11 @@
 // apps/api/eslint.config.mjs
 //
 // MomentLens — API lint config (Express 5, TypeScript, Node 24 as pinned in .nvmrc).
-// Type-checked via typescript-eslint + projectService, so this needs a real
-// tsconfig.json in apps/api to run against.
+// Type-checked via typescript-eslint + projectService against apps/api/tsconfig.json.
 //
-// Install (shared across all three TS workspaces — root of the pnpm
-// workspace, so mobile and shared-types pick up the same versions):
-//   pnpm add -D -w eslint @eslint/js typescript-eslint eslint-config-prettier globals
+// eslint, @eslint/js, typescript-eslint, eslint-config-prettier and globals are root
+// devDependencies, so all three TS packages lint with the same versions. ESLint stays
+// on 9 until eslint-config-expo's React and import plugins support 10.
 //
 // The no-restricted-imports block is the one rule here that isn't generic
 // Node/TS hygiene — it's CLAUDE.md invariant 5 and Handbook §16 turned into
