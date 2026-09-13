@@ -21,6 +21,8 @@ Routes live in `src/app/` (Expo Router) and everything else under `src/`. Screen
 
 **The upload queue is neither Zustand nor TanStack Query.** It must survive a force-kill and needs real queries. A thin hook reads it for the My Media banner counts.
 
+**Supabase in the app means Auth and Realtime on `media` and `event`, nothing else** (root invariant 14). Every other read and write goes through the API. A direct table query returns empty rows without an error, which looks exactly like an empty event.
+
 ---
 
 ## Album and lists
