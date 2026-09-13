@@ -9,7 +9,9 @@
     "check:machine": "node scripts/doctor.mjs",
     "lint": "pnpm -r --if-present run lint",
     "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
