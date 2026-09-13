@@ -2,7 +2,9 @@
 
 Expo app, iOS and Android. Root `CLAUDE.md` has the invariants; they apply here too.
 
-Screens map to spec §2.5. Read it before adding a route.
+Routes live in `src/app/` (Expo Router) and everything else under `src/`. Screens map to spec §2.5. Read it before adding a route.
+
+**Expo SDK 57 docs are at https://docs.expo.dev/versions/v57.0.0/.** Read the page for an Expo package before writing code against it. Training data describes older SDKs.
 
 ---
 
@@ -13,7 +15,7 @@ Screens map to spec §2.5. Read it before adding a route.
 | Server state | TanStack Query | event, album, attendees, schedule |
 | Client/UI state | Zustand | active sub-event chip, Public/Local Only toggle, filter sheet state, theme |
 | Upload queue | `expo-sqlite` | queued photos, status, retry count |
-| Auth | Supabase Auth owns the token; a thin `useAuthStore` mirrors "is someone logged in" |
+| Auth | Supabase Auth owns the token; a thin `useAuthStore` mirrors "is someone logged in" | |
 
 **Never copy server data into Zustand "just in case."** That reintroduces exactly the sync bugs TanStack Query exists to prevent.
 
@@ -33,8 +35,8 @@ Screens map to spec §2.5. Read it before adding a route.
 
 ## Images
 
-- **Never build an R2 URL.** Ask the API for the photo's image; it decides which file you get and returns a presigned URL (root invariant 3).
-- **`expo-image` cache keys must include `variant_version`** (root invariant 2). Without it, a retroactive blur leaves the pre-blur image in local disk cache and the feature silently fails for the people it exists for.
+- **Never build an R2 URL.** Ask the API for the photo's image or thumbnail. It decides which file you get and returns a presigned URL (root invariant 3).
+- **`expo-image` cache keys must include `variant_version`** (root invariant 2), for thumbnails as much as full images. Without it, a retroactive blur leaves the pre-blur image in local disk cache and the feature silently fails for the people it exists for.
 - Presigned URLs live one hour. Do not treat the URL itself as a stable identity.
 
 ---
@@ -46,9 +48,9 @@ One pipeline for every role. There is no role branch; do not reintroduce one.
 1. Strip EXIF, keeping only timestamp and orientation
 2. HEIC → JPEG
 3. Resize **only** if the longest edge exceeds 4096px
-4. 300px WebP thumbnail
-5. SHA-256 over the exact bytes about to be uploaded, **not the thumbnail** (root invariant 7)
-6. Pre-flight → presigned URL → direct PUT to R2 → notify the API
+4. 300px WebP thumbnail. It shows the unblurred photo, so it goes to R2 and nowhere else (root invariant 13)
+5. SHA-256 over the exact bytes about to be uploaded, **not the thumbnail** (root invariant 7). Use `expo-crypto`'s `digest()`; Node's `crypto` does not exist here
+6. Pre-flight (JSON, no image bytes) → presigned URLs for the photo and the thumbnail → direct PUT of both to R2 → notify the API
 
 All Stage 1 image work goes through `expo-image-manipulator`, never hand-rolled JS.
 
@@ -58,13 +60,15 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 
 ## Native modules
 
-`expo-camera` (viewfinder + QR), `expo-image-picker` (+ Add Media only, never in the viewfinder), `expo-image`, `expo-image-manipulator`, `expo-location` (foreground reads only, no background APIs), `expo-file-system` (Local Only storage), `expo-sqlite`, `expo-notifications`, `expo-haptics`. Background upload is iOS `beginBackgroundTask` + an Android foreground service.
+`expo-camera` (viewfinder + QR), `expo-image-picker` (+ Add Media only, never in the viewfinder), `expo-image`, `expo-image-manipulator`, `expo-crypto` (upload hash), `expo-location` (foreground reads only, no background APIs), `expo-file-system` (Local Only storage), `expo-sqlite`, `expo-notifications`, `expo-haptics`. Background upload is iOS `beginBackgroundTask` + an Android foreground service.
+
+**Expo Go cannot run all of this.** MMKV, a custom URL scheme for invite links, remote push and the background upload module need the development build (slice P0-9). When a native module fails to load, check whether the app is running in Expo Go before debugging the code.
 
 ---
 
 ## Local rules
 
-- **Styling is NativeWind with tokens from `constants/`.** Never a hardcoded hex in a component; dark mode depends on it.
+- **Styling is NativeWind v4 with tokens from `tailwind.config.js` and `global.css` in this folder**, the only two files allowed a hex value. Never a hardcoded hex in a component; dark mode depends on it. The template's `src/constants/theme.ts` and `src/global.css` predate the tokens and go when S-08 replaces the template screens.
 - **Gestures and animation use Reanimated worklets**, not the JS-driven `Animated` API. This is one of the three places where performance beats simplicity.
 - **No `AsyncStorage` patterns.** `react-native-mmkv` for key-value, SQLite for the queue.
 - Simulators fake camera and GPS badly. Develop the viewfinder and the verification gate on a real phone, not at the end.
