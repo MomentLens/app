@@ -33,7 +33,7 @@ One framing before anything else. Everything here assumes v11's scope. If buildi
 | Object storage | Cloudflare R2 | Zero egress fees, 10 GB permanently free. |
 | AI worker | Python 3.12+, FastAPI (thin), `pgmq` consumer | Face detection, embedding, and generation of the public and per-subject blur variants. There is no display-variant job; nobody resizes (D-58). |
 | Face detection & embeddings | InsightFace via ONNX Runtime, not PyTorch | ONNX runs meaningfully faster on CPU-only hosting and has a much smaller dependency footprint. |
-| Compute hosting | Oracle Cloud Always Free ARM instance (Singapore) for production; the team's M1 behind a Cloudflare Tunnel for the demo | Permanently free, no rotation, and the M1 runs inference 3 to 5x faster than 2 OCPUs of Ampere. Both exist. See §13 and D-50. |
+| Compute hosting | One Netcup RS 1000 G12 root server (4 dedicated AMD EPYC cores) for development and the demo | What the team develops against is what the panel sees, and nothing on demo day depends on a laptop. See §13 and D-78. |
 | Process management | `systemd` + `nginx` + `certbot` | No Docker. See §13 for why. |
 | CI | GitHub Actions | Free, you already have GitHub. |
 | E2E testing | Maestro | Local runs are free; cloud runs are metered. |
@@ -141,7 +141,7 @@ momentlens/
 │   └── supabase-keepalive.yml # D-67. Deliberately not a cron on the compute box.
 ├── scripts/
 │   ├── deploy.sh              # the §13 update sequence, written down once
-│   └── provision.sh           # the §13 setup sequence, for the Azure standby
+│   └── provision.sh           # the §13 setup sequence, run once on any new server
 ├── docs/
 │   ├── ARCHITECTURE.md        # see §18. This file is load-bearing
 │   ├── Idea.md                # the spec
@@ -248,7 +248,7 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 **Why this shape protects you.** Python's GIL means one process cannot truly run two CPU-bound tasks in parallel on threads; you need multiple processes. If the worker served live HTTP, a face-detection job would stall every other request that process was handling. As a queue consumer it is off the user-facing path entirely: the upload succeeds and returns the moment the file lands in R2, processing happens after, and the user finds out via Supabase Realtime. For more throughput you run more worker processes against the same queue. On a 2-core box, run **one** worker process and leave the second core for Express, Postgres connections, and nginx. Do not run two.
 
-**Load the model once, at startup.** Cold-loading InsightFace per job costs several seconds; the inference itself is roughly one to two seconds per photo on the Oracle instance and well under a second on the M1. Lazy-loading is the single most likely reason your demo feels slow, and it is entirely avoidable. Note that input resolution barely moves this number, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; what full-size input actually costs you is JPEG decode time, roughly 100 to 200ms.
+**Load the model once, at startup.** Cold-loading InsightFace per job costs several seconds; a warm model takes well under a second for a photo with a few faces and several seconds for a large group, because every face gets its own recognition pass (D-78 has the measured numbers). Lazy-loading is the single most likely reason your demo feels slow, and it is entirely avoidable. Note that input resolution barely moves this number, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; what full-size input actually costs you is JPEG decode time, roughly 100 to 200ms.
 
 **Job types:**
 
@@ -268,15 +268,15 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 **Blur implementation, specified in spec §4.11 and worth repeating because it is two lines that a viva will ask about:** expand the detection box 30 to 40 percent and mask elliptically, since a tight box leaves hair, ears, jawline and clothing visible; and blur by downsampling then upsampling with a box blur on top, since a single light Gaussian is partially invertible.
 
-**Use ONNX-exported models**, which InsightFace ships, rather than the full PyTorch runtime. Meaningfully faster CPU inference and a much smaller install, both of which matter on a small ARM box.
+**Use ONNX-exported models**, which InsightFace ships, rather than the full PyTorch runtime. Meaningfully faster CPU inference and a much smaller install, both of which matter on a CPU-only server.
 
-**Model choice.** Start with `buffalo_l` for accuracy. If the ARM instance is struggling, `buffalo_s` is materially faster with a modest accuracy cost. Decide with a measurement, not a guess.
+**Model choice.** Start with `buffalo_l` for accuracy. If the server is struggling, `buffalo_s` is materially faster with a modest accuracy cost. Decide with a measurement, not a guess.
 
 ---
 
 ## 7. The upload pipeline, architecturally
 
-Worth its own section because getting this wrong is the easiest way to make a free-tier VM the bottleneck for the entire app.
+Worth its own section because getting this wrong is the easiest way to make a small server the bottleneck for the entire app.
 
 **Do not route media bytes through Express.** If every photo flows through Node, you pay for that bandwidth and CPU twice, once receiving and once forwarding, on a box you are specifically keeping light. Instead:
 
@@ -319,9 +319,9 @@ There is no role branch left to unit-test here. There is still a branch in the p
 11. **VS Code** with ESLint, Prettier, Tailwind CSS IntelliSense, Python, and Expo Tools.
 12. **Check the machine** with `pnpm check:machine` (not `pnpm doctor`, which is pnpm's own command). It compares Node, pnpm, Python, Java, the Android SDK and Xcode against the repo pins.
 
-**One advantage worth exploiting.** Your M1 is ARM64 and so is the Oracle instance. Your local worker environment and production share an architecture, which eliminates a whole class of "works locally, segfaults on the server" bug for the Python side. Make yourself the primary owner of the AI worker for that reason alone.
+**One thing that changed.** Your M1 is ARM64 and the server is x86-64 (D-78), so local and production no longer share an architecture. InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both, which keeps that gap small. If a wheel behaves differently on the server, debug it there, not on your Mac. The M1 is still the fastest machine the team has measured for face processing, which is one reason the worker is yours.
 
-**And one responsibility that comes with it.** Under D-50 this machine is also the demo runtime. That means two things for you specifically. Set up the demo stack, tunnel included, one month before the demo (D-76), and rehearse it well before demo week. And do not let the Oracle instance rot just because the demo does not depend on it: the other two develop against it, it is the fallback that is not in the room, and the deployment claim has to survive an SSH-in-and-show-me.
+**What the M1 is not.** Since D-78 it is not the demo runtime. The API and worker run on the server for the demo, so anything the demo needs has to work there, not only on your Mac.
 
 ---
 
@@ -335,7 +335,7 @@ Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differ
   - You can write and test 100% of the Android side locally.
   - For iOS, **EAS Build compiles iOS binaries in the cloud with no local Mac**. You cannot run the Simulator, but you can build a real iOS app and install it on a physical iPhone via the Custom Dev Client, entirely from Windows. EAS Build's free tier covers a limited number of builds per month, which is enough if you are not rebuilding natively every day (§10 explains why you won't be).
   - For the rare Simulator-only moment, borrow Ukasha's machine.
-- **Architecture mismatch on the Python worker.** You are x86; production is ARM64. If a Python wheel installs cleanly for you and fails on the server, that is why. Do not debug it locally. SSH to the instance. This is a reason to let the M1 owner drive worker development.
+- **Architecture on the Python worker.** The server is x86-64 like your machine (D-78), so a wheel that installs in WSL2 should install on the server too. The M1 is now the machine that differs. If something fails only on the server, SSH in and debug it there.
 
 ---
 
@@ -420,60 +420,36 @@ main ← always deployable
 - `preview`: internal distribution, for "here, try this build" moments without the dev client attached.
 - `production`: what you demo from at your defense. It builds an APK with internal distribution, because the demo phones get the app by sideload (D-61) and Android's store format, an app bundle, cannot be sideloaded.
 
-### Backend: two environments, and both have to exist
+### Backend: one server for development and the demo
 
-**Production is the Oracle ARM instance. The demo runs on the M1.** D-50 explains why. The short version: the M1 runs InsightFace 3 to 5 times faster than 2 OCPUs of Ampere, and demo latency is what a panel actually experiences. Both environments exist, and the Oracle one has to be reachable during the defense, because "we deployed but chose our laptop" invites exactly one follow-up and the answer to it is an SSH session.
+**Development and the demo run on one Netcup RS 1000 G12 root server from 15 October 2026.** D-78 explains why. In short, what the team develops and tunes against is what the panel sees, and demo morning no longer depends on a laptop booting and a tunnel connecting. Until the switch, development runs on an interim server that `docs/ARCHITECTURE.md` §7 names.
 
-**Demo runtime setup, in order:**
-1. Express and the worker run locally on the M1, same commands you use in development.
-2. `cloudflared` with a **named tunnel** and a stable hostname, mapping that hostname to `localhost:3000`. Set this up one month before the demo (D-76). Until then, everyday remote testing uses the Oracle instance.
-3. **Not ngrok** (D-51). Free ngrok URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
+**Two environments, one server.** Development uses the dev Supabase project and the dev bucket. The demo stack uses the stable project and bucket and goes up one month before the demo (D-76). How the two sit side by side on one server is open until Phase 7 (`docs/ARCHITECTURE.md` §7).
 
-**What the laptop does not buy you.** It moves compute out of the cloud. It does not remove the network dependency: Supabase, R2, and the phones on the other side of the tunnel are all still on the network. If campus WiFi dies, the laptop plan dies with it, which is why the fallback in §14's Phase 7 is a recorded walkthrough on local storage rather than a seeded dataset that lives in Supabase (D-62).
+**What the server does not buy you.** It removes the laptop, not the network dependency. Supabase, R2, and the phones are all still on the network. If campus WiFi dies, the demo dies with it, which is why the fallback in §14's Phase 7 is a recorded walkthrough on local storage rather than a seeded dataset that lives in Supabase (D-62).
 
-**Bus factor.** If the backend only ever runs on one laptop, the two Windows team members cannot develop against it without tunneling into that machine, and demo morning has a single point of failure that either boots or does not. Keeping the Oracle instance current fixes this as a side effect. Agree to it explicitly rather than discovering it in May.
+**Bus factor.** All three developers reach the same server over HTTPS, so nobody tunnels into anybody's laptop, and demo morning has no single machine in the room that has to boot.
 
-### Production backend: one Oracle ARM instance, no containers
+### The server: one Netcup root server, no containers
 
 **Why no Docker.** The common argument against Docker on small hardware is that it is slow, and that argument is wrong: on Linux, containers are namespaces and cgroups, not virtualization, and the runtime overhead is near zero. Do not say "Docker is slow" in your viva; someone will correct you. The real reason is simpler. Docker buys portability between environments, and you have exactly one environment. For a three-person team that has never deployed anything, the container layer is one more thing to learn, one more thing to break at 2am, and one more layer between you and a stack trace. Skip it, and get your repeatability from pinned dependencies and a written setup script instead.
 
-**Provision the instance early.** Oracle's Always Free ARM shape (`VM.Standard.A1.Flex`) is capacity-constrained and frequently returns "Out of host capacity" in high-demand regions. The Always Free allowance was reduced to 2 OCPUs and 12 GB RAM in mid-2026. Your home region is fixed at signup and cannot be changed later, so pick **Singapore** (good availability, closest to Lahore) and do this in week one, not month six.
+**Order it with room to test.** Pick Ubuntu 24.04 LTS as the operating system. First orders come with a 30-day refund, so run the InsightFace benchmark on the server inside that window, because D-78's reopen condition depends on it. Netcup can hold orders from outside the EU for an ID check, so order a few days before you need the server.
 
-**Instance setup, in order:**
+**Set it up with `scripts/provision.sh`.** The script is this section in runnable form: system packages, the Node, pnpm and Python versions the repo pins, the `momentlens` user, the repo checkout and API build, both systemd units, nginx, the firewall and TLS. Every step checks before it acts, so running it again is safe. Copy it to the new server and run it as root:
 
 ```bash
-# 1. Base
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y nginx python3.12 python3.12-venv build-essential git \
-                    iptables-persistent   # netfilter-persistent comes from this
-
-# 2. Node, installed SYSTEM-WIDE, not per-user.
-#    Do NOT install via fnm here. fnm puts binaries under the login user's
-#    home ($HOME/.local/share/fnm/...), which the service account cannot
-#    reach, and systemd will fail with status=203/EXEC. Use NodeSource
-#    (or unpack the official aarch64 tarball into /usr/local).
-curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
-sudo apt install -y nodejs
-sudo corepack enable                      # gives you /usr/local/bin/pnpm
-node -v && which node                     # expect /usr/bin/node
-
-# 3. Firewall. Oracle has TWO layers and forgetting the second
-#    is the single most common "why can't I reach my server" mistake:
-#    (a) the instance's iptables, and
-#    (b) the VCN Security List / Network Security Group in the OCI console.
-#    You must open 80 and 443 in BOTH.
-sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-sudo netfilter-persistent save
-
-# 4. App user with a real home, owning the deploy directory.
-#    --system users get no usable home by default, which breaks anything
-#    that expects one (pnpm's store, pip caches). Give it one.
-sudo adduser --system --group --home /srv/momentlens momentlens
-sudo mkdir -p /srv/momentlens && sudo chown -R momentlens:momentlens /srv/momentlens
+scp scripts/provision.sh root@SERVER_IP:/root/
+ssh root@SERVER_IP 'bash /root/provision.sh --domain api.yourdomain.com --email you@example.com'
 ```
 
-**Two systemd units.** Put these in `/etc/systemd/system/`.
+Leave out `--email` to skip TLS until DNS points at the server; the script prints the `certbot` command to run then. Passing `--email` accepts Let's Encrypt's terms. The script never writes secrets, so fill in `/srv/momentlens/.env` yourself afterwards.
+
+**Two choices in the script worth knowing.**
+- **Node comes from the official release tarball** at the exact version in `.nvmrc`, checked against the published SHA-256 sums and installed under `/usr/local`. Never install it with fnm on the server. fnm puts binaries under the login user's home, which the service account cannot reach, and systemd fails with `status=203/EXEC`.
+- **The `momentlens` user's home is `/var/lib/momentlens`, and the checkout is `/srv/momentlens`.** Keeping them apart stops pnpm's store and pip's cache from landing inside the git working tree.
+
+**Two systemd units.** `provision.sh` writes these to `/etc/systemd/system/`. Change the script in the same PR as any change here.
 
 `momentlens-api.service`:
 ```ini
@@ -486,7 +462,7 @@ Type=simple
 User=momentlens
 WorkingDirectory=/srv/momentlens/apps/api
 EnvironmentFile=/srv/momentlens/.env
-ExecStart=/usr/bin/node dist/index.js
+ExecStart=/usr/local/bin/node dist/index.js
 Restart=always
 RestartSec=5
 
@@ -535,11 +511,13 @@ server {
 
 **Deploying an update:**
 ```bash
-cd /srv/momentlens && git pull
-pnpm install --frozen-lockfile && pnpm --filter api build
+cd /srv/momentlens
+sudo -H -u momentlens git pull --ff-only
+sudo -H -u momentlens env HUSKY=0 pnpm install --frozen-lockfile
+sudo -H -u momentlens pnpm --filter api build
 sudo systemctl restart momentlens-api
 # worker only if it changed:
-source worker/.venv/bin/activate && pip install -r worker/requirements.txt
+sudo -H -u momentlens worker/.venv/bin/pip install -r worker/requirements.txt
 sudo systemctl restart momentlens-worker
 ```
 
@@ -547,11 +525,11 @@ Put that in `scripts/deploy.sh` on day one so nobody is typing it from memory th
 
 **Logs**: `journalctl -u momentlens-worker -f`. Learn this command in week one. It is where every mysterious failure will be explained.
 
-**Secrets**: EAS environment variables, which replaced EAS Secrets, one set per build profile. Only `EXPO_PUBLIC_` values reach the app and anyone holding the APK can read them, so no secret belongs in a mobile build at all. A `.env` on the instance, owned by the `momentlens` user with `chmod 600`, referenced by both systemd units via `EnvironmentFile`. Never commit either.
+**Secrets**: EAS environment variables, which replaced EAS Secrets, one set per build profile. Only `EXPO_PUBLIC_` values reach the app and anyone holding the APK can read them, so no secret belongs in a mobile build at all. A `.env` on the server, owned by the `momentlens` user with `chmod 600`, referenced by both systemd units via `EnvironmentFile`. Never commit either.
 
 **Supabase environments**: exactly two projects, which is the free-tier limit. A **dev** project (your daily database, fine to break) and a **stable** project (what the demo points at, treated carefully). Do not develop against the project you will demo from.
 
-**Keep-alive**: free Supabase projects pause after 7 days of inactivity. Run it as a **GitHub Actions scheduled workflow**, not as a cron on the instance (D-67). v3 put it on the box it was meant to protect against, which chains two failures together, and under D-50 it is worse still because the laptop will not be running at 3am on a Tuesday. One YAML file, independent failure domain. Set this up in Phase 0, not the week you discover a paused database.
+**Keep-alive**: free Supabase projects pause after 7 days of inactivity. Run it as a **GitHub Actions scheduled workflow**, not as a cron on the server (D-67). v3 put it on the box it was meant to protect against, which chains two failures together. One YAML file, independent failure domain. Set this up in Phase 0, not the week you discover a paused database.
 
 **Fallback, and what "standby" has to actually mean.** One team member's Azure student credit, completely untouched, reserved for demo week. This is not a rotation plan; rotating providers mid-project costs more days than it saves dollars, and the keep-alive cron lives on the box that would be moving.
 
@@ -569,13 +547,13 @@ Both R2 and Supabase are external, so a compute swap moves no data. That is the 
 The single most important idea here: **build one thin slice through the entire system before building any one piece deeply.** The biggest risk for a team that has never shipped past three screens is not "is the UI polished." It is discovering late that the pieces do not connect the way you assumed. Auth tokens not reaching the API, environment variables differing between local and deployed, CORS, a field name mismatch. These surface only when things are wired together, so wire them together first, ugly.
 
 **Phase 0 — plumbing (days, not weeks)**
-Environment on all three machines (§8/§9). Repo scaffolded (§3). Oracle instance provisioned, nginx and TLS up, both systemd units running something trivial. Supabase projects created, keep-alive cron running. Express has one route, `GET /health`, that queries one table. The Expo app has one screen that calls it and displays the result, from a phone, over the internet, against the real deployed API. Nothing here is a feature. The entire goal is proving the wiring.
+Environment on all three machines (§8/§9). Repo scaffolded (§3). Server provisioned with `scripts/provision.sh`, nginx and TLS up, both systemd units running something trivial. Supabase projects created, keep-alive cron running. Express has one route, `GET /health`, that queries one table. The Expo app has one screen that calls it and displays the result, from a phone, over the internet, against the real deployed API. Nothing here is a feature. The entire goal is proving the wiring.
 
-Also in Phase 0: **Sentry's free tier** and the **GitHub Actions keep-alive** for both Supabase projects (D-67). The **Cloudflare Tunnel** (§13) waits for the M1 demo stack a month before the demo (D-76); the Oracle instance covers remote testing until then.
+Also in Phase 0: **Sentry's free tier** and the **GitHub Actions keep-alive** for both Supabase projects (D-67). There is no Cloudflare Tunnel, because the server has a public hostname with TLS (D-78).
 
 Also in Phase 0: **create `docs/ARCHITECTURE.md` and assign it an owner.** It is referenced throughout this handbook as the source of truth (§18) and it does not write itself. Start it with headed but empty sections, filled in as each is decided: data model with every table and its RLS intent; the upload pipeline; the blur pipeline's stages and job types; measured similarity thresholds with the date they were measured; and deployment layout, which now means both environments and the DNS record. One person owns keeping it current, and updating it is part of the PR that changes the thing it describes, not a separate task nobody does.
 
-Also in Phase 0, and it is not optional: **spike InsightFace on the ARM instance.** `insightface` has Cython extensions and may need to compile from source on aarch64; `onnxruntime` and `opencv-python-headless` ship aarch64 wheels. Prove all three import and run one detection on one photo. If this fails, it changes your worker plan, and you want to know in week one rather than month seven.
+Also in Phase 0, and it is not optional: **spike InsightFace on the server.** Prove that InsightFace, `onnxruntime` and OpenCV import and run one detection on one photo. If this fails, it changes your worker plan, and you want to know in week one rather than month seven. The spike passed on an ARM64 server and on the M1 on 2026-09-15; run it again on the x86-64 server the day it is provisioned.
 
 **Phase 1 — walking skeleton**
 Auth (sign up, log in via Supabase Auth), create an event with bare-minimum fields, join via a Guest Link, see it in a list. No QR, no camera, no AI, no offline handling, no polish. This proves the full stack end to end on the real feature set rather than a toy.
@@ -611,7 +589,7 @@ Then run the calibration exercise in §11.
 
 1. **Full feature.** Automatic recognition against reference embeddings, personalized per-subject blur.
 2. **If recognition is too slow or too inaccurate:** drop to *blur every detected face in this photo*, triggered manually per photo. This needs detection only, no reference embeddings, no matching, no thresholds. Detection is far more reliable than recognition, so this rung is much sturdier than the one above it.
-3. **If detection itself is unusable on ARM:** a manual blur box the user drags over a face. Pure image manipulation, no ML at all, cannot fail.
+3. **If detection itself is unusable on the server:** a manual blur box the user drags over a face. Pure image manipulation, no ML at all, cannot fail.
 
 Build rung 3 first, in roughly half a day, before rungs 1 and 2. It is a useful feature in its own right, it is the escape hatch when automatic matching misses something in the demo, and building it after you need it is building it under pressure.
 
@@ -627,7 +605,7 @@ Testing pass, performance pass (§16), UI polish, and demo rehearsal on real dev
 - **Judge devices** (D-61). The build installed on team-owned Android phones, accounts signed in, at least a week ahead. This is not testable on demo morning.
 - **The offline fallback** (D-62). A recorded walkthrough of the full script on a USB stick and on a laptop in the room. The seeded dataset lives in Supabase, so a network failure takes it too.
 - **The Azure rehearsal**, per the standby criteria above.
-- **The M1 demo stack** (D-76). API, worker and named tunnel on the M1 against the stable project, up at the start of this phase.
+- **The demo stack** (D-76, D-78). API and worker on the server against the stable project, up at the start of this phase.
 
 Roughly: Phases 0 through 4 in the first semester, 5 through 7 in the second. A loose target, not a commitment.
 
@@ -729,7 +707,7 @@ API (apps/api)
 
 Worker (worker/)
   fastapi, uvicorn
-  insightface, onnxruntime     # verify aarch64 build in Phase 0
+  insightface, onnxruntime     # Phase 0 spike, rerun on the x86-64 server
   opencv-python-headless
   boto3
   psycopg or asyncpg

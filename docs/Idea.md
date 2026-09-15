@@ -25,7 +25,7 @@ v11 applies the resolution log. Two constraints drove most of it, and they belon
 
 **No real event is ever covered.** Development and the demo run on roughly 100 seeded photos at 1 to 3MB each, under 500MB against a 10GB R2 budget. Storage pressure is not a real constraint, and nothing in this document should be shaped by it.
 
-**The backend runs on an M1 laptop for the demo**, with Supabase and R2 unchanged in the cloud (§4.20). Inference is 3 to 5 times faster than on the free-tier ARM instance, so latency-driven compromises lose most of their value.
+**The backend runs on an M1 laptop for the demo**, with Supabase and R2 unchanged in the cloud (§4.20). Inference is 3 to 5 times faster than on the free-tier ARM instance, so latency-driven compromises lose most of their value. **Superseded by D-78.** Development and the demo run on one Netcup server, and the M1 is a development machine only.
 
 **Architecture changes**
 
@@ -776,24 +776,25 @@ These are safety rails against a runaway event, not a monetization mechanism. Th
 
 ### 4.20 Deployment & hosting
 
-**Two compute environments, and the distinction matters in the viva.**
+**One compute environment for development and the demo, and the viva will ask why.**
 
-- **Production: one Oracle Cloud Always Free ARM instance** (`VM.Standard.A1.Flex`), Singapore region. The Always Free Ampere allowance was reduced to 2 OCPUs and 12 GB RAM in mid-2026, which is still the only permanently free option available to this team. The home region is fixed at signup and cannot be changed later, so this is a one-time decision. ARM capacity is frequently unavailable in high-demand regions; provision in week one, not in month six. This instance is provisioned and kept working whether or not the demo runs on it, because it is what makes the deployment claim true and demonstrable, it is the fallback that is not sitting in the demo room, and it is the shared backend the other two team members develop against.
-- **Demo runtime: the team's M1 laptop**, running Express and the FastAPI worker behind a Cloudflare Tunnel with a stable named hostname. Supabase and R2 are unchanged and remain in the cloud. The reason is measured rather than budgetary: the M1 runs InsightFace roughly 3 to 5 times faster than 2 OCPUs of Ampere, and demo latency is what a panel actually experiences.
+- **Development and demo: one Netcup RS 1000 G12 root server** (4 dedicated AMD EPYC 9645 cores, 8 GB RAM, x86-64), rented from 15 October 2026. The team builds and tunes against it and the demo runs on it, so the latency the panel sees is the latency the team has been measuring (D-78). Development uses the dev Supabase project; the demo stack, against the stable project, goes up on the same server one month before the demo (D-76).
+- **The M1 is a development machine, not the demo runtime.** An earlier version of this spec ran the demo on it because it measured faster than the free-tier ARM instance. D-78 traded that speed for a demo environment that is not a single laptop.
 
-**What the laptop does not buy.** It moves compute out of the cloud; it does not remove the network dependency. Supabase, R2, and the judges' phones are all still on the network. If campus WiFi fails, the laptop plan fails with it, which is why §9's fallback is a recorded walkthrough on local storage rather than a seeded remote dataset.
+**What the server does not buy.** It removes the laptop from the demo; it does not remove the network dependency. Supabase, R2, and the judges' phones are all still on the network. If campus WiFi fails, the demo fails with it, which is why §9's fallback is a recorded walkthrough on local storage rather than a seeded remote dataset.
 
-**Use a Cloudflare Tunnel named hostname, not ngrok.** ngrok's free URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
+**No tunnel.** The server has a public address, and the API answers on a stable hostname through nginx with a certbot certificate.
 
 - **No Docker.** Express and the FastAPI worker run directly under `systemd` units, behind `nginx` as a reverse proxy, with TLS via `certbot`. A single-provider deployment does not need container portability, and the setup is one fewer moving part for a team that has not deployed anything before. Dependency versions are pinned in `pnpm-lock.yaml` and an exactly-pinned `requirements.txt`.
+- **Provisioning is a script.** `scripts/provision.sh` sets up a fresh Ubuntu 24.04 server end to end, so replacing the server means running one script (Handbook §13).
 - **Fallback:** one team member's Azure for Students credit, held completely untouched, as a hot standby for demo week. Not a rotation plan; a rotation costs more days than it saves dollars.
 - **Database & Auth:** Supabase, two projects (one dev, one stable demo). The free tier allows exactly two, so there is no headroom.
 - **Storage:** Cloudflare R2 (S3-compatible, no egress fees, 10 GB permanently free). At roughly 100 seeded photos of 1 to 3MB, plus per-subject variants and thumbnails, total usage stays under 500MB. Storage is not a design constraint for this project.
-- **Supabase keep-alive runs from a GitHub Actions scheduled workflow, not from the compute box.** Free projects pause after 7 days of inactivity. Putting the keep-alive on the instance it is meant to protect chains two failures together, and under the laptop plan it is worse still, because the laptop will not be running at 3am on a Tuesday. One YAML file, independent failure domain.
+- **Supabase keep-alive runs from a GitHub Actions scheduled workflow, not from the compute box.** Free projects pause after 7 days of inactivity. Putting the keep-alive on the server it is meant to protect chains two failures together. One YAML file, independent failure domain.
 - **AI worker:** a standalone FastAPI service consuming jobs from a `pgmq` queue in Supabase. **The InsightFace model is loaded once at worker startup and stays resident.** Lazy-loading per job costs several seconds of cold start, which is what would actually make the demo feel slow.
 - See the companion Engineering Handbook for the deployment walkthrough.
 
-**Verify on day one, not later:** `insightface` has Cython extensions and may need to compile from source on aarch64. `onnxruntime` and `opencv-python-headless` both ship aarch64 wheels. This is trivial on an M1 and is still a real spike on the Oracle instance, which stays in the plan. Prove all three import and run there before planning anything on top of them.
+**Verify on the server, not only locally.** InsightFace 2.0 installs as a pure-Python package, and `onnxruntime` and OpenCV ship wheels for both x86-64 and ARM64. The Phase 0 spike passed on an ARM64 server and on the M1 on 2026-09-15. Run it again on the x86-64 server the day it is provisioned, before planning anything on top of it.
 
 ---
 
@@ -916,7 +917,7 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 
 **Devices.** The app is not on any store and there is no deferred deep link (§4.1), so it cannot arrive on a stranger's phone during the demo. Judges use **team-owned Android devices handed around**, with the build installed and the accounts signed in at least a week ahead. If a judge wants the app on their own phone, that is an Android APK sideload arranged in advance, never on the day. iOS is not a demo path: TestFlight needs an Apple review pass and invited testers, and ad-hoc provisioning needs UDIDs collected beforehand.
 
-**Backend.** The API and worker run on the M1 behind a Cloudflare Tunnel with a stable named hostname (§4.20). The Oracle instance is up and reachable, because the deployment claim has to survive "show me."
+**Backend.** The API and worker run on the Netcup server the team developed against, on its stable hostname (§4.20). The demo stack against the stable project has been up for a month (D-76).
 
 **Pre-configured accounts.** Do Not Publish is enabled beforehand on **two** team accounts: one for beat 5, and one for beat 7, since tap-to-blur is only available to users who have it active (§4.11). Never ask a judge to enable it; the action is permanently irreversible for anyone.
 
@@ -938,6 +939,6 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 
 ### Two answers to have ready, because they will be asked
 
-**"Why is the server on your laptop?"** Production runs on an Oracle ARM instance and is up right now. The demo runs the API and worker locally behind a Cloudflare Tunnel because the M1 gives roughly four times the inference throughput of the free-tier instance, and the panel should see real latency rather than free-tier latency. Be able to SSH into the Oracle box and show the systemd units if asked. Do not make this claim without the instance behind it.
+**"Why a paid server, and not the free tier or a laptop?"** One server ran development and runs the demo, so what the panel sees is what the team built and tested against. On 23 wedding and group photos, a 2-core free-tier ARM server took 3.5 times as long as an M1 laptop, and a laptop in the room is a single point of failure that still needs the network. Four dedicated cores cost about €15 a month. Quote the numbers in D-78, including the benchmark run on the server itself, and be ready to SSH in and show the systemd units.
 
 **"What are your thresholds?"** Give the measured number and the date it was measured, or describe the mechanism without a number. Never quote the example values that appeared in earlier drafts of this document.
