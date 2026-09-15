@@ -201,16 +201,17 @@ Plan (S-26): about 30 photos of the three team members in varied light, same-per
 
 | | Development | Demo |
 |---|---|---|
-| Compute | Oracle Always Free ARM, `VM.Standard.A1.Flex`, Singapore (D-38) | The M1 behind a Cloudflare named tunnel (D-50, D-51) |
-| Goes up | Phase 0, slice P0-2 | One month before the demo (D-76) |
-| Processes | `momentlens-api.service` and `momentlens-worker.service` under systemd, nginx, certbot (Handbook §13) | The development commands |
+| Compute | Netcup RS 1000 G12 root server, x86-64, from 2026-10-15 (D-78). Location **Open** | The same server (D-78) |
+| Goes up | 2026-10-15, set up by `scripts/provision.sh` (Handbook §13) | One month before the demo (D-76) |
+| Processes | `momentlens-api.service` and `momentlens-worker.service` under systemd, nginx, certbot (Handbook §13) | The same units against the stable project. How they sit beside development on one server is **Open** until Phase 7 |
 | Supabase | dev | stable |
 | R2 bucket | `momentlens-dev` | `momentlens-stable` |
 | Serves | All three developers; the `development` and `preview` builds | The `production` build on the demo phones (D-61) |
 | Hostname | **Open** until the domain exists | **Open** until the domain exists |
 
-- **Domain.** Not bought yet. Its DNS has to be on Cloudflare, because a named tunnel requires it. Set a 300s TTL on the demo hostname at least a week before the defense (Handbook §13).
-- **Demo-week fallback.** If the M1 fails, point the demo hostname at Oracle and switch Oracle's `.env` to the stable project and bucket. The demo build logs in against stable, so a backend still on dev would reject every session. Switch back afterwards.
+- **Until 2026-10-15.** Development runs on an Oracle Cloud Free Trial instance, a `VM.Standard.A1.Flex` with 4 OCPUs and 24 GB (ARM64) in US West (Phoenix). The trial covers that shape. Before the trial ends on 2026-10-15, delete the instance or resize it to 2 OCPUs and 12 GB, because otherwise Oracle disables every A1 instance in the tenancy and deletes them 30 days later. Remove this bullet once the Netcup server is up.
+- **Domain.** Not bought yet. The named tunnel was the only reason its DNS had to be on Cloudflare, and D-78 removed the tunnel. Set a 300s TTL on the API hostname at least a week before the defense (Handbook §13).
+- **Demo-week fallback.** **Open.** Before D-78 the M1 and the Oracle instance covered for each other. Whatever replaces that must reach the stable project and bucket, because the demo build logs in against stable.
 - **Supabase keep-alive.** A GitHub Actions scheduled workflow pings both projects (D-67). The stable project sits unused until the demo stack goes up and would pause without it.
 - **Mobile builds.** EAS profiles in `apps/mobile/eas.json`. `development` and `preview` use the dev environment variables, `production` uses stable. All three build an Android APK with internal distribution (D-61).
-- **Azure standby.** Not provisioned. It needs `scripts/provision.sh`, a written DNS record and one rehearsal before it counts (Handbook §13).
+- **Azure standby.** Not provisioned. `scripts/provision.sh` now exists, and the standby still needs a written DNS record and one rehearsal before it counts (Handbook §13).
