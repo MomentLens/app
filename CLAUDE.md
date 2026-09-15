@@ -107,7 +107,7 @@ pnpm lint && pnpm typecheck && pnpm test
 cd worker && .venv/bin/python -m app.main
 ```
 
-Development runs against the Oracle ARM instance on the dev Supabase project. The demo backend goes up on the M1 behind a Cloudflare Tunnel one month before the demo. Handbook §13, D-50, D-76.
+Development and the demo run on one Netcup server set up by `scripts/provision.sh`. The demo stack, against the stable Supabase project, goes up on it one month before the demo. Until 2026-10-15 development runs on an interim server, and `docs/ARCHITECTURE.md` §7 says which. Handbook §13, D-76, D-78.
 
 ---
 
