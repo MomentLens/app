@@ -40,7 +40,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 
 **U** is Ukasha, **B** and **C** are the two teammates. Change the letters, keep the shape.
 
-Two constraints drive this. Ukasha is on the M1, which is ARM64 like the Oracle instance, so the Python worker is his by default (Handbook §9 explains why debugging aarch64 wheels from a Windows x86 machine is a bad time). And he did the planning, owns the docs, and will otherwise become the person everyone waits on, so the album and capture surfaces deliberately go elsewhere.
+Two constraints drive this. Ukasha is on the M1, the fastest machine the team has measured for face processing (D-78), so the Python worker is his by default. And he did the planning, owns the docs, and will otherwise become the person everyone waits on, so the album and capture surfaces deliberately go elsewhere.
 
 Owner means *builds it*. Review ownership is separate: every PR needs one of the other two, per Handbook §12.
 
@@ -53,12 +53,12 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | ID | Slice | Reference |
 |---|---|---|
 | P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, §11 |
-| P0-2 | Oracle instance, nginx, TLS, both systemd units running something trivial | HB §13 |
+| P0-2 | Server provisioned by `scripts/provision.sh`, nginx, TLS, both systemd units running something trivial | HB §13 |
 | P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14 Phase 0 |
-| P0-5 | **InsightFace ARM spike.** Blocking. If this fails the worker plan changes | HB §14 Phase 0 |
+| P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it on the x86-64 server | HB §14 Phase 0 |
 | P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §18 |
-| P0-7 | Moved out of Phase 0. The M1 demo stack, tunnel included, goes up at the start of Phase 7 (D-76) | D-76 |
+| P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
 | P0-8 | Sentry free tier on the app and the API | HB §11 |
 | P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, §13 |
 
@@ -126,7 +126,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 # Phase 5 — the AI worker and face blur
 
-The heaviest phase. Ukasha owns most of it because of the ARM alignment, so hand him nothing from Phase 6 until this lands.
+The heaviest phase. Ukasha owns most of it because the worker is his, so hand him nothing from Phase 6 until this lands.
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
@@ -170,7 +170,7 @@ The heaviest phase. Ukasha owns most of it because of the ARM alignment, so hand
 
 # Phase 7 — nobody owns slices
 
-Testing pass, performance pass, seeded demo dataset, Azure fallback rehearsal, demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The M1 demo stack goes up at the start of it (D-76).
+Testing pass, performance pass, seeded demo dataset, Azure fallback rehearsal, demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The demo stack goes up on the server at the start of it (D-76, D-78).
 
 ---
 
