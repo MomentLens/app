@@ -262,6 +262,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why Singapore.** ARM capacity is contested and frequently returns "Out of host capacity." Singapore provisions faster than US regions and is closest to Lahore. **The home region is fixed at signup and cannot be changed later**, which is why this is a week-one task.
 **Bonus.** The instance is ARM64 and so is the M1, so local and production architecture match for the Python worker.
 **Amended (see D-50).** The instance is still provisioned in week one and still runs production, for reasons this entry gives that have not changed. The demo itself runs on the M1. Read D-50 before repeating any part of this entry in a viva.
+**Amended (see D-78).** From 2026-10-15 development and the demo run on a rented Netcup server, so the Oracle instance stops being the project's server.
 
 ### D-39 — No Docker; systemd, nginx, and certbot instead
 **Decision.** Express and the worker run as systemd units behind nginx, with TLS from certbot.
@@ -338,7 +339,7 @@ Two constraints settled a third of these before any of them were argued individu
 **Cost.** ⚠ Anything justified by scale is now unjustified, which cuts both ways: several v10 decisions that read as prudent were prudent about a constraint that does not exist. Do not reintroduce one by reflex.
 **Reopen if.** Someone decides to cover a real wedding. Nobody has.
 
-### D-50 — The demo backend runs on the M1; the Oracle instance is provisioned anyway
+### D-50 — The demo backend runs on the M1; the Oracle instance is provisioned anyway ~~(SUPERSEDED by D-78)~~
 **Decision.** Express and the FastAPI worker run on the team's M1 behind a Cloudflare Tunnel named hostname for the demo. Supabase and R2 are unchanged. The Oracle ARM instance is still provisioned in week one, still runs production, and is still reachable during the defense.
 **Why.** The M1 runs InsightFace 3 to 5 times faster than 2 OCPUs of Ampere, and demo latency is what a panel experiences. Dev and demo become the same environment. Oracle's capacity lottery stops being a demo-day risk.
 **Why the instance stays regardless.** The deployment claim has to survive "show me." It is a fallback that is not sitting in the demo room. It is the shared backend the other two team members develop against, which is also the fix for a bus factor of one on demo morning. And D-38's reason is untouched: the home region is fixed at signup and ARM capacity is contested, so it is a week-one task or it never happens.
@@ -347,7 +348,7 @@ Two constraints settled a third of these before any of them were argued individu
 **The line to use.** Production runs on an Oracle ARM instance. The demo runs the API and worker locally behind a Cloudflare Tunnel because the M1 gives roughly four times the inference throughput of the free tier, and the panel should see real latency rather than free-tier latency.
 **Amended (see D-76).** Development runs on the Oracle instance and the M1 demo stack goes up one month before the demo, so dev and demo are no longer the same environment.
 
-### D-51 — ngrok is not the tunnel
+### D-51 — ngrok is not the tunnel ~~(SUPERSEDED by D-78)~~
 **Decision.** Cloudflare Tunnel with a named hostname.
 **Why.** ngrok's free URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
 
@@ -517,6 +518,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Why.** Handbook §13 put the tunnel in Phase 0 for everyday remote testing, and the Oracle instance already gives the team a public HTTPS backend from Phase 0. The M1's advantage, faster inference (D-50), matters on demo day.
 **Rejected.** The tunnel in Phase 0 as the everyday remote-testing setup.
 **Cost.** The demo stack runs for the first time a month out. The M1 and Oracle share an architecture, so the remaining risk is configuration, which the Phase 7 rehearsal covers. If the M1 fails in demo week, Oracle only works as the fallback after its `.env` switches to the stable project, because the demo build logs in against stable.
+**Amended (see D-78).** From 2026-10-15 development runs on a Netcup server instead of the Oracle instance, and the demo stack goes up on that same server rather than on the M1. The one-month timing stands.
 
 ### D-77: Pinch-zoom is core, as a named exception to D-44
 **Decision.** Amends D-59 and D-44. The single photo viewer ships with pinch-zoom and pan (spec §2.5) in S-22, although no demo beat shows it. It is the one named exception to D-44's rule that scope is what the demo script shows.
@@ -526,16 +528,36 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 
 ---
 
+# M. Decided after benchmarking the worker (2026-09-16)
+
+### D-78: One Netcup server runs development and the demo from 2026-10-15 ⚠
+**Decision.** Supersedes D-50 and D-51 and amends D-38 and D-76. From 15 October 2026 the API and worker run on one rented Netcup RS 1000 G12 root server (4 dedicated AMD EPYC 9645 cores, 8 GB DDR5 ECC, 256 GB NVMe, x86-64), set up by `scripts/provision.sh`. The team develops against it and the demo runs on it. The M1 is a development machine only, and there is no tunnel.
+**Why.** What the team develops and tunes against is what the panel sees, so an optimization measured during development holds on demo day. Demo morning stops depending on one laptop booting and a tunnel connecting. Netcup states 99.9% minimum availability. The free tier promises nothing, and Oracle halved the Always Free A1 allowance on 15 June 2026 without announcing it.
+**Measured, 2026-09-15 and 2026-09-16.** InsightFace `buffalo_l` with detection and recognition only, on 23 openly licensed wedding and group photos resized to at most 4096px.
+- Time is a cost per photo plus a cost per face, because every face gets its own recognition pass. At two threads a 2-OCPU Oracle A1 instance took 0.40s per photo plus 201ms per face.
+- With default threads over the whole set, that instance took 3.5 times as long as the M1.
+- On one ONNX Runtime thread the M1 took 71.9s and the A1 took 170.7s, so an M1 core is 2.38 times an A1 core. Geekbench 6 single-core predicted 1.98 times, underselling the M1 by 20%.
+- Threads scale on A1. Two threads ran 1.84 times as fast as one, and four ran 3.11 times as fast.
+- Batching recognition gave identical embeddings and a 1 to 2% gain, so batching is not worth adding.
+- Netcup is estimated, not measured. Its cores score 1.5 to 1.9 times an A1 core on Geekbench, which at four threads puts it anywhere from somewhat faster than the M1 to about 1.6 times slower on large group photos once the 20% error is allowed for.
+**Rejected.** Staying on Oracle Always Free, which from 15 October is 2 OCPUs, where a median photo took 1.8s and a 40-face photo 8.4s, with no uptime guarantee. The M1 demo (D-50), which measured fastest but is a single laptop, a tunnel, and a different environment from the one the team develops against. Hetzner CPX32, at €35.49 a month after Hetzner's June 2026 price rise.
+**Cost.** ⚠ About €15 a month. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
+**Reopen if.** The benchmark on the server, run inside Netcup's 30-day refund window at four threads, is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
+**Open.** The server's location, how the stable stack sits beside development on one server by Phase 7, and the demo-week fallback now that the M1 and the Oracle instance no longer cover for each other (`docs/ARCHITECTURE.md` §7).
+
+---
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
 
 - **Similarity thresholds.** The numbers in the spec are placeholders. They must be measured on roughly 30 real photos of the team in varied lighting before Phase 5 ends, and the measured values plus the date recorded in `docs/ARCHITECTURE.md`. Shipping an example number is how the blur silently fails in a demo. Related and equally unsettled: those 30 photos are three people, so the thresholds are overfitted to the demo set. That is fine to do and must be volunteered rather than extracted.
-- **`buffalo_l` versus `buffalo_s`.** Decide with a measurement. Measure on the M1, since D-50 makes it the demo runtime, and separately on the Oracle instance if that box is ever going to serve a real request.
-- **Whether `insightface` compiles on aarch64.** Trivial on an M1 and still a Phase 0 spike for the Oracle instance, which D-50 keeps in the plan. If it fails there, the worker plan changes and that must be known in week one.
+- **`buffalo_l` versus `buffalo_s`.** Decide with a measurement, on the Netcup server, since D-78 makes it the demo runtime.
+- ~~Whether `insightface` compiles on aarch64.~~ **Settled on 2026-09-15.** InsightFace 2.0 installs as pure Python and ran on an ARM64 server and on the M1. The Phase 0 spike still has to be rerun on the x86-64 server (D-78).
 - **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
 - ~~Who owns `docs/ARCHITECTURE.md`.~~ **Settled by D-75.** Ukasha owns it; agents write it.
-- **Whether the Azure fallback actually works.** D-38 calls it a hot standby. It is not one until `scripts/provision.sh` exists and has been run against a real Azure VM once. Half a day in Phase 7. Note that D-50 already gives the project a cheaper second fallback, since the Oracle instance and the laptop each cover for the other.
+- **Whether the Azure fallback actually works.** D-38 calls it a hot standby. `scripts/provision.sh` now exists, but the standby is not real until the script has been run against a real Azure VM once. Half a day in Phase 7.
+- **The demo-week fallback.** D-78 ended the arrangement where the M1 and the Oracle instance covered for each other, and nothing replaces it yet (`docs/ARCHITECTURE.md` §7).
 - **The feature-complete date.** The plan is to build fast, harden afterwards, and hold a month of buffer. That buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Two things that plan gets wrong and that the team should settle before relying on it. AI velocity does almost nothing for the parts that actually consume months: the viewfinder, background upload, the SQLite queue's state machine, deep links, push certificates, and RLS, all of which fail at device and configuration boundaries rather than in code, with a debug loop that is manual and one device at a time. And "harden later" is false for anything with a shape, including D-60's version column, D-63's schema split, D-54's curated flag and D-55's visibility predicate; get those wrong and it is a migration against live rows, not a refactor.
 - ~~Whether D-45 survives contact with generated code volume.~~ **Settled by D-68.** Comprehension moves to the Phase 7 month; a named list of dangerous surfaces still gets read before merging.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
