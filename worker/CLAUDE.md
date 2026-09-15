@@ -14,7 +14,7 @@ The worker connects to Postgres directly with `DATABASE_URL`, so RLS does not ap
 
 **Load the InsightFace model once at startup and keep it resident.** Cold-loading per job costs several seconds and is the most likely reason a demo feels slow.
 
-**One worker process.** On the 2-core Oracle instance the second core belongs to Express, Postgres connections and nginx. Do not run two.
+**One worker process per machine** (`docs/ARCHITECTURE.md` §5). Leave CPU for Express, Postgres connections and nginx. Do not run two.
 
 Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 
@@ -71,7 +71,7 @@ Thumbnails are cut from the blurred output, never blurred separately at 300px.
 ## Local rules
 
 - `requirements.txt` is exactly pinned, never ranges.
-- `insightface` has Cython extensions and may need to compile from source on aarch64. `onnxruntime` and `opencv-python-headless` ship aarch64 wheels. The M1 and the Oracle instance are both ARM64, so local and production match.
+- InsightFace 2.0 installs as a pure-Python package, and `onnxruntime` and OpenCV ship wheels for x86-64 and ARM64. The server is x86-64 and the M1 is ARM64 (D-78), so local and production no longer match. If a dependency misbehaves only on the server, debug it on the server.
 - Ruff replaces flake8, black and isort. One tool.
 - Tests in `tests/`, pytest.
-- Logs come out of `journalctl -u momentlens-worker -f` on the Oracle instance. Write log lines somebody can grep at 2am.
+- Logs come out of `journalctl -u momentlens-worker -f` on the server. Write log lines somebody can grep at 2am.
