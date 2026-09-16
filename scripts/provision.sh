@@ -199,7 +199,8 @@ else
 fi
 
 log "Installing dependencies and building the API"
-as_app pnpm --dir "$APP_DIR" install --frozen-lockfile
+# Filtered to the API and its workspace dependencies. The server never runs apps/mobile.
+as_app pnpm --dir "$APP_DIR" install --filter "api..." --frozen-lockfile
 as_app pnpm --dir "$APP_DIR" --filter api build
 
 # --- systemd -------------------------------------------------------------------------
