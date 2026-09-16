@@ -75,7 +75,7 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 - **No `AsyncStorage` patterns.** `react-native-mmkv` for key-value, SQLite for the queue.
 - Simulators fake camera and GPS badly. Develop the viewfinder and the verification gate on a real phone, not at the end.
 - Types crossing the API boundary come from `packages/shared-types`. Do not redeclare a shape locally.
-- Tests go in `__tests__/`, on jest-expo. jest-expo 57 is built on Jest 29, so this package pins Jest 29 while `apps/api` runs 30. Import from `@jest/globals`, and load a module under test with `jest.requireActual` inside `jest.isolateModules`, never a dynamic `import()`: babel-preset-expo leaves `import()` untransformed and Jest's CommonJS runtime refuses it.
+- Tests go in `__tests__/`, on jest-expo. jest-expo 57 is built on Jest 29, so this package pins Jest 29 while `apps/api` runs 30. Import from `@jest/globals`, and load a module under test with `jest.requireActual` inside `jest.isolateModules`, never a dynamic `import()`. babel-preset-expo leaves `import()` untransformed, and Jest's CommonJS runtime refuses it.
 
 ---
 
