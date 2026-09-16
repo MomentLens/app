@@ -541,6 +541,8 @@ The script decides that last pair by diffing `worker/` between the old commit an
 
 **Keep-alive**: free Supabase projects pause after 7 days of inactivity. Run it as a **GitHub Actions scheduled workflow**, not as a cron on the server (D-67). v3 put it on the box it was meant to protect against, which chains two failures together. One YAML file, independent failure domain. Set this up in Phase 0, not the week you discover a paused database.
 
+That file is `.github/workflows/keepalive.yml`. It queries both projects through PostgREST daily and fails the run on anything but 200, because Supabase never defines what "activity" means and an auth health check may not count. One caveat that has nothing to do with Supabase: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, so a long quiet stretch stops the keep-alive without an error. `gh workflow enable keepalive.yml` brings it back.
+
 **Fallback, and what "standby" has to actually mean.** The team's Azure for Students, AWS and GCP credits, held across the three of you and used in that order (D-79). The standby VM is created for the rehearsal, deleted, and created again for demo week, so a credit is only spent while it is protecting something. D-38 rejected rotation partly because the keep-alive cron lived on the box that would be moving. D-67 moved it to GitHub Actions, so that objection is gone.
 
 A credit sitting unused is not a standby. To make it one, three things must exist before Phase 7:

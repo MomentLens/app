@@ -204,14 +204,15 @@ Plan (S-26): about 30 photos of the three team members in varied light, same-per
 | Compute | Netcup RS 1000 G12 root server, x86-64, in Nuremberg, from 2026-10-15 (D-78) | The same server (D-78) |
 | Goes up | 2026-10-15, set up by `scripts/provision.sh` (Handbook §13) | One month before the demo (D-76) |
 | Processes | `momentlens-api.service` and `momentlens-worker.service` under systemd, nginx, certbot (Handbook §13) | The same units against the stable project. How they sit beside development on one server is **Open** until Phase 7 |
-| Supabase | dev | stable |
-| R2 bucket | `momentlens-dev` | `momentlens-stable` |
+| Supabase | dev project, `eu-central-1` (Frankfurt) | stable project, `eu-central-1` (Frankfurt) |
+| R2 bucket | `momentlens-dev`, location hint `weur` | `momentlens-stable`, location hint `weur` |
 | Serves | All three developers; the `development` and `preview` builds | The `production` build on the demo phones (D-61) |
 | Hostname | `api.momentlens.me` | `api.momentlens.me` |
 
 - **Until 2026-10-15.** Development runs on an Oracle Cloud Free Trial instance, a `VM.Standard.A1.Flex` with 4 OCPUs and 24 GB (ARM64) in US West (Phoenix). The trial covers that shape. Before the trial ends on 2026-10-15, delete the instance or resize it to 2 OCPUs and 12 GB, because otherwise Oracle disables every A1 instance in the tenancy and deletes them 30 days later. Remove this bullet once the Netcup server is up.
 - **Domain.** `momentlens.me`, bought from Namecheap through the GitHub Student Pack, with DNS at Namecheap. The named tunnel was the only reason its DNS had to be on Cloudflare, and D-78 removed the tunnel. `api.momentlens.me` is an A record with a 300s TTL, pointing at the Oracle interim instance until 2026-10-15 and at the Netcup server after that. TLS is a certbot certificate issued on the server and renewed by certbot's timer (Handbook §13).
+- **Regions, and why they are permanent.** Both Supabase projects are in `eu-central-1` (Frankfurt) and both buckets carry the `weur` location hint, matching the Nuremberg server. Neither can be corrected later. A Supabase project's region is fixed at creation, and R2 honors a location hint only the first time a bucket of that name is created, so deleting `momentlens-dev` and recreating it keeps the original location.
 - **Demo-week fallback.** The rotated standby (D-79). Its `/srv/momentlens/.env` has to carry the stable project and bucket rather than a copy of the development server's, because the demo build logs in against stable.
-- **Supabase keep-alive.** A GitHub Actions scheduled workflow pings both projects (D-67). The stable project sits unused until the demo stack goes up and would pause without it.
+- **Supabase keep-alive.** `.github/workflows/keepalive.yml`, daily at 04:17 UTC with a manual trigger, queries both projects through PostgREST and fails the run on anything but 200 (D-67). The stable project sits unused until the demo stack goes up and would pause without it. One trap: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, which stops this silently. `gh workflow enable keepalive.yml` brings it back.
 - **Mobile builds.** EAS profiles in `apps/mobile/eas.json`. `development` and `preview` use the dev environment variables, `production` uses stable. All three build an Android APK with internal distribution (D-61).
 - **Standby.** Not provisioned. Azure for Students, then AWS, then GCP, one credit at a time across the three members, with the VM created for the Phase 7 rehearsal and for demo week only (D-79). Two of Handbook §13's three criteria are met: `scripts/provision.sh` exists, and the DNS record is the bullet above. The rehearsal is still owed.
