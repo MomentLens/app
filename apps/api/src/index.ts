@@ -1,6 +1,9 @@
 import { pino } from 'pino';
 
 import { createApp } from './app';
+import { loadEnv } from './config';
+import { createSupabase } from './db/supabase';
+import { createDatabaseCheck } from './services/health';
 
 const DEFAULT_PORT = 3000;
 
@@ -17,12 +20,26 @@ function parsePort(raw: string | undefined): number {
   return port;
 }
 
-const port = parsePort(process.env.PORT);
+function readConfig() {
+  return { port: parsePort(process.env.PORT), env: loadEnv() };
+}
 
-createApp().listen(port, (error) => {
+// A bad setting stops the process here with one log line that names it, which is what
+// `journalctl -u momentlens-api` shows. systemd keeps restarting, and every restart says the same.
+let config: ReturnType<typeof readConfig>;
+try {
+  config = readConfig();
+} catch (error) {
+  logger.fatal(error, 'API configuration is invalid');
+  process.exit(1);
+}
+
+const checkDatabase = createDatabaseCheck(createSupabase(config.env), logger);
+
+createApp({ checkDatabase }).listen(config.port, (error) => {
   if (error) {
     logger.fatal(error, 'API failed to start');
     process.exit(1);
   }
-  logger.info({ port }, 'API listening');
+  logger.info({ port: config.port }, 'API listening');
 });
