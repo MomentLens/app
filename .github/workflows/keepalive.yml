@@ -13,9 +13,12 @@
 name: Supabase keep-alive
 
 on:
-  schedule:
-    # Daily, off the hour, because scheduled runs are delayed when the hour turns over.
-    - cron: '17 4 * * *'
+  # The schedule is off until P0-4 (#6). This job queried the PostgREST root, which accepts
+  # secret keys only, so every run got 401. P0-4 points it at a table, sends the key on the
+  # apikey header alone, and uncomments the schedule.
+  # schedule:
+  #   # Daily, off the hour, because scheduled runs are delayed when the hour turns over.
+  #   - cron: '17 4 * * *'
   workflow_dispatch:
 
 # The job reads no repository contents and needs no token.
