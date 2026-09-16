@@ -64,7 +64,7 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 
 `expo-camera` (viewfinder + QR), `expo-image-picker` (+ Add Media only, never in the viewfinder), `expo-image`, `expo-image-manipulator`, `expo-crypto` (upload hash), `expo-location` (foreground reads only, no background APIs), `expo-file-system` (Local Only storage), `expo-sqlite`, `expo-notifications`, `expo-haptics`. Background upload is iOS `beginBackgroundTask` + an Android foreground service.
 
-**Expo Go cannot run all of this.** MMKV, a custom URL scheme for invite links, remote push and the background upload module need the development build (slice P0-9). When a native module fails to load, check whether the app is running in Expo Go before debugging the code.
+**The app runs in the development build, not Expo Go.** MMKV, the `momentlens` URL scheme for invite links, remote push and the background upload module all need native code that Expo Go does not ship. `pnpm --filter mobile android` (or `ios` on the Mac) builds it and installs it on the connected phone or emulator, and `pnpm --filter mobile start` then serves JavaScript to it. Rebuild only after adding a package with native code or changing native config in `app.json` (Handbook §10). When a native module fails to load, check whether the installed build predates the package before debugging the code.
 
 ---
 
