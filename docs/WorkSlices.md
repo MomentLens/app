@@ -170,7 +170,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 # Phase 7 — nobody owns slices
 
-Testing pass, performance pass, seeded demo dataset, Azure fallback rehearsal, demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The demo stack goes up on the server at the start of it (D-76, D-78).
+Testing pass, performance pass, seeded demo dataset, standby rehearsal (D-79), demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The demo stack goes up on the server at the start of it (D-76, D-78).
 
 ---
 
