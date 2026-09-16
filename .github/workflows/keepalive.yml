@@ -5,20 +5,21 @@
 # This runs from GitHub Actions rather than from the server on purpose. The keep-alive must
 # not share a failure domain with the box it protects (D-67).
 #
-# Supabase never defines "activity", so the ping is a real query through PostgREST rather
-# than an auth health check. P0-4 points it at the table its first migration creates.
+# Supabase never defines "activity", so each run makes a real query, reading the seeded
+# health_check row through PostgREST. The PostgREST root would not do, because it accepts
+# secret keys only. The publishable key goes on the apikey header alone, since it is not a JWT.
+#
+# RLS is on for health_check with no policy (D-73), so the publishable key must get an empty
+# array back. A row in the response means RLS is broken, and the run fails for that too.
 #
 # GitHub disables scheduled workflows in a public repository after 60 days with no
 # repository activity. Recover with: gh workflow enable keepalive.yml
 name: Supabase keep-alive
 
 on:
-  # The schedule is off until P0-4 (#6). This job queried the PostgREST root, which accepts
-  # secret keys only, so every run got 401. P0-4 points it at a table, sends the key on the
-  # apikey header alone, and uncomments the schedule.
-  # schedule:
-  #   # Daily, off the hour, because scheduled runs are delayed when the hour turns over.
-  #   - cron: '17 4 * * *'
+  schedule:
+    # Daily, off the hour, because scheduled runs are delayed when the hour turns over.
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 # The job reads no repository contents and needs no token.
@@ -41,7 +42,7 @@ jobs:
             url_secret: SUPABASE_STABLE_URL
             key_secret: SUPABASE_STABLE_PUBLISHABLE_KEY
     steps:
-      - name: Query PostgREST
+      - name: Read health_check through PostgREST
         env:
           PROJECT: ${{ matrix.project }}
           URL: ${{ secrets[matrix.url_secret] }}
@@ -55,11 +56,15 @@ jobs:
             exit 1
           fi
           code="$(curl -sS --retry 3 --retry-delay 5 -o body.json -w '%{http_code}' \
-            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" "$URL/rest/v1/")"
+            -H "apikey: $KEY" "${URL%/}/rest/v1/health_check?select=id&limit=1")"
           echo "HTTP $code from the $PROJECT project"
           head -c 300 body.json || true
           echo
           if [ "$code" != "200" ]; then
-            echo "The $PROJECT project did not answer with 200. It may be paused already."
+            echo "The $PROJECT project did not answer with 200. It may be paused, or the health_check migration has not reached it."
+            exit 1
+          fi
+          if ! jq -e 'type == "array" and length == 0' body.json > /dev/null; then
+            echo "The publishable key read a row from health_check in the $PROJECT project, so RLS is not denying it (D-73)."
             exit 1
           fi
