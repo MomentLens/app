@@ -10,7 +10,7 @@ let server: Server;
 let baseUrl: string;
 
 beforeAll(async () => {
-  server = createApp().listen(0, '127.0.0.1');
+  server = createApp({ checkDatabase: () => Promise.resolve('ok') }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   const { port } = server.address() as AddressInfo;
   baseUrl = `http://127.0.0.1:${port}`;
@@ -24,4 +24,13 @@ afterAll(async () => {
 it('answers a route that does not exist with 404', async () => {
   const response = await fetch(`${baseUrl}/no-such-route`);
   expect(response.status).toBe(404);
+});
+
+// Checked on a real route, because Express's own 404 handler sets some of these headers itself
+// and would pass without helmet.
+it('sends helmet security headers and hides the framework', async () => {
+  const response = await fetch(`${baseUrl}/health`);
+  expect(response.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+  expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+  expect(response.headers.get('x-powered-by')).toBeNull();
 });
