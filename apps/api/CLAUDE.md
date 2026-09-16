@@ -89,3 +89,4 @@ Then build the upload keys for the photo and its thumbnail in the one key functi
 - `pino` for logging, `helmet` for headers.
 - Two Supabase projects exist, dev and stable. Development uses dev; the demo stack uses stable (D-76).
 - Tests in `tests/unit/` and `tests/integration/`, plain Jest without the `jest-expo` preset. The serving-endpoint negative test is the highest-value test in the repo; write it before the endpoint.
+- `pnpm --filter api test:rls` runs the RLS negative tests against the dev project, reading its URL and both keys from the root `.env`. CI skips them, because CI never holds the secret key.
