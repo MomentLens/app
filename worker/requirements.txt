@@ -1,0 +1,5 @@
+# Exactly pinned, never ranges (worker/CLAUDE.md). scripts/provision.sh installs these
+# into worker/.venv, and scripts/deploy.sh reinstalls them when anything under worker/
+# changes. P0-5 adds the InsightFace stack here, pinned the same way.
+fastapi==0.141.1
+uvicorn==0.53.0
