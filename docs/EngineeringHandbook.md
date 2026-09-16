@@ -541,12 +541,12 @@ The script decides that last pair by diffing `worker/` between the old commit an
 
 **Keep-alive**: free Supabase projects pause after 7 days of inactivity. Run it as a **GitHub Actions scheduled workflow**, not as a cron on the server (D-67). v3 put it on the box it was meant to protect against, which chains two failures together. One YAML file, independent failure domain. Set this up in Phase 0, not the week you discover a paused database.
 
-**Fallback, and what "standby" has to actually mean.** One team member's Azure student credit, completely untouched, reserved for demo week. This is not a rotation plan; rotating providers mid-project costs more days than it saves dollars, and the keep-alive cron lives on the box that would be moving.
+**Fallback, and what "standby" has to actually mean.** The team's Azure for Students, AWS and GCP credits, held across the three of you and used in that order (D-79). The standby VM is created for the rehearsal, deleted, and created again for demo week, so a credit is only spent while it is protecting something. D-38 rejected rotation partly because the keep-alive cron lived on the box that would be moving. D-67 moved it to GitHub Actions, so that objection is gone.
 
 A credit sitting unused is not a standby. To make it one, three things must exist before Phase 7:
 1. `scripts/provision.sh`, the §13 setup sequence above as a runnable script rather than a list you follow by hand.
-2. A written record of the DNS change: which registrar, which A record, and the TTL (set it low, 300s, at least a week before your defense so a swap propagates in minutes rather than hours).
-3. **One rehearsal.** Spin the Azure VM up once, run `provision.sh`, point a staging subdomain at it, confirm the app works, then tear it down. An untested fallback is a story you tell yourself. Budget half a day in Phase 7.
+2. A written record of the DNS change: which registrar, which A record, and the TTL (set it low, 300s, at least a week before your defense so a swap propagates in minutes rather than hours). That record is in `docs/ARCHITECTURE.md` §7.
+3. **One rehearsal.** Spin the standby VM up once on whichever credit is current, run `provision.sh`, point a staging subdomain at it, confirm the app works, then tear it down. An untested fallback is a story you tell yourself. Budget half a day in Phase 7.
 
 Both R2 and Supabase are external, so a compute swap moves no data. That is the whole reason this fallback is cheap, and it is worth saying out loud in a viva.
 
@@ -614,7 +614,7 @@ Testing pass, performance pass (§16), UI polish, and demo rehearsal on real dev
 **Four Phase 7 items that are not polish and will be skipped if they are not named:**
 - **Judge devices** (D-61). The build installed on team-owned Android phones, accounts signed in, at least a week ahead. This is not testable on demo morning.
 - **The offline fallback** (D-62). A recorded walkthrough of the full script on a USB stick and on a laptop in the room. The seeded dataset lives in Supabase, so a network failure takes it too.
-- **The Azure rehearsal**, per the standby criteria above.
+- **The standby rehearsal** (D-79), per the criteria above.
 - **The demo stack** (D-76, D-78). API and worker on the server against the stable project, up at the start of this phase.
 
 Roughly: Phases 0 through 4 in the first semester, 5 through 7 in the second. A loose target, not a commitment.

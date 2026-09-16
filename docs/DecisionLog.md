@@ -263,6 +263,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Bonus.** The instance is ARM64 and so is the M1, so local and production architecture match for the Python worker.
 **Amended (see D-50).** The instance is still provisioned in week one and still runs production, for reasons this entry gives that have not changed. The demo itself runs on the M1. Read D-50 before repeating any part of this entry in a viva.
 **Amended (see D-78).** From 2026-10-15 development and the demo run on a rented Netcup server, so the Oracle instance stops being the project's server.
+**Amended (see D-79).** The rotation this entry rejected is now the standby plan. D-67 moved the keep-alive off the box that would be moving, and a VM that exists only for the rehearsal and demo week spends almost none of a credit.
 
 ### D-39 — No Docker; systemd, nginx, and certbot instead
 **Decision.** Express and the worker run as systemd units behind nginx, with TLS from certbot.
@@ -543,7 +544,14 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Rejected.** Staying on Oracle Always Free, which from 15 October is 2 OCPUs, where a median photo took 1.8s and a 40-face photo 8.4s, with no uptime guarantee. The M1 demo (D-50), which measured fastest but is a single laptop, a tunnel, and a different environment from the one the team develops against. Hetzner CPX32, at €35.49 a month after Hetzner's June 2026 price rise.
 **Cost.** ⚠ About €15 a month. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
 **Reopen if.** The benchmark on the server, run inside Netcup's 30-day refund window at four threads, is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
-**Open.** The server's location, how the stable stack sits beside development on one server by Phase 7, and the demo-week fallback now that the M1 and the Oracle instance no longer cover for each other (`docs/ARCHITECTURE.md` §7).
+**Open.** How the stable stack sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location was settled on 2026-09-16, Nuremberg, and the demo-week fallback by D-79.
+
+### D-79: The standby is a rotation across three student credits, and it runs only twice ⚠
+**Decision.** Amends D-38. The demo-week standby is not one untouched Azure credit. It is the team's Azure for Students, AWS and GCP credits, held across the three members and used in that order, moving to the next when one runs out. The standby VM is created for the Phase 7 rehearsal, deleted, and created again for demo week. It never runs between those two windows.
+**Why.** D-38 rejected rotation for two reasons and one of them is gone: D-67 moved the Supabase keep-alive to GitHub Actions, so it no longer lives on the box that would be moving. The other, that each migration costs days, stands and is accepted knowingly. What it buys is a standby that outlives any one credit, because a VM existing for two short windows spends almost nothing, while a single credit expires on the calendar whether or not anything runs on it.
+**Rejected.** A warm standby running continuously, which spends a credit to guard against something that has not happened. One provider with no successor, which is D-38's plan and ends the day that credit expires.
+**Cost.** ⚠ The rehearsal proves one provider. Switching later makes it stale, and a different image or firewall model is exactly where `scripts/provision.sh` would break. Ubuntu 24.04 everywhere keeps that small, and the script refuses anything else.
+**What makes it real.** Handbook §13's three criteria. The script exists. The DNS record is written down in `docs/ARCHITECTURE.md` §7, with the registrar, the A record and its 300s TTL. The rehearsal is still owed, half a day in Phase 7.
 
 ---
 
@@ -556,8 +564,8 @@ These are not settled and should not be treated as though they are.
 - ~~Whether `insightface` compiles on aarch64.~~ **Settled on 2026-09-15.** InsightFace 2.0 installs as pure Python and ran on an ARM64 server and on the M1. The Phase 0 spike still has to be rerun on the x86-64 server (D-78).
 - **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
 - ~~Who owns `docs/ARCHITECTURE.md`.~~ **Settled by D-75.** Ukasha owns it; agents write it.
-- **Whether the Azure fallback actually works.** D-38 calls it a hot standby. `scripts/provision.sh` now exists, but the standby is not real until the script has been run against a real Azure VM once. Half a day in Phase 7.
-- **The demo-week fallback.** D-78 ended the arrangement where the M1 and the Oracle instance covered for each other, and nothing replaces it yet (`docs/ARCHITECTURE.md` §7).
+- **Whether the standby actually works.** D-79 defines it. `scripts/provision.sh` exists and the DNS record is written down, but the standby is not real until the script has been run against a real VM on one of the three credits. Half a day in Phase 7.
+- ~~The demo-week fallback.~~ **Settled by D-79.** The rotated standby replaces the arrangement D-78 ended, and counts once the Phase 7 rehearsal has run it.
 - **The feature-complete date.** The plan is to build fast, harden afterwards, and hold a month of buffer. That buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Two things that plan gets wrong and that the team should settle before relying on it. AI velocity does almost nothing for the parts that actually consume months: the viewfinder, background upload, the SQLite queue's state machine, deep links, push certificates, and RLS, all of which fail at device and configuration boundaries rather than in code, with a debug loop that is manual and one device at a time. And "harden later" is false for anything with a shape, including D-60's version column, D-63's schema split, D-54's curated flag and D-55's visibility predicate; get those wrong and it is a migration against live rows, not a refactor.
 - ~~Whether D-45 survives contact with generated code volume.~~ **Settled by D-68.** Comprehension moves to the Phase 7 month; a named list of dangerous surfaces still gets read before merging.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
