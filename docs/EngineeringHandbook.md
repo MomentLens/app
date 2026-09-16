@@ -445,7 +445,8 @@ ssh root@SERVER_IP 'bash /root/provision.sh --domain api.yourdomain.com --email 
 
 Leave out `--email` to skip TLS until DNS points at the server; the script prints the `certbot` command to run then. Passing `--email` accepts Let's Encrypt's terms. The script never writes secrets, so fill in `/srv/momentlens/.env` yourself afterwards.
 
-**Two choices in the script worth knowing.**
+**Three choices in the script worth knowing.**
+- **The install is filtered to `api...`**, the API and the workspace packages it depends on, so the server never installs Expo or React Native. `apps/mobile` is built by EAS, not here. Add a workspace package the API depends on and the filter picks it up on its own.
 - **Node comes from the official release tarball** at the exact version in `.nvmrc`, checked against the published SHA-256 sums and installed under `/usr/local`. Never install it with fnm on the server. fnm puts binaries under the login user's home, which the service account cannot reach, and systemd fails with `status=203/EXEC`.
 - **The `momentlens` user's home is `/var/lib/momentlens`, and the checkout is `/srv/momentlens`.** Keeping them apart stops pnpm's store and pip's cache from landing inside the git working tree.
 
@@ -491,6 +492,8 @@ WantedBy=multi-user.target
 
 `Restart=always` is the whole reason to use systemd rather than `nohup` and hope. If the worker crashes on a malformed image at 3am, it comes back.
 
+The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. Ping it from the box with `curl http://127.0.0.1:8000/health`.
+
 **nginx as reverse proxy**, in `/etc/nginx/sites-available/momentlens`:
 ```nginx
 server {
@@ -509,19 +512,26 @@ server {
 
 **TLS**: `sudo certbot --nginx -d api.yourdomain.com`. Certbot installs its own renewal timer; verify it with `systemctl list-timers | grep certbot`. You need a real domain for this. A cheap `.com` or a free `.me` from the GitHub Student Pack is fine, and you need HTTPS anyway because iOS App Transport Security will refuse plaintext.
 
-**Deploying an update:**
+**Deploying an update:** `scripts/deploy.sh` is this sequence, and running that script is how you deploy.
+
+```bash
+ssh SERVER 'sudo bash /srv/momentlens/scripts/deploy.sh'
+```
+
+What it does, in order:
+
 ```bash
 cd /srv/momentlens
 sudo -H -u momentlens git pull --ff-only
-sudo -H -u momentlens env HUSKY=0 pnpm install --frozen-lockfile
+sudo -H -u momentlens env HUSKY=0 pnpm install --filter "api..." --frozen-lockfile
 sudo -H -u momentlens pnpm --filter api build
 sudo systemctl restart momentlens-api
-# worker only if it changed:
+# worker only if something under worker/ changed:
 sudo -H -u momentlens worker/.venv/bin/pip install -r worker/requirements.txt
 sudo systemctl restart momentlens-worker
 ```
 
-Put that in `scripts/deploy.sh` on day one so nobody is typing it from memory the night before the demo.
+The script decides that last pair by diffing `worker/` between the old commit and the new one, so a deploy that touched only the API leaves the worker running. Pass `--skip-worker` to leave it alone regardless.
 
 **Logs**: `journalctl -u momentlens-worker -f`. Learn this command in week one. It is where every mysterious failure will be explained.
 
