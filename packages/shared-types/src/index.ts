@@ -4,4 +4,4 @@
 // This package ships TypeScript source with no build step. Metro, tsx, Jest and
 // the API's esbuild bundle all compile it where it is used, so nothing here may
 // depend on Node or DOM globals.
-export {};
+export * from './health';
