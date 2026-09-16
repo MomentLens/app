@@ -96,8 +96,6 @@ docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 
 ## Commands
 
-<!-- TODO: the worker command does not exist until P0-4. Verify it the day it does, then delete this comment. -->
-
 ```bash
 pnpm install
 pnpm check:machine                # scripts/doctor.mjs: node, pnpm, python, java, Android SDK, Xcode vs the pins
