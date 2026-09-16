@@ -1,0 +1,62 @@
+# Keeps both Supabase projects awake. A free project pauses after 7 days of low activity,
+# and the stable project sits unused until the demo stack goes up, so it is the one that
+# would be found paused in demo week (Handbook §13).
+#
+# This runs from GitHub Actions rather than from the server on purpose. The keep-alive must
+# not share a failure domain with the box it protects (D-67).
+#
+# Supabase never defines "activity", so the ping is a real query through PostgREST rather
+# than an auth health check. P0-4 points it at the table its first migration creates.
+#
+# GitHub disables scheduled workflows in a public repository after 60 days with no
+# repository activity. Recover with: gh workflow enable keepalive.yml
+name: Supabase keep-alive
+
+on:
+  schedule:
+    # Daily, off the hour, because scheduled runs are delayed when the hour turns over.
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+# The job reads no repository contents and needs no token.
+permissions: {}
+
+jobs:
+  ping:
+    name: Ping ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      # One broken project must not hide the state of the other.
+      fail-fast: false
+      matrix:
+        include:
+          - project: dev
+            url_secret: SUPABASE_DEV_URL
+            key_secret: SUPABASE_DEV_PUBLISHABLE_KEY
+          - project: stable
+            url_secret: SUPABASE_STABLE_URL
+            key_secret: SUPABASE_STABLE_PUBLISHABLE_KEY
+    steps:
+      - name: Query PostgREST
+        env:
+          PROJECT: ${{ matrix.project }}
+          URL: ${{ secrets[matrix.url_secret] }}
+          KEY: ${{ secrets[matrix.key_secret] }}
+          URL_SECRET: ${{ matrix.url_secret }}
+          KEY_SECRET: ${{ matrix.key_secret }}
+        run: |
+          set -euo pipefail
+          if [ -z "$URL" ] || [ -z "$KEY" ]; then
+            echo "Set the $URL_SECRET and $KEY_SECRET repository secrets (Handbook §13)."
+            exit 1
+          fi
+          code="$(curl -sS --retry 3 --retry-delay 5 -o body.json -w '%{http_code}' \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" "$URL/rest/v1/")"
+          echo "HTTP $code from the $PROJECT project"
+          head -c 300 body.json || true
+          echo
+          if [ "$code" != "200" ]; then
+            echo "The $PROJECT project did not answer with 200. It may be paused already."
+            exit 1
+          fi
