@@ -9,7 +9,7 @@
 - Anything undecided is marked **Open**. Ask Ukasha instead of filling it in.
 - Ukasha reviews every PR that touches this file.
 
-**Status, 2026-09-13.** Design only. No migration exists yet, so every table below is planned. When a table's migration merges, add the migration file name under its heading.
+**Status, 2026-09-16.** One migration exists, for `health_check`, which is infrastructure rather than a feature table. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
 
 ---
 
@@ -37,12 +37,13 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | `face_reference` | The owner, and only their photos. Embeddings never leave the database and the worker (Handbook §5) |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
 | `profile.avatar_key` | People who share an event with the user, unless the user's subject has Do Not Publish active. Then nobody else, the Admin included (D-35) |
+| `health_check` | The API only, for `GET /health`. RLS is on with no policy, so the publishable key reads no rows, and both the keep-alive and `apps/api/tests/integration/rls.test.ts` check that |
 
 ---
 
 ## 2. Tables
 
-Planned, not migrated. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
+Planned, not migrated, except `health_check`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
 
 ### `profile`
 One row per auth user, keyed by `user_id`.
@@ -125,6 +126,12 @@ A Do Not Publish subject found in a photo, with that subject's personalized file
 
 ### `consent`
 - `user_id`, `policy_version`, `accepted_at`. The app blocks with the consent screen when the current version has no row (§4.18)
+
+### `health_check`
+Infrastructure, not a feature table. Migration `supabase/migrations/20260916154203_create_health_check.sql`.
+- One row, seeded by the migration. `id` is a `smallint` held at 1 by a check constraint, the exception to the uuid rule above
+- RLS on with no policy (D-73). `GET /health` reads the row with the secret key; the keep-alive reads it with the publishable key and must get no rows
+- `SELECT` is granted to `anon`, `authenticated` and `service_role` explicitly, so neither reader depends on whether the project exposes new tables to the Data API by default
 
 ---
 
@@ -213,6 +220,6 @@ Plan (S-26): about 30 photos of the three team members in varied light, same-per
 - **Domain.** `momentlens.me`, bought from Namecheap through the GitHub Student Pack, with DNS at Namecheap. The named tunnel was the only reason its DNS had to be on Cloudflare, and D-78 removed the tunnel. `api.momentlens.me` is an A record with a 300s TTL, pointing at the Oracle interim instance until 2026-10-15 and at the Netcup server after that. TLS is a certbot certificate issued on the server and renewed by certbot's timer (Handbook §13).
 - **Regions, and why they are permanent.** Both Supabase projects are in `eu-central-1` (Frankfurt) and both buckets carry the `weur` location hint, matching the Nuremberg server. Neither can be corrected later. A Supabase project's region is fixed at creation, and R2 honors a location hint only the first time a bucket of that name is created, so deleting `momentlens-dev` and recreating it keeps the original location.
 - **Demo-week fallback.** The rotated standby (D-79). Its `/srv/momentlens/.env` has to carry the stable project and bucket rather than a copy of the development server's, because the demo build logs in against stable.
-- **Supabase keep-alive.** `.github/workflows/keepalive.yml` queries both projects through PostgREST and fails the run on anything but 200 (D-67). **Its schedule is off until P0-4** (#6). It queried the PostgREST root, which accepts secret keys only, so both projects answered 401. P0-4 points it at a table, sends the publishable key on `apikey` alone, and restores the daily 04:17 UTC run. Until then nothing scheduled keeps either project awake, and both were created on 2026-09-16, so P0-4 has to land before 2026-09-23. The stable project sits unused until the demo stack goes up and would pause without it. One trap: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, which stops this silently. `gh workflow enable keepalive.yml` brings it back.
+- **Supabase keep-alive.** `.github/workflows/keepalive.yml`, daily at 04:17 UTC with a manual trigger, reads `health_check` in both projects through PostgREST with the publishable key on `apikey` alone (D-67). It fails the run on anything but 200, and when the response is not empty, because a row reaching the publishable key means RLS is broken. The stable project sits unused until the demo stack goes up and would pause without it. One trap: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, which stops this silently. `gh workflow enable keepalive.yml` brings it back.
 - **Mobile builds.** EAS profiles in `apps/mobile/eas.json`. `development` and `preview` use the dev environment variables, `production` uses stable. All three build an Android APK with internal distribution (D-61).
 - **Standby.** Not provisioned. Azure for Students, then AWS, then GCP, one credit at a time across the three members, with the VM created for the Phase 7 rehearsal and for demo week only (D-79). Two of Handbook §13's three criteria are met: `scripts/provision.sh` exists, and the DNS record is the bullet above. The rehearsal is still owed.

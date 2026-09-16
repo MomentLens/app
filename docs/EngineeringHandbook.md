@@ -138,7 +138,7 @@ momentlens/
 ├── e2e/                       # Maestro flows (§11)
 ├── .github/workflows/
 │   ├── ci.yml                 # lint, typecheck, unit + integration tests
-│   └── supabase-keepalive.yml # D-67. Deliberately not a cron on the compute box.
+│   └── keepalive.yml          # D-67. Deliberately not a cron on the compute box.
 ├── scripts/
 │   ├── deploy.sh              # the §13 update sequence, written down once
 │   └── provision.sh           # the §13 setup sequence, run once on any new server
@@ -443,7 +443,7 @@ scp scripts/provision.sh root@SERVER_IP:/root/
 ssh root@SERVER_IP 'bash /root/provision.sh --domain api.yourdomain.com --email you@example.com'
 ```
 
-Leave out `--email` to skip TLS until DNS points at the server; the script prints the `certbot` command to run then. Passing `--email` accepts Let's Encrypt's terms. The script never writes secrets, so fill in `/srv/momentlens/.env` yourself afterwards.
+Leave out `--email` to skip TLS until DNS points at the server; the script prints the `certbot` command to run then. Passing `--email` accepts Let's Encrypt's terms. The script never writes secrets, so fill in `/srv/momentlens/.env` yourself afterwards. The API refuses to start until `SUPABASE_URL` and `SUPABASE_SECRET_KEY` hold real values, and `journalctl -u momentlens-api` names the one that is wrong.
 
 **Three choices in the script worth knowing.**
 - **The install is filtered to `api...`**, the API and the workspace packages it depends on, so the server never installs Expo or React Native. `apps/mobile` is built by EAS, not here. Add a workspace package the API depends on and the filter picks it up on its own.
@@ -541,7 +541,7 @@ The script decides that last pair by diffing `worker/` between the old commit an
 
 **Keep-alive**: free Supabase projects pause after 7 days of inactivity. Run it as a **GitHub Actions scheduled workflow**, not as a cron on the server (D-67). v3 put it on the box it was meant to protect against, which chains two failures together. One YAML file, independent failure domain. Set this up in Phase 0, not the week you discover a paused database.
 
-That file is `.github/workflows/keepalive.yml`. It reads one row of a table through PostgREST daily and fails the run on anything but 200, because Supabase never defines what "activity" means and an auth health check may not count. Two things its first run taught us. Query a table, never the PostgREST root, which serves the OpenAPI spec and accepts secret keys only, so a publishable key gets 401 there. And send a publishable key on the `apikey` header alone, because it is not a JWT. One caveat that has nothing to do with Supabase: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, so a long quiet stretch stops the keep-alive without an error. `gh workflow enable keepalive.yml` brings it back.
+That file is `.github/workflows/keepalive.yml`. It reads the seeded `health_check` row through PostgREST daily and fails the run on anything but 200, or if that row ever reaches the publishable key, because Supabase never defines what "activity" means and an auth health check may not count. Two things its first run taught us. Query a table, never the PostgREST root, which serves the OpenAPI spec and accepts secret keys only, so a publishable key gets 401 there. And send a publishable key on the `apikey` header alone, because it is not a JWT. One caveat that has nothing to do with Supabase: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, so a long quiet stretch stops the keep-alive without an error. `gh workflow enable keepalive.yml` brings it back.
 
 **Fallback, and what "standby" has to actually mean.** The team's Azure for Students, AWS and GCP credits, held across the three of you and used in that order (D-79). The standby VM is created for the rehearsal, deleted, and created again for demo week, so a credit is only spent while it is protecting something. D-38 rejected rotation partly because the keep-alive cron lived on the box that would be moving. D-67 moved it to GitHub Actions, so that objection is gone.
 
