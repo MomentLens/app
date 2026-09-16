@@ -7,3 +7,8 @@ apps/mobile/assets/
 # The docs are edited by hand. Prettier re-pads every markdown table and rewrites
 # emphasis markers, which buries the real change in a whitespace diff.
 *.md
+
+# Supabase CLI scratch. supabase/.gitignore keeps it out of git, but Prettier reads only the
+# root .gitignore, so `supabase link` would otherwise fail format:check on every machine.
+supabase/.temp/
+supabase/.branches/
