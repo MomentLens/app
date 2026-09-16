@@ -99,7 +99,8 @@ docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 ```bash
 pnpm install
 pnpm check:machine                # scripts/doctor.mjs: node, pnpm, python, java, Android SDK, Xcode vs the pins
-pnpm --filter mobile start        # Metro
+pnpm --filter mobile android      # build and install the development build; `ios` on the Mac
+pnpm --filter mobile start        # Metro, serving JS to the installed development build
 pnpm --filter api dev
 pnpm lint && pnpm typecheck && pnpm test
 cd worker && .venv/bin/python -m app.main
