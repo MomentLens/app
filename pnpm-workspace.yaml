@@ -6,6 +6,7 @@ packages:
 # missing, so none of them needs to run. Review this list when pnpm adds an entry.
 allowBuilds:
   '@parcel/watcher': false
+  '@sentry/cli': false
   '@swc/core': false
   esbuild: false
   unrs-resolver: false
