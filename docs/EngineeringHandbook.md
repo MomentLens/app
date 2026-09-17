@@ -463,7 +463,7 @@ Type=simple
 User=momentlens
 WorkingDirectory=/srv/momentlens/apps/api
 EnvironmentFile=/srv/momentlens/.env
-ExecStart=/usr/local/bin/node dist/index.js
+ExecStart=/usr/local/bin/node --import ./dist/instrument.js dist/index.js
 Restart=always
 RestartSec=5
 
@@ -489,6 +489,8 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 ```
+
+**The API unit preloads `dist/instrument.js`**, which starts Sentry before `dist/index.js` imports express, because an ESM module's imports run before its own code (`apps/api/src/instrument.ts`). `deploy.sh` never rewrites units, so a server whose unit predates the preload keeps running the API without Sentry, and says nothing about it. Run `provision.sh` once there. It pulls and builds before it writes the unit, so `dist/instrument.js` exists by the time systemd restarts the API.
 
 `Restart=always` is the whole reason to use systemd rather than `nohup` and hope. If the worker crashes on a malformed image at 3am, it comes back.
 

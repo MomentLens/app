@@ -216,7 +216,7 @@ Type=simple
 User=$APP_USER
 WorkingDirectory=$APP_DIR/apps/api
 EnvironmentFile=$ENV_FILE
-ExecStart=/usr/local/bin/node dist/index.js
+ExecStart=/usr/local/bin/node --import ./dist/instrument.js dist/index.js
 Restart=always
 RestartSec=5
 
