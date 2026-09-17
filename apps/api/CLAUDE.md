@@ -87,6 +87,7 @@ Then build the upload keys for the photo and its thumbnail in the one key functi
 - Node's event loop is single-threaded: any synchronous CPU work in a handler blocks every other request that process is serving. That is why image and face work lives in the Python worker behind `pgmq`.
 - The API never compares face embeddings. Matches are stored on `face` rows by the worker (D-74); the API reads them.
 - `pino` for logging, `helmet` for headers.
+- **Sentry starts in `src/instrument.ts`, preloaded with `node --import`** by `pnpm dev` and the systemd unit. Never import it from `index.ts` or call `Sentry.init` anywhere else. ESM runs a module's imports before its code, so Sentry would start after express had loaded and events would lose their request. It reports errors only, with `sendDefaultPii` off. Keep `setupExpressErrorHandler` after the last route and before any other error middleware.
 - Two Supabase projects exist, dev and stable. Development uses dev; the demo stack uses stable (D-76).
 - Tests in `tests/unit/` and `tests/integration/`, plain Jest without the `jest-expo` preset. The serving-endpoint negative test is the highest-value test in the repo; write it before the endpoint.
 - `pnpm --filter api test:rls` runs the RLS negative tests against the dev project, reading its URL and both keys from the root `.env`. CI skips them, because CI never holds the secret key.
