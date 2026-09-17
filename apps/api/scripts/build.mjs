@@ -1,5 +1,6 @@
-// Bundles src/index.ts into dist/index.js, which systemd runs with `node dist/index.js`
-// (Handbook §13).
+// Bundles src/index.ts into dist/index.js and src/instrument.ts into dist/instrument.js, which
+// systemd runs as `node --import ./dist/instrument.js dist/index.js` (Handbook §13). The two stay
+// separate files because --import has to load Sentry before index.js imports express.
 //
 // Why a bundle and not plain tsc: @momentlens/shared-types exports TypeScript source,
 // and tsc will not emit files from outside this package. So workspace packages are
@@ -25,8 +26,8 @@ const externalizeRegistryPackages = {
 };
 
 await build({
-  entryPoints: ['src/index.ts'],
-  outfile: 'dist/index.js',
+  entryPoints: ['src/index.ts', 'src/instrument.ts'],
+  outdir: 'dist',
   bundle: true,
   platform: 'node',
   target: 'node24',

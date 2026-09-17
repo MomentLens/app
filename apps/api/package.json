@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
+    "dev": "tsx watch --env-file-if-exists=../../.env --import ./src/instrument.ts src/index.ts",
     "build": "node scripts/build.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@momentlens/shared-types": "workspace:*",
+    "@sentry/node": "10.74.0",
     "@supabase/supabase-js": "2.116.0",
     "express": "5.2.1",
     "helmet": "8.3.0",
