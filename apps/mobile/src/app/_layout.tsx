@@ -5,6 +5,7 @@ import { Manrope_400Regular } from '@expo-google-fonts/manrope/400Regular';
 import { Manrope_500Medium } from '@expo-google-fonts/manrope/500Medium';
 import { Manrope_600SemiBold } from '@expo-google-fonts/manrope/600SemiBold';
 import { Manrope_700Bold } from '@expo-google-fonts/manrope/700Bold';
+import * as Sentry from '@sentry/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, ThemeProvider } from 'expo-router';
@@ -14,6 +15,19 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import AppTabs from '@/components/app-tabs';
+
+// Uncaught errors and native crashes only: no tracing, no session replay. Screenshots, the view
+// hierarchy and replay would all send what is on screen to Sentry, and on this app that is photos of
+// faces, including people who turned on Do Not Publish. They stay off (apps/mobile/CLAUDE.md).
+// With EXPO_PUBLIC_SENTRY_DSN unset the SDK reports nothing. Both variables are read with dot
+// notation, the only form Expo inlines at build time.
+Sentry.init({
+  dsn: process.env.EXPO_PUBLIC_SENTRY_DSN,
+  environment: process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT,
+  sendDefaultPii: false,
+  attachScreenshot: false,
+  attachViewHierarchy: false,
+});
 
 SplashScreen.preventAutoHideAsync();
 
@@ -28,7 +42,7 @@ const FONTS = {
   Manrope_700Bold,
 };
 
-export default function TabLayout() {
+function TabLayout() {
   const colorScheme = useColorScheme();
   // One client for the app's lifetime. Holding it in state rather than at module scope keeps the
   // cache across Fast Refresh, which re-runs an edited module.
@@ -57,3 +71,6 @@ export default function TabLayout() {
     </QueryClientProvider>
   );
 }
+
+// Sentry.wrap adds a breadcrumb for each touch, recorded by component name, not on-screen text.
+export default Sentry.wrap(TabLayout);
