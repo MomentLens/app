@@ -38,6 +38,7 @@
   "devDependencies": {
     "@jest/globals": "29.7.0",
     "@react-native/jest-preset": "0.86.3",
+    "@sentry/cli": "2.58.4",
     "@types/react": "~19.2.2",
     "babel-preset-expo": "~57.0.11",
     "eslint-config-expo": "~57.0.2",
