@@ -14,7 +14,7 @@
  * pattern with plain hex strings — that's what makes `bg-accent/20` etc. work.
  *
  * Font weight is NOT set via a `font-weight` utility. Each role token in
- * `fontFamily` points at a specific loaded font FILE (e.g. Inter_600SemiBold),
+ * `fontFamily` points at a specific loaded font FILE (e.g. Manrope_600SemiBold),
  * because React Native does not synthesize weights for custom fonts the way
  * the web does. Always pair a `font-*` class with a `text-*` class from the
  * same role, e.g. className="font-h1 text-h1".
@@ -60,22 +60,23 @@ module.exports = {
       fontFamily: {
         // Low-level family tokens — reach for these only when a role token
         // below doesn't fit.
-        'fraunces-medium': ['Fraunces_500Medium'],
-        'inter-regular': ['Inter_400Regular'],
-        'inter-medium': ['Inter_500Medium'],
-        'inter-semibold': ['Inter_600SemiBold'],
+        'fraunces-semibold': ['Fraunces_600SemiBold'],
+        'manrope-regular': ['Manrope_400Regular'],
+        'manrope-medium': ['Manrope_500Medium'],
+        'manrope-semibold': ['Manrope_600SemiBold'],
+        'manrope-bold': ['Manrope_700Bold'], // card titles, which have no role token
 
         // Role tokens — matches the type scale 1:1. Pair with the fontSize
         // token of the same name.
-        display: ['Fraunces_500Medium'], // Display (splash, rare)
-        h1: ['Fraunces_500Medium'], // H1 / Screen title
-        h2: ['Inter_600SemiBold'], // H2 / Section header
-        body: ['Inter_400Regular'], // Body (default)
-        bodySecondary: ['Inter_400Regular'], // Body secondary/muted
-        buttonLabel: ['Inter_600SemiBold'], // Button label
-        fieldLabel: ['Inter_500Medium'], // Field label
-        caption: ['Inter_400Regular'], // Caption / timestamp
-        micro: ['Inter_600SemiBold'], // Micro / badge
+        display: ['Fraunces_600SemiBold'], // Display (splash, rare)
+        h1: ['Fraunces_600SemiBold'], // H1 / Screen title
+        h2: ['Manrope_600SemiBold'], // H2 / Section header
+        body: ['Manrope_400Regular'], // Body (default)
+        bodySecondary: ['Manrope_400Regular'], // Body secondary/muted
+        buttonLabel: ['Manrope_700Bold'], // Button label
+        fieldLabel: ['Manrope_500Medium'], // Field label
+        caption: ['Manrope_400Regular'], // Caption / timestamp
+        micro: ['Manrope_600SemiBold'], // Micro / badge
       },
 
       fontSize: {
