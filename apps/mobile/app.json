@@ -35,6 +35,14 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://de.sentry.io/",
+          "organization": "momentlens",
+          "project": "momentlens-app"
+        }
       ]
     ],
     "experiments": {
