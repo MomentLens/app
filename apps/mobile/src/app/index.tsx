@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -63,44 +62,38 @@ function HealthResult({ health }: { health: ReturnType<typeof useHealth> }) {
     );
   }
   const { status, database, checkedAt } = health.data;
+  // The status reads as words, the way a printed report would give it. Color appears only on a value
+  // that failed, so a healthy check has none and a failure stands out without a badge. The words
+  // differ too, so the state never depends on color alone.
   return (
     <>
-      <Text className="font-h2 text-h2 text-textPrimary">
-        {status === 'ok'
-          ? 'The API and the database both answer'
-          : 'The API answers, but the database does not'}
-      </Text>
-      <Row label="API">
-        <StatusPill ok={status === 'ok'} label={status} />
-      </Row>
-      <Row label="Database">
-        <StatusPill ok={database === 'ok'} label={database} />
-      </Row>
-      <Row label="Checked at">
-        <Text className="font-body text-body text-textPrimary">
-          {new Date(checkedAt).toLocaleTimeString()}
+      <View className="gap-1">
+        <Text className="font-h2 text-h2 text-textPrimary">
+          {status === 'ok'
+            ? 'The API and the database both answer'
+            : 'The API answers, but the database does not'}
         </Text>
-      </Row>
+        <Text className="font-caption text-caption text-textSecondary">
+          Checked at {new Date(checkedAt).toLocaleTimeString()}
+        </Text>
+      </View>
+      {/* Any response parsed into health.data means the API answered, whatever its status says. */}
+      <Row label="API" value="Answering" />
+      <Row
+        label="Database"
+        value={database === 'ok' ? 'Answering' : 'Not answering'}
+        failed={database !== 'ok'}
+      />
     </>
   );
 }
 
-function Row({ label, children }: { label: string; children: ReactNode }) {
+function Row({ label, value, failed = false }: { label: string; value: string; failed?: boolean }) {
   return (
     <View className="flex-row items-center justify-between border-t border-border pt-3">
       <Text className="font-fieldLabel text-fieldLabel text-textSecondary">{label}</Text>
-      {children}
-    </View>
-  );
-}
-
-// The tint uses an opacity modifier on the token, which only works because global.css stores each
-// color as an RGB triple.
-function StatusPill({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <View className={`rounded-full px-2.5 py-1 ${ok ? 'bg-success/20' : 'bg-danger/20'}`}>
-      <Text className={`font-micro text-micro ${ok ? 'text-success' : 'text-danger'}`}>
-        {label}
+      <Text className={`font-body text-body ${failed ? 'text-danger' : 'text-textPrimary'}`}>
+        {value}
       </Text>
     </View>
   );
