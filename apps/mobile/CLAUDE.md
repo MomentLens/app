@@ -71,6 +71,9 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 ## Local rules
 
 - **Styling is NativeWind v4 with tokens from `tailwind.config.js` and `global.css` in this folder**, the only two files allowed a hex value. Never a hardcoded hex in a component; dark mode depends on it. The template's `src/constants/theme.ts` and `src/global.css` predate the tokens and go when S-08 replaces the template screens.
+- **`className` works on React Native core components only.** NativeWind maps it on `View`, `Text`, `Pressable` and the rest of `react-native`, and a third-party component such as `SafeAreaView` ignores it. Pass that component `style`, or put the classes on a `View` inside it.
+- **`react-native-css-interop` is a direct dependency on purpose.** NativeWind's Babel step imports it from the app's own files, and pnpm's isolated installs hide a package's dependencies from the app. Pin it to the exact version the installed `nativewind` depends on, and bump the two together.
+- **Fonts load in `src/app/_layout.tsx` with `useFonts`**, keyed by the family names `tailwind.config.js` uses. A weight added to the type scale goes in both files. Styling, tokens and fonts are JavaScript and assets, so none of them needs a native rebuild.
 - **Gestures and animation use Reanimated worklets**, not the JS-driven `Animated` API. This is one of the three places where performance beats simplicity.
 - **No `AsyncStorage` patterns.** `react-native-mmkv` for key-value, SQLite for the queue.
 - Simulators fake camera and GPS badly. Develop the viewfinder and the verification gate on a real phone, not at the end.
