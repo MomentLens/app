@@ -70,6 +70,8 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 
 ## Local rules
 
+- **Sentry never sees the screen.** `Sentry.init` in `src/app/_layout.tsx` keeps `sendDefaultPii`, `attachScreenshot` and `attachViewHierarchy` off, and the app has no replay integration. A screenshot, a view hierarchy or a replay sends what is on screen to a third party, and on this app that is photos of faces, including people who turned on Do Not Publish. Never turn one on, not even to debug a crash.
+- **Source maps upload only from release builds.** A local debug build uploads nothing and needs no Sentry token. An EAS build uploads them with `SENTRY_AUTH_TOKEN` from its EAS environment. A local release build needs `SENTRY_DISABLE_AUTO_UPLOAD=true` unless that token is set.
 - **Styling is NativeWind v4 with tokens from `tailwind.config.js` and `global.css` in this folder**, the only two files allowed a hex value. Never a hardcoded hex in a component; dark mode depends on it. The template's `src/constants/theme.ts` and `src/global.css` predate the tokens and go when S-08 replaces the template screens.
 - **`className` works on React Native core components only.** NativeWind maps it on `View`, `Text`, `Pressable` and the rest of `react-native`, and a third-party component such as `SafeAreaView` ignores it. Pass that component `style`, or put the classes on a `View` inside it.
 - **`react-native-css-interop` is a direct dependency on purpose.** NativeWind's Babel step imports it from the app's own files, and pnpm's isolated installs hide a package's dependencies from the app. Pin it to the exact version the installed `nativewind` depends on, and bump the two together.
