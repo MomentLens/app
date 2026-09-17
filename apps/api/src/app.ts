@@ -1,3 +1,4 @@
+import * as Sentry from '@sentry/node';
 import express from 'express';
 import type { Express } from 'express';
 import helmet from 'helmet';
@@ -19,5 +20,9 @@ export function createApp(deps: AppDeps): Express {
   const app = express();
   app.use(helmet());
   app.use(healthRouter(healthController(deps.checkDatabase)));
+  // After every route and before any other error middleware, so it sees each error a route passes
+  // on. It reports the error and hands it to the next handler, which still writes the response.
+  // Without SENTRY_DSN it reports nothing.
+  Sentry.setupExpressErrorHandler(app);
   return app;
 }
