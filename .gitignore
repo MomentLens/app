@@ -39,3 +39,6 @@ worker/**/__pycache__/
 # Editor
 .vscode/*
 !.vscode/extensions.json
+
+# Claude Code (personal, per-machine settings)
+.claude/settings.local.json
