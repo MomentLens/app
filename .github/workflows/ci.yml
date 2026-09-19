@@ -38,6 +38,11 @@ jobs:
           cache: true
 
       - run: pnpm install --frozen-lockfile
+
+      # Dangling citations, unbalanced code fences and duplicate heading slugs in docs/.
+      # Reporting only until 2026-10-03, then drop --warn so it blocks (plan step 9).
+      - name: Check docs cross-references
+        run: node scripts/doc.mjs check --warn
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
