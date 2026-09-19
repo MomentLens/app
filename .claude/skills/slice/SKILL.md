@@ -9,18 +9,30 @@ Start slice $ARGUMENTS.
 
 ## 1. Load the slice, not the docs
 
-The four docs in `docs/` run 8K to 32K tokens each. Reading one whole burns context the slice needs. Read sections.
+```
+node scripts/doc.mjs slice $ARGUMENTS
+```
 
-1. `grep -n "$ARGUMENTS" docs/WorkSlices.md`. Read that table row and any bold note under the phase that names $ARGUMENTS. The row gives the spec sections, the owner and the dependencies.
-2. Check every dependency has merged: `gh pr list --state merged --search "<id> in:title"` if `gh` works, otherwise ask. If one has not merged, stop and say which. Do not build against an interface you imagined.
-3. Read each cited section and nothing else:
-   - Spec: `grep -n '^#' docs/Idea.md`, then read from the section's heading to the next heading at the same level.
-   - Handbook: `grep -n '^##' docs/EngineeringHandbook.md`, same rule.
-   - Decision log: `grep -n '^### D-57' docs/DecisionLog.md`, read to the next `###`. Follow a D-entry only when a section you read cites it.
-4. Read the `CLAUDE.md` of every package the slice touches, and the `docs/ARCHITECTURE.md` sections for any table, R2 key or worker job it touches.
-5. Read `packages/shared-types`. Reuse a schema that exists. Never redeclare one.
+One command. It resolves the slice row, expands every spec section, handbook section and
+decision that slice cites, stubs everything one hop further out with a one-line summary and
+the command to expand it, and refuses to expand a superseded decision into the brief.
+
+Expand a stub only when the brief tells you it matters: `doc D-55`. Before paying for a big
+one, `doc explain slice $ARGUMENTS` prints the same chunk list with token costs and no bodies.
+
+Then, and only then:
+
+1. Check every dependency has merged: `gh pr list --state merged --search "<id> in:title"` if
+   `gh` works, otherwise ask. If one has not merged, stop and say which. Do not build against
+   an interface you imagined.
+2. Read the `CLAUDE.md` of every package the slice touches.
+3. Read `packages/shared-types`. Reuse a schema that exists. Never redeclare one.
 
 If the user attaches a design image, use it for layout only. The spec section decides behavior.
+
+**If `doc.mjs` is unavailable**, every doc carries a generated index at the top: `head -80
+docs/Idea.md` lists every section with its id, token cost and a one-line summary. Read the
+sections it names with `sed -n 'a,bp'`. Do not read a whole doc.
 
 ## 2. Three stops
 
