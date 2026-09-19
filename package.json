@@ -8,6 +8,10 @@
   "scripts": {
     "prepare": "husky",
     "check:machine": "node scripts/doctor.mjs",
+    "docs": "node scripts/doc.mjs",
+    "docs:index": "node scripts/docindex.mjs --report",
+    "docs:check": "node scripts/doc.mjs check",
+    "docs:toc": "node scripts/docindex.mjs --write-toc",
     "lint": "pnpm -r --if-present run lint",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",
@@ -15,7 +19,8 @@
     "format:check": "prettier --check ."
   },
   "lint-staged": {
-    "*.{js,mjs,cjs,ts,json,yml,yaml,css}": "prettier --write"
+    "*.{js,mjs,cjs,ts,json,yml,yaml,css}": "prettier --write",
+    "*.md": "node scripts/doc.mjs check --warn"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
