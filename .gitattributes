@@ -3,3 +3,12 @@
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
+
+# Git's built-in markdown userdiff driver puts the enclosing heading in every @@ hunk
+# header, including GitHub's PR view. It also makes `git grep -W` and
+# `git log -L :'^### D-57':docs/DecisionLog.md` work on the docs.
+*.md diff=markdown
+
+# DecisionLog.md is append-only by its own rule, so two branches adding D-80 and D-81
+# conflict on every concurrent append. Union merge takes both sides.
+docs/DecisionLog.md merge=union
