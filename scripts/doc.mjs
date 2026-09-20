@@ -10,16 +10,28 @@
 // Retrieval never throws and never exits non-zero. A miss prints a diagnostic, because the
 // first time this crashes an agent falls back to grep and stays there. Only `check` exits 1.
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { buildIndex, FILES } from './docindex.mjs';
 
-const root = process.cwd();
+// Anchored to this file, not the shell's directory, so `node ../../scripts/doc.mjs D-57`
+// works from anywhere in the repo.
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Past this a parent prints its own preamble and a menu of children instead of the subtree.
 const MENU_OVER = 800;
 
 const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const fileFlag = (process.argv.find((a) => a.startsWith('--file=')) || '').slice(7) || null;
-const index = buildIndex();
+let index;
+try {
+  index = buildIndex();
+} catch (e) {
+  // A missing or unreadable doc cannot be recovered from. Say which, never stack-trace.
+  // Retrieval exits 0 so a broken doc never fails the caller; the gate exits 1, because
+  // a gate that cannot read the docs has not passed.
+  console.log(`doc: ${e.message}`);
+  process.exit(process.argv.includes('check') ? 1 : 0);
+}
 const C = index.chunks;
 const num = (s) => s.toLowerCase().replace(/^[§#]/, '');
 
