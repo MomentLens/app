@@ -2,7 +2,6 @@
 //
 //   node scripts/doc.mjs §4.11 D-57        print those chunks
 //   node scripts/doc.mjs slice S-21        the brief for a work slice
-//   node scripts/doc.mjs explain slice S-21   the same chunk list, abstracts instead of bodies
 //   node scripts/doc.mjs why D-57          what breaks if this decision is reopened
 //   node scripts/doc.mjs grep variant_version
 //   node scripts/doc.mjs toc idea
@@ -12,10 +11,9 @@
 // suggestions, because the moment this crashes an agent falls back to grep and stays there.
 // Only `check` exits non-zero.
 import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
-import { loadIndex, FILES } from './docindex.mjs';
+import { buildIndex, FILES } from './docindex.mjs';
 
 const root = process.cwd();
 const VERSION = '1.0';
@@ -26,18 +24,12 @@ const SUBTREE_INLINE_TOKENS = 800;
 const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
   options: {
-    depth: { type: 'string', default: '1' },
-    budget: { type: 'string' },
-    'no-children': { type: 'boolean', default: false },
     file: { type: 'string' },
-    json: { type: 'boolean', default: false },
-    warn: { type: 'boolean', default: false },
   },
 });
 
-const index = loadIndex();
+const index = buildIndex();
 const chunks = index.chunks;
-const depth = Number(flags.depth);
 
 // --- resolution ---------------------------------------------------------------------------
 
@@ -113,47 +105,26 @@ const say = (line = '') => out.push(line);
 
 const header = (c) => {
   const alias = c.display ? `alias ${c.display} · ` : '';
-  // Capped: §4.11 has 30 inbound edges and the full list buries the chunk. `doc why` prints
-  // all of them, which is the verb that exists for the question.
-  const names = c.citedBy.map((s) => chunks[s]?.display || s);
-  const shown = names.slice(0, 8).join(' ');
-  const more =
-    names.length > 8 ? ` +${names.length - 8} more (doc why ${c.display || c.slug})` : '';
-  const cited = names.length ? `\n    cited by: ${shown}${more}` : '';
   say(`--- [${c.slug}]`);
   say(`    ${alias}${c.path}:${c.span.start}-${c.span.end} · ${c.tokens} tok`);
-  if (cited) say(cited.slice(1));
   if (c.flags.includes('superseded')) {
     say(`!!! SUPERSEDED BY ${c.supersededBy}. Reasoning only. Do not build from this.`);
   }
   if (c.flags.includes('risk')) say('    (risk knowingly accepted by the team)');
 };
 
-const stub = (c, reason) => {
-  say(`--- [${c.slug}] NOT EXPANDED (${reason})`);
-  const stale = staleAbstract(c) ? ' [ABSTRACT MAY BE STALE]' : '';
-  say(`    ${c.abstract}${stale}`);
-  if (c.flags.includes('superseded')) say(`    SUPERSEDED BY ${c.supersededBy}`);
+const stub = (c) => {
+  say(`--- [${c.slug}] NOT EXPANDED`);
+  say(`    ${c.abstract}${staleAbstract(c) ? ' [ABSTRACT MAY BE STALE]' : ''}`);
+  say(`    SUPERSEDED BY ${c.supersededBy}. Do not build from it.`);
   say(`    → doc ${c.display || c.slug}`);
 };
 
-const emit = (c, { explain }) => {
+const emit = (c) => {
   header(c);
-  if (explain) {
-    const stale = staleAbstract(c) ? ' [ABSTRACT MAY BE STALE]' : '';
-    say(`    ${c.abstract}${stale}`);
-    if (c.children.length) {
-      for (const ch of c.children) {
-        const k = chunks[ch];
-        say(`      ${String(k.tokens).padStart(5)} tok  ${k.display || k.slug}  ${k.title}`);
-      }
-    }
-    say('');
-    return c.tokens;
-  }
   // A parent whose subtree is small prints whole; a large one prints its own preamble and
   // lists children, because §4.11's own body is a heading and four subsections.
-  if (c.children.length && (flags['no-children'] || c.tokens > SUBTREE_INLINE_TOKENS)) {
+  if (c.children.length && c.tokens > SUBTREE_INLINE_TOKENS) {
     say('');
     say(readChunk(c, { self: true }));
     say('');
@@ -175,14 +146,18 @@ const emit = (c, { explain }) => {
 
 const banner = (what, n, tok) => `=== doc ${VERSION} | ${what} | ${n} chunks | ~${tok} tok ===`;
 
-const render = (title, expand, stubs, { explain = false } = {}) => {
+const render = (title, expand, stubs) => {
   const body = [];
   const swap = out.length;
   let total = 0;
-  for (const slug of expand) total += emit(chunks[slug], { explain });
-  for (const [slug, reason] of stubs) stub(chunks[slug], reason);
+  for (const slug of expand) total += emit(chunks[slug]);
+  // Only a superseded decision gets a stub of its own. Expanding one into a brief is the
+  // failure this guards against, and a banner is the cheapest way to prevent it. Everything
+  // else is one line of ids at the end, which is enough to go and fetch it.
+  for (const slug of stubs.filter((s) => chunks[s].flags.includes('superseded')))
+    stub(chunks[slug]);
   body.push(...out.splice(swap));
-  say(banner(title, expand.length + stubs.length, total));
+  say(banner(title, expand.length, total));
   say('');
   out.push(...body);
   return total;
@@ -192,9 +167,9 @@ const provenance = (resolved, stubs, unresolved) => {
   say('=== provenance ===');
   if (resolved.length) say(`resolved:   ${resolved.join(' ')}`);
   if (stubs.length) {
-    const tok = stubs.reduce((n, [s]) => n + chunks[s].tokens, 0);
+    const tok = stubs.reduce((n, x) => n + chunks[x].tokens, 0);
     say(
-      `stubbed:    ${stubs.map(([s]) => chunks[s].display || s).join(' ')}  (~${tok} tok not loaded)`,
+      `one hop out: ${stubs.map((x) => chunks[x].display || x).join(' ')}  (~${tok} tok, not loaded)`,
     );
   }
   say(`unresolved: ${unresolved.length ? unresolved.join(' ') : 'none'}`);
@@ -205,7 +180,7 @@ const provenance = (resolved, stubs, unresolved) => {
 
 const verbs = {};
 
-verbs.print = (tokensIn, { explain = false } = {}) => {
+verbs.print = (tokensIn) => {
   const expand = [];
   const unresolved = [];
   for (const t of tokensIn) {
@@ -213,7 +188,7 @@ verbs.print = (tokensIn, { explain = false } = {}) => {
     if (!slug) unresolved.push(t);
     else if (!expand.includes(slug)) expand.push(slug);
   }
-  render(`print ${tokensIn.join(' ')}`, expand, [], { explain });
+  render(`print ${tokensIn.join(' ')}`, expand, []);
   provenance(
     expand.map((s) => chunks[s].display || s),
     [],
@@ -235,7 +210,7 @@ verbs.print = (tokensIn, { explain = false } = {}) => {
   }
 };
 
-verbs.slice = (args, { explain = false } = {}) => {
+verbs.slice = (args) => {
   const slug = resolve(args[0]);
   if (!slug) {
     say(`no slice matches "${args[0]}". Closest:`);
@@ -253,34 +228,24 @@ verbs.slice = (args, { explain = false } = {}) => {
     seen.add(cited);
     // Never expand a retracted decision into a brief. D-45 is superseded by D-68 and sits
     // one hop from S-21, the slice holding the image-serving authorization check.
-    if (c.flags.includes('superseded')) stubs.push([cited, 'superseded']);
+    if (c.flags.includes('superseded')) stubs.push(cited);
     else expand.push(cited);
   }
   for (const cited of expand.slice(1)) {
     for (const next of chunks[cited].cites) {
       if (seen.has(next)) continue;
       seen.add(next);
-      stubs.push([next, `depth ${depth + 1}`]);
+      stubs.push(next);
     }
   }
 
-  const total = render(
-    `slice ${slice.key || args[0]}${explain ? ' (explain)' : ''}`,
-    expand,
-    stubs,
-    {
-      explain,
-    },
-  );
+  const total = render(`slice ${slice.key || args[0]}`, expand, stubs);
   provenance(
-    expand.map((s) => chunks[s].display || s),
+    expand.map((x) => chunks[x].display || x),
     stubs,
     [],
   );
-  if (flags.budget && total > Number(flags.budget)) {
-    say('');
-    say(`over budget: ${total} tok > ${flags.budget}. Narrow with --no-children or cite a child.`);
-  }
+  return total;
 };
 
 verbs.why = (args) => {
@@ -349,12 +314,6 @@ verbs.toc = (args) => {
   }
 };
 
-verbs.explain = (args) => {
-  const inner = args[0];
-  if (inner === 'slice') return verbs.slice(args.slice(1), { explain: true });
-  return verbs.print(args, { explain: true });
-};
-
 verbs.check = () => {
   const d = index.diagnostics;
   const errors = [];
@@ -390,9 +349,7 @@ verbs.check = () => {
       message: `"${s.slug}" also at line ${s.lines[0]}`,
     });
   }
-  if (flags.json) {
-    console.log(JSON.stringify({ ok: errors.length === 0, errors }, null, 2));
-  } else if (errors.length) {
+  if (errors.length) {
     console.log(`docs:check FAILED, ${errors.length} error(s)`);
     for (const e of errors) console.log(`  ${e.code}  ${e.file}:${e.line}  ${e.message}`);
   } else {
@@ -425,7 +382,7 @@ positionals.push(...joined);
 const [head, ...rest] = positionals;
 if (!head) {
   console.log(
-    'usage: doc <id|§n|D-nn>... | slice S-nn | explain slice S-nn | why D-nn | grep <term> | toc <file> | check',
+    'usage: doc <id|§n|D-nn>... | slice S-nn | why D-nn | grep <term> | toc <file> | check',
   );
   process.exit(0);
 }
@@ -433,5 +390,4 @@ if (!head) {
 if (verbs[head]) verbs[head](rest);
 else verbs.print(positionals);
 
-if (flags.json && head !== 'check') console.log(JSON.stringify({ text: out.join('\n') }));
-else console.log(out.join('\n'));
+console.log(out.join('\n'));

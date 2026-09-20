@@ -41,10 +41,9 @@ Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` i
 sections in three different docs, so qualify it. Citing a parent gets its children as summaries
 with their token costs, and you take the one you need.
 
-**Fallback, when `doc.mjs` is unavailable.** Every doc carries a generated index at the top:
-`head -80 docs/Idea.md` lists every section with its id, token cost and a one-line summary.
-Read only the sections it names. Note that `grep -n '^#'` is *not* a reliable way to find
-headings here, because several docs contain `#` comments inside fenced code blocks.
+**Listing a doc.** `node scripts/doc.mjs toc idea` gives every section with its id, token
+cost and a one-line summary. Note that `grep -n '^#'` is *not* a reliable way to find headings
+here, because several docs contain `#` comments inside fenced code blocks.
 
 Never `@`-import a doc into this file.
 

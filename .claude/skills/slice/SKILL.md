@@ -30,9 +30,10 @@ Then, and only then:
 
 If the user attaches a design image, use it for layout only. The spec section decides behavior.
 
-**If `doc.mjs` is unavailable**, every doc carries a generated index at the top: `head -80
-docs/Idea.md` lists every section with its id, token cost and a one-line summary. Read the
-sections it names with `sed -n 'a,bp'`. Do not read a whole doc.
+**If `doc.mjs` is unavailable**, `node scripts/doc.mjs toc <file>` is the map when it works,
+and failing that read the sections the slice row cites with `sed -n 'a,bp'`. Do not read a
+whole doc, and do not trust `grep -n '^#'` to find headings; several docs have `#` comments
+inside fenced blocks.
 
 ## 2. Three stops
 
