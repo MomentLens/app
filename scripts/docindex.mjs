@@ -366,6 +366,7 @@ export const buildIndex = () => {
   const byKey = new Map();
   const diagnostics = {
     duplicateSlugs: [],
+    duplicateNumbers: [],
     unbalancedFences: [],
     unresolved: [],
     poorAbstracts: [],
@@ -383,6 +384,7 @@ export const buildIndex = () => {
     if (parsed.fenceOpen) diagnostics.unbalancedFences.push({ file: toPosix(cfg.path) });
 
     const seen = new Map();
+    const seenNum = new Map();
     for (const c of parsed.chunks) {
       if (seen.has(c.slug)) {
         diagnostics.duplicateSlugs.push({
@@ -391,6 +393,16 @@ export const buildIndex = () => {
           lines: [seen.get(c.slug), c.headingLine],
         });
       } else seen.set(c.slug, c.headingLine);
+
+      if (c.number) {
+        if (seenNum.has(c.number)) {
+          diagnostics.duplicateNumbers.push({
+            file: toPosix(cfg.path),
+            number: c.number,
+            lines: [seenNum.get(c.number), c.headingLine],
+          });
+        } else seenNum.set(c.number, c.headingLine);
+      }
 
       const { abstract, source, abstractSha } = deriveAbstract(c);
       c.abstract = abstract;
@@ -548,6 +560,7 @@ export const buildIndex = () => {
       citations: [...chunks.values()].reduce((n, c) => n + c.citedBy.length, 0),
       unresolved: diagnostics.unresolved.length,
       duplicateSlugs: diagnostics.duplicateSlugs.length,
+      duplicateNumbers: diagnostics.duplicateNumbers.length,
       unbalancedFences: diagnostics.unbalancedFences.length,
       poorAbstracts: diagnostics.poorAbstracts.length,
       coarseCitations: diagnostics.coarse.length,

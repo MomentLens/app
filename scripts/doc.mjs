@@ -49,10 +49,10 @@ const resolve = (token) => {
 
   const t = token.trim();
   const up = t.toUpperCase();
-  if (index.byAlias[up]) return index.byAlias[up];
-  if (index.byAlias[`§${norm(t)}`]) return index.byAlias[`§${norm(t)}`];
 
-  // `--file hb 7` and `hb:7` both mean the handbook's §7, not the spec's.
+  // An explicit file scope wins over every alias. Checked first because the bare `§7`
+  // alias used to fire before this and sent `--file hb 7` to the spec's §7 instead of the
+  // handbook's, which is the rule behind root invariant 5.
   const scoped = t.match(/^(\w+):(.+)$/);
   const fileKey = scoped ? scoped[1] : flags.file;
   const num = scoped ? scoped[2] : norm(t);
@@ -60,6 +60,9 @@ const resolve = (token) => {
     const hit = Object.values(chunks).find((c) => c.file === fileKey && c.number === num);
     if (hit) return hit.slug;
   }
+
+  if (index.byAlias[up]) return index.byAlias[up];
+  if (index.byAlias[`§${norm(t)}`]) return index.byAlias[`§${norm(t)}`];
 
   const suffix = Object.keys(chunks).filter((s) => s.split('/')[1]?.startsWith(norm(t)));
   if (suffix.length === 1) return suffix[0];
@@ -369,6 +372,14 @@ verbs.check = () => {
       file: f.file,
       line: 0,
       message: 'a code fence is never closed',
+    });
+  }
+  for (const s of d.duplicateNumbers) {
+    errors.push({
+      code: 'duplicate-section-number',
+      file: s.file,
+      line: s.lines[1],
+      message: `§${s.number} is also a heading at line ${s.lines[0]}; every citation to it resolves to one of them`,
     });
   }
   for (const s of d.duplicateSlugs) {

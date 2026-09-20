@@ -20,7 +20,7 @@
   },
   "lint-staged": {
     "*.{js,mjs,cjs,ts,json,yml,yaml,css}": "prettier --write",
-    "*.md": "node scripts/doc.mjs check --warn"
+    "*.md": "node scripts/doc.mjs check"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
