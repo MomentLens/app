@@ -313,6 +313,7 @@ export const buildIndex = () => {
 
     const seenSlug = new Map();
     const seenNum = new Map();
+    const seenKey = new Map();
     for (const c of p.chunks) {
       if (seenSlug.has(c.slug))
         errors.push({
@@ -333,7 +334,17 @@ export const buildIndex = () => {
         else seenNum.set(c.number, c.line);
         byNumber[key][c.number] = c.slug;
       }
-      if (c.key) byKey.set(c.key, c.slug);
+      if (c.key) {
+        if (seenKey.has(c.key))
+          errors.push({
+            code: 'duplicate-id',
+            file: c.path,
+            line: c.line,
+            msg: `${c.key} is also defined at line ${seenKey.get(c.key)}; every citation to it resolves to one of them`,
+          });
+        else seenKey.set(c.key, c.line);
+        byKey.set(c.key, c.slug);
+      }
       chunks.set(c.slug, c);
     }
   }

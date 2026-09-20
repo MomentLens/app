@@ -13,9 +13,10 @@ Start slice $ARGUMENTS.
 node scripts/doc.mjs slice $ARGUMENTS
 ```
 
-One command. It prints the slice row with any warning paragraph written about it, expands
-every section and decision the row cites, and refuses to expand a superseded decision, showing
-it with a banner instead.
+One command. It prints the slice row with any warning paragraph written about it, then every
+section and decision the row cites. A section over 800 tokens comes back as a menu of its
+subsections with their sizes, so take the one you need. A superseded decision is never
+expanded, only flagged.
 
 The brief ends with a line of ids one hop further out. Fetch one only when the brief says
 it matters: `doc D-55`.
