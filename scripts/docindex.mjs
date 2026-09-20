@@ -5,9 +5,20 @@
 // file. Section numbers (§4.11) are aliases computed from the heading, so renumbering a doc
 // is a warning here rather than a rewrite of every citation in the repo.
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = process.cwd();
+// Anchored to this file, not the shell's directory, so it works from anywhere in the repo.
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+
+const readDoc = (rel) => {
+  const abs = join(root, ...rel.split('/'));
+  try {
+    return readFileSync(abs, 'utf8');
+  } catch {
+    throw new Error(`cannot read ${rel}. Expected it at ${abs}.`);
+  }
+};
 
 // The only configuration. `prefixes` qualify a § citation as belonging to this file.
 export const FILES = {
@@ -288,7 +299,7 @@ export const buildIndex = () => {
   const errors = [];
 
   for (const [key, cfg] of Object.entries(FILES)) {
-    const text = readFileSync(join(root, ...cfg.path.split('/')), 'utf8');
+    const text = readDoc(cfg.path);
     const p = parse(key, text);
     docs[key] = { path: posix(cfg.path), ...p };
     byNumber[key] = {};
