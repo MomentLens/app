@@ -392,6 +392,19 @@ verbs.check = () => {
 
 // --- dispatch -----------------------------------------------------------------------------
 
+// "doc arch §3" reaches argv as two words. Rejoin a file label with the §n that follows it,
+// so the qualified form behaves the same quoted or not.
+const LABELS = new Set([...Object.keys(FILES), ...Object.values(FILES).flatMap((f) => f.prefixes)]);
+const joined = [];
+for (let i = 0; i < positionals.length; i++) {
+  if (LABELS.has(positionals[i]) && /^§/.test(positionals[i + 1] || '')) {
+    joined.push(`${positionals[i]} ${positionals[i + 1]}`);
+    i++;
+  } else joined.push(positionals[i]);
+}
+positionals.length = 0;
+positionals.push(...joined);
+
 const [head, ...rest] = positionals;
 if (!head) {
   console.log(
