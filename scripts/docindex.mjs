@@ -213,6 +213,48 @@ const parseDoc = (key, text) => {
     });
   }
 
+  // WorkSlices.md keeps its records in table rows and its warnings in prose beneath the
+  // table. A note naming S-04 belongs to S-04: without this, `doc slice S-04` returns the
+  // row and every spec section it cites while silently dropping the paragraph saying the
+  // status rule reads the next sub-event's start time, and the D-19 behind it.
+  //
+  // The file's idiom is a paragraph opening with the slice in bold ("**S-04 carries a
+  // trap.**"), so the id must appear in the paragraph's first line and name exactly one
+  // slice. A looser rule swallows any bullet list that happens to mention a slice.
+  if (key === 'slices') {
+    const byKey = new Map(chunks.filter((c) => c.key).map((c) => [c.key, c]));
+    const paras = [];
+    let para = null;
+    lines.forEach((line, i) => {
+      const structural = !line.trim() || line.startsWith('|') || line.startsWith('#');
+      if (structural) {
+        para = null;
+        return;
+      }
+      if (!para) {
+        para = { start: i + 1, end: i + 1, lines: [line] };
+        paras.push(para);
+      } else {
+        para.end = i + 1;
+        para.lines.push(line);
+      }
+    });
+
+    for (const pr of paras) {
+      if (/^\s*[-*+]\s/.test(pr.lines[0])) continue;
+      const named = [...new Set(pr.lines[0].match(/\b(S-\d+[a-z]?|P0-\d+)\b/g) || [])];
+      if (named.length !== 1) continue;
+      const c = byKey.get(named[0]);
+      if (!c) continue;
+      (c.notes ||= []).push({ start: pr.start, end: pr.end });
+      // Citations inside the note become the slice's own edges, so D-19 reaches S-04.
+      c.selfBody = `${c.selfBody}\n${pr.lines.join('\n')}`;
+      c.body = c.selfBody;
+      c.tokens = tokens(c.body);
+      c.selfTokens = c.tokens;
+    }
+  }
+
   return { chunks, fenceOpen, lines };
 };
 
@@ -492,6 +534,7 @@ export const buildIndex = () => {
           selfSpan: c.selfSpan,
           tokens: c.tokens,
           selfTokens: c.selfTokens,
+          notes: c.notes,
           cites: c.cites,
           citedBy: c.citedBy,
         },

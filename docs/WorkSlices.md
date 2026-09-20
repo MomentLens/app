@@ -12,12 +12,12 @@ the-rule-that-makes-parallel-work-possible   151 tok  The rule that makes parall
 definition-of-done   298 tok  Definition of done — A slice is not done when the screen renders.
 ownership          135 tok  Ownership — U is Ukasha, B and C are the two teammates.
 phase-0--all-three-together-not-divided   379 tok  Phase 0 — all three together, not divided — Nobody works alone here. The point is that all three ma
-phase-1--walking-skeleton   102 tok  Phase 1 — walking skeleton
-phase-2--event-structure   232 tok  Phase 2 — event structure
-phase-3--capture-and-upload   389 tok  Phase 3 — capture and upload — Build this phase with the verification check disabled in the pre-flight endpoint
-phase-4--location-verification   164 tok  Phase 4 — location verification
-phase-5--the-ai-worker-and-face-blur   687 tok  Phase 5 — the AI worker and face blur — The heaviest phase. Ukasha owns most of it because the worker 
-phase-6--the-rest   201 tok  Phase 6 — the rest
+phase-1--walking-skeleton   188 tok  Phase 1 — walking skeleton
+phase-2--event-structure   384 tok  Phase 2 — event structure
+phase-3--capture-and-upload   391 tok  Phase 3 — capture and upload — Build this phase with the verification check disabled in the pre-flight endpoint
+phase-4--location-verification   166 tok  Phase 4 — location verification
+phase-5--the-ai-worker-and-face-blur   689 tok  Phase 5 — the AI worker and face blur — The heaviest phase. Ukasha owns most of it because the worker 
+phase-6--the-rest   203 tok  Phase 6 — the rest
 phase-7--nobody-owns-slices    69 tok  Phase 7 — nobody owns slices — Testing pass, performance pass, seeded demo dataset, standby rehearsal (D-79), d
 not-in-any-slice-yet   201 tok  Not in any slice yet — The spec describes these and no slice above owns them.
 the-handoff-template   479 tok  The handoff template — In Claude Code, type /slice S-XX instead.
@@ -92,9 +92,11 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1 | C | P0 |
+| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, D-63 | C | P0 |
 | S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B | B | S-01 |
 | S-03 | Guest Link join: token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4 | U | S-02 |
+
+**S-01 writes the first migration, and D-63 says what has to be in it.** The `subject` row with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. Nothing in §4.1 mentions it, which is why the decision is cited on the row.
 
 ---
 
@@ -102,15 +104,17 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-04 | Sub-events CRUD, Schedule screen, **status computation** | §4.3, §4.6 | U | S-02 |
+| S-04 | Sub-events CRUD, Schedule screen, **status computation** | §4.3, §4.6, §4.10 | U | S-02 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03 |
 | S-06 | Attendees: search, filter, role change, block, remove | §4.4, §2.5.7 Manage | B | S-05 |
 | S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage | B | S-06 |
-| S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5, HB §16.5 | C | S-03 |
+| S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5, §2.2, §4.10, HB §16.5 | C | S-03 |
 
 **S-04 carries a trap.** The status rule depends on the *next* sub-event's start time, not the current one's end (D-19). It reads two rows, not one. This is the slice most worth unit-testing, and an agent will get it wrong from the name alone.
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
+
+**The Photographer role is six restrictions spread across six slices, not a slice of its own.** §4.10 and §2.2 are cited on every row that carries one: S-08 (which tabs the role gets), S-13 (they see only their own uploads), S-04 (Schedule read-only, no Delay), S-15 (exempt from the verification gate), S-23 (Recognized Faces strip suppressed on their own photos), S-28 (no download button). Read §4.10 before building any of them. Every rule in it is something the role must *not* see, and an omission throws nothing and fails no test written from the Admin's or a Guest's perspective.
 
 ---
 
@@ -127,7 +131,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69 | C | S-10 |
 | S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70 | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72 | U | S-12 |
-| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5 | B | S-12, S-18a |
+| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5, §4.10 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69).
@@ -140,7 +144,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-15 | On-device GPS check, server re-validation, queue gate, `VenueVerification` | §4.5, §4.14 | U | S-12 |
+| S-15 | On-device GPS check, server re-validation, queue gate, `VenueVerification` | §4.5, §4.14, §4.10 | U | S-12 |
 | S-16 | Venue QR: per-sub-event generation, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5 | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5 | B | S-15, S-06 |
 
@@ -159,7 +163,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11, §4.2, D-74 | U | S-18 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11, §4.13, D-57, D-60, D-69, D-72 | U | S-20 |
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5, §4.11, D-77 | B | S-21 |
-| S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11, D-74 | C | S-20 |
+| S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11, §4.10, D-74 | C | S-20 |
 | S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11, §2.5, D-74 | C | S-22, S-23 |
 | S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11, HB §6, D-69 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11 | U | S-20 |
@@ -183,7 +187,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5 | C | S-07 |
-| S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13 | U | S-21 |
+| S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10 | U | S-21 |
 | S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5 | B | S-01 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12 | C | S-09 |
 | S-31 | Formalized screens, consent screens, album open/close confirm dialog, hard-coded limits | §2.5, §4.18, §4.9, §4.17 | B | S-08 |

@@ -83,10 +83,16 @@ const readChunk = (c, { self = false } = {}) => {
     fileText.set(rel, readFileSync(join(root, ...rel.split('/')), 'utf8').split('\n'));
   const lines = fileText.get(rel);
   const span = self ? c.selfSpan : c.span;
-  return lines
-    .slice(span.start - 1, span.end)
-    .join('\n')
-    .replace(/\s+$/, '');
+  const read = (a, b) =>
+    lines
+      .slice(a - 1, b)
+      .join('\n')
+      .replace(/\s+$/, '');
+  const main = read(span.start, span.end);
+  // A slice row's warnings live in prose under the table rather than in the row, and they
+  // are the point of the row more often than the row is.
+  if (!c.notes?.length) return main;
+  return [main, ...c.notes.map((n) => read(n.start, n.end))].join('\n\n');
 };
 
 const sha16 = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
