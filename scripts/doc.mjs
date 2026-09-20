@@ -90,14 +90,6 @@ const readChunk = (c, { self = false } = {}) => {
   return [main, ...c.notes.map((n) => read(n.start, n.end))].join('\n\n');
 };
 
-const sha16 = (text) => createHash('sha256').update(text).digest('hex').slice(0, 16);
-
-const staleAbstract = (c) => {
-  if (c.abstractSource !== 'explicit' || !c.abstractSha) return false;
-  const body = readChunk(c, { self: true }).replace(/<!--\s*abstract:[\s\S]*?-->/, '');
-  return sha16(body) !== c.abstractSha;
-};
-
 // --- output -------------------------------------------------------------------------------
 
 const out = [];
@@ -115,7 +107,7 @@ const header = (c) => {
 
 const stub = (c) => {
   say(`--- [${c.slug}] NOT EXPANDED`);
-  say(`    ${c.abstract}${staleAbstract(c) ? ' [ABSTRACT MAY BE STALE]' : ''}`);
+  say(`    ${c.abstract}`);
   say(`    SUPERSEDED BY ${c.supersededBy}. Do not build from it.`);
   say(`    → doc ${c.display || c.slug}`);
 };

@@ -256,7 +256,8 @@ const parseDoc = (key, text) => {
 const EXPLICIT = /<!--\s*abstract:\s*([\s\S]*?)-->/;
 
 // Derived from the body wherever possible, so almost nothing here is a standing authoring
-// job. Only an explicit override can go stale, and doc.mjs detects that from git history.
+// job. An explicit override is authored, so it can drift from the body it describes; there is
+// no automatic check for that, only review.
 const deriveAbstract = (chunk) => {
   const body = chunk.selfBody;
 
