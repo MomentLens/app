@@ -11,7 +11,6 @@
     "docs": "node scripts/doc.mjs",
     "docs:index": "node scripts/docindex.mjs --report",
     "docs:check": "node scripts/doc.mjs check",
-    "docs:toc": "node scripts/docindex.mjs --write-toc",
     "lint": "pnpm -r --if-present run lint",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm -r --if-present run test",

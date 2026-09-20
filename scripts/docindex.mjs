@@ -6,10 +6,9 @@
 // Identity is derived, never authored: a chunk's id is its GitHub heading anchor, scoped by
 // file. Section numbers (§4.11) are aliases computed from the heading, so renumbering a doc
 // is a warning here rather than a rewrite of every citation in the repo.
-import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 const root = process.cwd();
 
@@ -37,12 +36,6 @@ export const CITATION_SOURCES = [
   '.claude/skills/slice/SKILL.md',
   '.github/ISSUE_TEMPLATE/slice.md',
 ];
-
-const CACHE = join(root, 'node_modules', '.cache', 'doc-index.json');
-// The cache keys on this file's own mtime as well as the docs'. A hand-bumped version
-// constant is one more thing to remember, and forgetting it serves a stale index that makes
-// a parser change look like it did nothing.
-const PARSER = fileURLToPath(import.meta.url);
 
 // --- text helpers -------------------------------------------------------------------------
 
@@ -263,14 +256,14 @@ const parseDoc = (key, text) => {
 const EXPLICIT = /<!--\s*abstract:\s*([\s\S]*?)-->/;
 
 // Derived from the body wherever possible, so almost nothing here is a standing authoring
-// job. Only an explicit override can go stale, which is why only it carries an abstractSha.
+// job. Only an explicit override can go stale, and doc.mjs detects that from git history.
 const deriveAbstract = (chunk) => {
   const body = chunk.selfBody;
 
   const explicit = body.match(EXPLICIT);
   if (explicit) {
     const text = explicit[1].replace(/\s+/g, ' ').trim();
-    return { abstract: text, source: 'explicit', abstractSha: sha(body.replace(EXPLICIT, '')) };
+    return { abstract: text, source: 'explicit' };
   }
 
   if (chunk.file === 'dlog') {
@@ -323,9 +316,7 @@ const extractCitations = (rawText, fileKey) => {
   SECTION.lastIndex = 0;
   while ((m = SECTION.exec(text)) !== null) {
     const prefix = m[1] ? PREFIXES.find(([p]) => p === m[1])?.[1] : null;
-    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 24);
-    const sub = after.match(/^\s+([A-Z][a-z]+(?:\s+[A-Z0-9][a-z0-9]*)?)/);
-    sections.push({ index: m.index, surface: m[0].trim(), number: m[2], prefix, sub: sub?.[1] });
+    sections.push({ index: m.index, surface: m[0].trim(), number: m[2], prefix });
   }
   sections.forEach((s, i) => {
     let target = s.prefix;
@@ -341,7 +332,6 @@ const extractCitations = (rawText, fileKey) => {
       surface: s.surface,
       number: s.number,
       hint: target,
-      sub: s.sub,
       inherited: !s.prefix && !!target,
       line: lineOf(text, s.index),
     });
@@ -369,8 +359,6 @@ export const buildIndex = () => {
     duplicateNumbers: [],
     unbalancedFences: [],
     unresolved: [],
-    poorAbstracts: [],
-    coarse: [],
   };
   const docs = {};
 
@@ -404,17 +392,9 @@ export const buildIndex = () => {
         } else seenNum.set(c.number, c.headingLine);
       }
 
-      const { abstract, source, abstractSha } = deriveAbstract(c);
+      const { abstract, source } = deriveAbstract(c);
       c.abstract = abstract;
       c.abstractSource = source;
-      if (abstractSha) c.abstractSha = abstractSha;
-      if (source === 'title' && !c.flags.includes('row') && c.children.length === 0) {
-        diagnostics.poorAbstracts.push({
-          slug: c.slug,
-          file: toPosix(cfg.path),
-          line: c.headingLine,
-        });
-      }
 
       if (/~~\(SUPERSEDED by (D-\d+)\)~~|\(SUPERSEDED by (D-\d+)\)/i.test(c.title)) {
         c.flags.push('superseded');
@@ -446,19 +426,6 @@ export const buildIndex = () => {
     if (!target) {
       diagnostics.unresolved.push({ surface: cit.surface, ...where, line: cit.line });
       return;
-    }
-    if (cit.sub) {
-      const parent = chunks.get(target);
-      const childTitles = (parent?.children || []).map((s) => chunks.get(s)?.title || '');
-      const first = cit.sub.split(/\s+/)[0].toLowerCase();
-      if (childTitles.some((t) => t.toLowerCase().startsWith(first))) {
-        diagnostics.coarse.push({
-          surface: `${cit.surface} ${cit.sub}`,
-          resolvesTo: target,
-          ...where,
-          line: cit.line,
-        });
-      }
     }
     if (target === fromId) return;
     const from = chunks.get(fromId);
@@ -509,10 +476,6 @@ export const buildIndex = () => {
   for (const c of chunks.values())
     for (const a of c.aliases) if (!(a in byAlias)) byAlias[a] = c.slug;
 
-  const orphans = [...chunks.values()]
-    .filter((c) => c.file === 'idea' && c.number && !c.citedBy.some((b) => b.startsWith('slices/')))
-    .map((c) => c.slug);
-
   return {
     generatedAt: new Date().toISOString(),
     files: Object.fromEntries(
@@ -536,7 +499,6 @@ export const buildIndex = () => {
           level: c.level,
           abstract: c.abstract,
           abstractSource: c.abstractSource,
-          abstractSha: c.abstractSha,
           bodySha: c.bodySha,
           flags: c.flags,
           supersededBy: c.supersededBy,
@@ -554,7 +516,6 @@ export const buildIndex = () => {
     ),
     byAlias,
     diagnostics,
-    orphans,
     stats: {
       chunks: chunks.size,
       citations: [...chunks.values()].reduce((n, c) => n + c.citedBy.length, 0),
@@ -562,94 +523,8 @@ export const buildIndex = () => {
       duplicateSlugs: diagnostics.duplicateSlugs.length,
       duplicateNumbers: diagnostics.duplicateNumbers.length,
       unbalancedFences: diagnostics.unbalancedFences.length,
-      poorAbstracts: diagnostics.poorAbstracts.length,
-      coarseCitations: diagnostics.coarse.length,
     },
   };
-};
-
-// Cached on the mtimes of the five docs. The corpus parses in well under a second, so this
-// is never committed: a generated file in git would collide with lint-staged's prettier pass
-// and would be one more thing that can disagree with the docs.
-export const loadIndex = () => {
-  const stamp = [
-    `parser:${statSync(PARSER).mtimeMs}`,
-    ...Object.values(FILES).map((f) => {
-      try {
-        return `${f.path}:${statSync(join(root, ...f.path.split('/'))).mtimeMs}`;
-      } catch {
-        return `${f.path}:missing`;
-      }
-    }),
-  ].join('|');
-  try {
-    const cached = JSON.parse(readFileSync(CACHE, 'utf8'));
-    if (cached.stamp === stamp) return cached.index;
-  } catch {
-    /* rebuild */
-  }
-  const index = buildIndex();
-  try {
-    mkdirSync(dirname(CACHE), { recursive: true });
-    writeFileSync(CACHE, JSON.stringify({ stamp, index }));
-  } catch {
-    /* a read-only checkout still works, just without the cache */
-  }
-  return index;
-};
-
-// --- generated table of contents ----------------------------------------------------------
-
-const TOC_BEGIN = '<!-- doc:toc begin -->';
-const TOC_END = '<!-- doc:toc end -->';
-
-// A flat index at the top of each doc, so `head -80 docs/Idea.md` is a complete map with
-// summaries when doc.mjs is unavailable or broken. Regenerated by `pnpm docs:index`.
-export const writeToc = (index) => {
-  const touched = [];
-  for (const [key, cfg] of Object.entries(FILES)) {
-    const rel = join(root, ...cfg.path.split('/'));
-    const text = readFileSync(rel, 'utf8');
-    const list = Object.values(index.chunks).filter((c) => c.file === key && c.level < 9);
-
-    const body = list.map((c) => {
-      const id = c.display || c.slug.slice(key.length + 1);
-      const line = `${id.padEnd(16)} ${String(c.tokens).padStart(5)} tok  ${c.title}`;
-      const abstract = c.abstract && c.abstract !== c.title ? ` — ${c.abstract}` : '';
-      return (line + abstract).slice(0, 150);
-    });
-    const block = [
-      TOC_BEGIN,
-      `<!-- generated by scripts/docindex.mjs, ${list.length} chunks. Do not edit by hand.`,
-      `     Retrieval: node scripts/doc.mjs <id>   e.g. doc ${list[0]?.display || 'D-01'}`,
-      '',
-      ...body,
-      '-->',
-      TOC_END,
-    ].join('\n');
-
-    let next;
-    const start = text.indexOf(TOC_BEGIN);
-    if (start !== -1) {
-      const end = text.indexOf(TOC_END, start) + TOC_END.length;
-      next = text.slice(0, start) + block + text.slice(end);
-    } else {
-      // After the H1 and any blockquote intro, so the first screen of the file is the map.
-      const lines = text.split('\n');
-      let at = 0;
-      for (let i = 0; i < lines.length && i < 8; i++) {
-        if (/^#\s/.test(lines[i]) || /^>/.test(lines[i]) || lines[i].trim() === '') at = i + 1;
-        else break;
-      }
-      lines.splice(at, 0, block, '');
-      next = lines.join('\n');
-    }
-    if (next !== text) {
-      writeFileSync(rel, next);
-      touched.push(`${cfg.path} (${list.length} chunks)`);
-    }
-  }
-  return touched;
 };
 
 // --- report -------------------------------------------------------------------------------
@@ -678,36 +553,13 @@ if (process.argv[1] && toPosix(process.argv[1]).endsWith('scripts/docindex.mjs')
   for (const f of d.unbalancedFences) console.log(`  ${f.file}`);
 
   console.log(`\nduplicate slugs (${d.duplicateSlugs.length})`);
-  for (const s of d.duplicateSlugs) console.log(`  ${s.file}:${s.lines.join(',')}  ${s.slug}`);
+  for (const x of d.duplicateSlugs) console.log(`  ${x.file}:${x.lines.join(',')}  ${x.slug}`);
+
+  console.log(`\nduplicate section numbers (${d.duplicateNumbers.length})`);
+  for (const x of d.duplicateNumbers) console.log(`  ${x.file}:${x.lines.join(',')}  §${x.number}`);
 
   console.log(`\nunresolved citations (${d.unresolved.length})`);
-  const grouped = new Map();
-  for (const u of d.unresolved) {
-    const k = u.surface;
-    if (!grouped.has(k)) grouped.set(k, []);
-    grouped.get(k).push(`${u.file}:${u.line}`);
-  }
-  for (const [surface, where] of [...grouped].sort((a, b) => b[1].length - a[1].length)) {
-    console.log(`  ${pad(surface, 24)} ${where.length}x  ${where.slice(0, 4).join(' ')}`);
-  }
-
-  console.log(
-    `\ncitations naming a sub-part that has no id, resolved to the parent (${d.coarse.length})`,
-  );
-  const cg = new Map();
-  for (const c of d.coarse) {
-    if (!cg.has(c.surface)) cg.set(c.surface, { to: c.resolvesTo, at: [] });
-    cg.get(c.surface).at.push(`${c.file}:${c.line}`);
-  }
-  for (const [surface, info] of cg) {
-    console.log(`  ${pad(surface, 22)} -> ${pad(info.to, 34)} ${info.at.join(' ')}`);
-  }
-
-  console.log(`\nabstracts fell back to the heading title (${d.poorAbstracts.length})`);
-  for (const p of d.poorAbstracts) console.log(`  ${p.file}:${p.line}  ${p.slug}`);
-
-  console.log(`\nspec sections no work slice cites (${index.orphans.length})`);
-  for (const o of index.orphans) console.log(`  ${o}`);
+  for (const u of d.unresolved) console.log(`  ${u.file}:${u.line}  ${u.surface}`);
 
   const over = Object.values(index.chunks)
     .filter((c) => c.selfTokens > 600 && c.children.length === 0)
