@@ -13,12 +13,12 @@ Start slice $ARGUMENTS.
 node scripts/doc.mjs slice $ARGUMENTS
 ```
 
-One command. It resolves the slice row, expands every spec section, handbook section and
-decision that slice cites, stubs everything one hop further out with a one-line summary and
-the command to expand it, and refuses to expand a superseded decision into the brief.
+One command. It prints the slice row with any warning paragraph written about it, expands
+every section and decision the row cites, and refuses to expand a superseded decision, showing
+it with a banner instead.
 
-Expand a stub only when the brief tells you it matters: `doc D-55`. Before paying for a big
-one, `doc explain slice $ARGUMENTS` prints the same chunk list with token costs and no bodies.
+The brief ends with a line of ids one hop further out. Fetch one only when the brief says
+it matters: `doc D-55`.
 
 Then, and only then:
 
