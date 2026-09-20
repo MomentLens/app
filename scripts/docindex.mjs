@@ -9,6 +9,7 @@
 import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const root = process.cwd();
 
@@ -38,9 +39,10 @@ export const CITATION_SOURCES = [
 ];
 
 const CACHE = join(root, 'node_modules', '.cache', 'doc-index.json');
-// Bump when the chunk record changes shape. The cache keys on the docs' mtimes, so without
-// this a parser change keeps serving the old index and the change looks like it did nothing.
-const SCHEMA = 5;
+// The cache keys on this file's own mtime as well as the docs'. A hand-bumped version
+// constant is one more thing to remember, and forgetting it serves a stale index that makes
+// a parser change look like it did nothing.
+const PARSER = fileURLToPath(import.meta.url);
 
 // --- text helpers -------------------------------------------------------------------------
 
@@ -367,6 +369,7 @@ export const buildIndex = () => {
       if (c.title.includes('⚠') || /^\*\*Cost\.\*\*.*⚠/m.test(c.selfBody)) c.flags.push('risk');
 
       c.display = c.key || (c.number ? `${cfg.label} §${c.number}` : null);
+      if (c.display && !c.aliases.includes(c.display)) c.aliases.push(c.display);
       c.path = toPosix(cfg.path);
       c.cites = [];
       c.citedBy = [];
@@ -514,7 +517,7 @@ export const buildIndex = () => {
 // and would be one more thing that can disagree with the docs.
 export const loadIndex = () => {
   const stamp = [
-    `schema:${SCHEMA}`,
+    `parser:${statSync(PARSER).mtimeMs}`,
     ...Object.values(FILES).map((f) => {
       try {
         return `${f.path}:${statSync(join(root, ...f.path.split('/'))).mtimeMs}`;
