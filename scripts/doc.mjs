@@ -21,7 +21,6 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const MENU_OVER = 800;
 
 const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-const fileFlag = (process.argv.find((a) => a.startsWith('--file=')) || '').slice(7) || null;
 let index;
 try {
   index = buildIndex();
@@ -33,7 +32,7 @@ try {
   process.exit(process.argv.includes('check') ? 1 : 0);
 }
 const C = index.chunks;
-const num = (s) => s.toLowerCase().replace(/^[§#]/, '');
+const num = (s) => (s ?? '').toLowerCase().replace(/^[§#]/, '');
 
 // "doc arch §3" arrives as two words. Rejoin a file label with the section that follows it.
 const LABELS = new Set([...Object.keys(FILES), ...Object.values(FILES).flatMap((f) => f.prefixes)]);
@@ -45,34 +44,40 @@ for (let i = 0; i < argv.length; i++) {
 }
 
 const resolve = (token) => {
-  const t = token.trim();
+  const t = (token ?? '').trim();
+  if (!t) return null;
   // A bare §n is a real section in three of the five docs. Guessing which is exactly the
   // failure that looks correct and throws nothing, so refuse and name the choices.
-  if (/^§?\d+(\.\d+)*$/.test(t) && !fileFlag) {
+  if (/^§?\d+(\.\d+)*$/.test(t)) {
     const all = Object.values(C).filter((c) => c.number === num(t));
     if (all.length > 1) return { ambiguous: all.map((c) => c.display) };
     if (all.length === 1) return all[0].slug;
   }
   const scoped = t.match(/^(\w+):(.+)$/);
-  const key = scoped ? scoped[1] : fileFlag;
+  const key = scoped ? scoped[1] : null;
   if (key && FILES[key]) {
-    const hit = Object.values(C).find(
-      (c) => c.file === key && c.number === num(scoped ? scoped[2] : t),
-    );
+    const hit = Object.values(C).find((c) => c.file === key && c.number === num(scoped[2]));
     if (hit) return hit.slug;
   }
-  if (C[t]) return t;
-  if (index.byAlias[t]) return index.byAlias[t];
-  if (index.byAlias[t.toUpperCase()]) return index.byAlias[t.toUpperCase()];
-  const near = Object.keys(C).filter((s) => s.split('/')[1]?.startsWith(num(t)));
-  return near.length === 1 ? near[0] : null;
+  if (Object.hasOwn(C, t)) return t;
+  if (Object.hasOwn(index.byAlias, t)) return index.byAlias[t];
+  const up = t.toUpperCase();
+  if (Object.hasOwn(index.byAlias, up)) return index.byAlias[up];
+  // A structured id must match exactly. `D-8` is not a short form of `D-80`, it is a typo,
+  // and resolving it silently is the failure this tool exists to remove. Free text like
+  // `dnp` still matches on prefix, because there it is a search, not an id.
+  if (/^(D|S|P0)-/i.test(t) || /^§?\d/.test(t)) return null;
+  const hit = Object.keys(C).filter((s) => s.split('/')[1]?.startsWith(num(t)));
+  return hit.length === 1 ? hit[0] : null;
 };
 
 const near = (t) =>
-  Object.values(C)
-    .filter((c) => c.slug.includes(num(t)) || c.title.toLowerCase().includes(num(t)))
-    .slice(0, 5)
-    .map((c) => `  ${c.display || c.slug}  ${c.title}`);
+  !t
+    ? []
+    : Object.values(C)
+        .filter((c) => c.slug.includes(num(t)) || c.title.toLowerCase().includes(num(t)))
+        .slice(0, 5)
+        .map((c) => `  ${c.display || c.slug}  ${c.title}`);
 
 const files = new Map();
 const read = (path, a, b) => {
@@ -142,9 +147,10 @@ verbs.print = (list) => {
 };
 
 verbs.slice = ([id]) => {
+  if (!id) return say('which slice? e.g. doc slice S-21. List them: doc toc slices');
   const r = resolve(id);
   if (!r || r.ambiguous) {
-    const n = near(id || '');
+    const n = near(id);
     say(`no slice matches "${id}".`);
     if (n.length) out.push(...n);
     else say('  slice ids look like S-01 … S-31 and P0-1 … P0-9. List them: doc toc slices');
@@ -178,6 +184,7 @@ verbs.slice = ([id]) => {
 };
 
 verbs.why = ([id]) => {
+  if (!id) return say('which decision? e.g. doc why D-57');
   const r = resolve(id);
   if (!r || r.ambiguous) return verbs.print([id]);
   const c = C[r];
@@ -197,7 +204,10 @@ verbs.why = ([id]) => {
 };
 
 verbs.grep = (list) => {
-  const term = list.join(' ');
+  const term = list.join(' ').trim();
+  if (!term) return say('grep needs a term: doc grep variant_version');
+  // A term longer than any heading is a mistake, and past ~40k it exceeds the regex limit.
+  if (term.length > 200) return say(`that term is ${term.length} characters. Try a shorter one.`);
   const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
   const hits = Object.values(C)
     .map((c) => ({ c, n: (body(c, true).match(re) || []).length }))
@@ -249,6 +259,6 @@ if (!head)
   console.log(
     'usage: doc <id|§n|D-nn>... | slice S-nn | why D-nn | grep <term> | toc <file> | check',
   );
-else if (verbs[head]) verbs[head](rest);
+else if (Object.hasOwn(verbs, head)) verbs[head](rest);
 else verbs.print(args);
 if (out.length) console.log(out.join('\n'));

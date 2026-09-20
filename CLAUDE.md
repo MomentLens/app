@@ -40,8 +40,12 @@ Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` i
 three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
 large parent gets its children as summaries with their token costs, so you take the one you need.
 
-**Listing a doc.** `node scripts/doc.mjs toc idea` gives every section with its id, token
-cost and a one-line summary. Note that `grep -n '^#'` is *not* a reliable way to find headings
+**Typing ids.** `§` is optional: `doc 4.11.4`, `doc hb:7` and `doc arch:3` work and need no
+special character. `doc 7` alone is refused, because §7 is a section in three of the five docs.
+
+**If the scripts are broken**, every section is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md`
+then `sed -n 'a,bp'` gets you there. Do not trust `grep -n '^#'` to list headings:
+`docs/EngineeringHandbook.md:542` is a shell comment inside a fenced block that it reads as one. Note that `grep -n '^#'` is *not* a reliable way to find headings
 here, because several docs contain `#` comments inside fenced code blocks.
 
 Never `@`-import a doc into this file.
