@@ -4,7 +4,7 @@
 // Identity is derived, never authored: a chunk's id is its GitHub heading anchor, scoped by
 // file. Section numbers (§4.11) are aliases computed from the heading, so renumbering a doc
 // is a warning here rather than a rewrite of every citation in the repo.
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,8 +22,12 @@ const readDoc = (rel) => {
 
 // The only configuration. `prefixes` qualify a § citation as belonging to this file.
 export const FILES = {
-  idea: { path: 'docs/Idea.md', prefixes: ['spec', 'Spec'], label: 'spec', bare: true },
-  hb: { path: 'docs/EngineeringHandbook.md', prefixes: ['Handbook', 'HB', 'hb'], label: 'hb' },
+  idea: { path: 'docs/Idea.md', prefixes: ['spec', 'Spec', 'Idea.md'], label: 'spec', bare: true },
+  hb: {
+    path: 'docs/EngineeringHandbook.md',
+    prefixes: ['EngineeringHandbook.md', 'EngineeringHandbook', 'Handbook', 'HB', 'hb'],
+    label: 'hb',
+  },
   dlog: { path: 'docs/DecisionLog.md', prefixes: [], label: 'dlog' },
   arch: {
     path: 'docs/ARCHITECTURE.md',
@@ -33,17 +37,52 @@ export const FILES = {
   slices: { path: 'docs/WorkSlices.md', prefixes: [], label: 'slices' },
 };
 
-// Scanned for citations so backlinks are complete. Not chunked.
-const SOURCES = [
+// Scanned for citations so `doc why` reports the whole blast radius. Not chunked.
+// Code counts: apps/api/eslint.config.mjs bans sharp and jimp citing D-57, and reopening
+// D-57 means changing that rule. Listing only the CLAUDE.md files missed it.
+const SOURCE_DIRS = ['apps', 'worker', 'scripts', 'supabase', '.github', '.claude'];
+const SOURCE_EXT = /\.(ts|tsx|js|mjs|cjs|py|sh|sql|md|ya?ml)$/;
+const SKIP = new Set(['node_modules', 'dist', 'build', '.venv', '.expo', 'coverage', 'docs']);
+
+const walk = (rel, out = []) => {
+  let entries;
+  try {
+    entries = readdirSync(join(root, ...rel.split('/')), { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const e of entries) {
+    if (e.name.startsWith('.') && e.name !== '.github' && e.name !== '.claude') continue;
+    const next = `${rel}/${e.name}`;
+    if (e.isDirectory()) {
+      if (!SKIP.has(e.name)) walk(next, out);
+    } else if (SOURCE_EXT.test(e.name)) out.push(next);
+  }
+  return out;
+};
+
+const GATED = new Set([
   'CLAUDE.md',
   'apps/api/CLAUDE.md',
   'apps/mobile/CLAUDE.md',
   'worker/CLAUDE.md',
   '.claude/skills/slice/SKILL.md',
   '.github/ISSUE_TEMPLATE/slice.md',
-];
+]);
+// The two retrieval scripts cite D-57 and §4.11 as usage examples, so scanning them puts
+// this tool in the blast radius of decisions it does not depend on.
+const SELF = /^scripts\/doc(index)?\.mjs$/;
+// Only `doc why` needs the code backlinks, and walking the tree for them costs more than
+// parsing all five docs. Everything else reads the six files that route to the docs.
+const sources = (wide) =>
+  wide
+    ? [
+        ...GATED,
+        ...SOURCE_DIRS.flatMap((d) => walk(d)).filter((f) => !SELF.test(f) && !GATED.has(f)),
+      ]
+    : [...GATED];
 
-const FENCE = /^\s{0,3}(```|~~~)/;
+const FENCE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
 const HEADING = /^(#{1,6})\s+(.*?)\s*$/;
 const D_HEAD = /^(D-\d+)\s*[—:–-]\s*(.+)$/; // 68 entries use an em dash, 12 a colon
 const NUMBERED = /^(\d+(?:\.\d+)*)\.?\s+(.+)$/;
@@ -87,21 +126,37 @@ const sentence = (text, min = 40) => {
 
 // Headings, with fence state respected. EngineeringHandbook.md has a shell comment inside a
 // fenced block that `grep -n '^#'` reads as an H1.
+// A bare fence marker indented four or more spaces is content, not a fence. Indenting a
+// closer (what happens when a code block is moved into a list item) flips every fence pair
+// after it, so real headings vanish and lines inside code become headings. The symptom is
+// a page of dangling citations that name no fence, which nobody can diagnose.
+const STRAY_FENCE = /^(\s{4,})(`{3,}|~{3,})\s*$/;
+
 const headings = (lines) => {
   const out = [];
+  const stray = [];
   let fence = null;
   lines.forEach((line, i) => {
     const f = line.match(FENCE);
     if (f) {
-      if (fence === null) fence = f[1];
-      else if (line.trimStart().startsWith(fence)) fence = null;
+      const mark = f[1][0];
+      const len = f[1].length;
+      // A closer is the same character, at least as long, and carries no info string.
+      // ````markdown wrapping a ```bash block is how anyone documents this tool, and a
+      // three-long closer ending a four-long opener silently truncates the section.
+      if (fence === null) fence = { mark, len, line: i + 1 };
+      else if (mark === fence.mark && len >= fence.len && !f[2].trim()) fence = null;
       return;
     }
-    if (fence !== null) return;
+    if (fence !== null) {
+      const t = line.match(STRAY_FENCE);
+      if (t) stray.push({ line: i + 1, indent: t[1].length, openedAt: fence.line });
+      return;
+    }
     const h = line.match(HEADING);
     if (h) out.push({ level: h[1].length, title: h[2], line: i + 1 });
   });
-  return { out, open: fence !== null };
+  return { out, open: fence, stray };
 };
 
 // Derived from the body wherever possible, so almost nothing here is an authoring job.
@@ -130,7 +185,7 @@ const abstractOf = (c) => {
 const parse = (key, text) => {
   const cfg = FILES[key];
   const lines = text.split('\n');
-  const { out: heads, open } = headings(lines);
+  const { out: heads, open, stray } = headings(lines);
   const chunks = [];
 
   for (const h of heads) {
@@ -217,19 +272,28 @@ const parse = (key, text) => {
     // the paragraph instead swallows any bullet list that happens to mention one.
     const byKey = new Map(rows.map((c) => [c.key, c]));
     let para = null;
+    let inBlock = false;
     lines.forEach((line, i) => {
-      if (!line.trim() || line.startsWith('|') || line.startsWith('#')) return (para = null);
-      if (!para) para = { start: i + 1, end: i + 1, lines: [line] };
-      else {
+      if (!line.trim() || line.startsWith('|') || line.startsWith('#')) {
+        para = null;
+        inBlock = false;
+        return;
+      }
+      if (para) {
         para.end = i + 1;
         para.lines.push(line);
         return;
       }
-      if (/^\s*[-*+]\s/.test(line)) return (para = null);
+      // Only the first line of a block decides. Restarting on the second line made a
+      // hard-wrapped note attach without its subject, and a bullet's continuation line
+      // attach as if it were a note.
+      if (inBlock) return;
+      inBlock = true;
+      if (/^\s*[-*+]\s/.test(line)) return;
       const named = [...new Set(line.match(/\b(S-\d+[a-z]?|P0-\d+)\b/g) || [])];
-      if (named.length !== 1 || !byKey.has(named[0])) return (para = null);
+      if (named.length !== 1 || !byKey.has(named[0])) return;
+      para = { start: i + 1, end: i + 1, lines: [line] };
       const c = byKey.get(named[0]);
-      c.notes.push(para);
       c.attached = c.attached || [];
       c.attached.push(para);
     });
@@ -273,17 +337,21 @@ const parse = (key, text) => {
     c.cites = [];
     c.citedBy = [];
   }
-  return { chunks, open, lines };
+  return { chunks, open, stray, lines };
 };
 
 const PREFIXES = Object.entries(FILES).flatMap(([k, c]) => c.prefixes.map((p) => [p, k]));
 const SECTION = new RegExp(
   `(?:\`?(${PREFIXES.map(([p]) => p.replace(/\./g, '\\.')).join('|')})\`?\\s*)?§(\\d+(?:\\.\\d+)*)`,
-  'g',
+  // Case-insensitive: `handbook §7` silently resolved to the spec's §7, because the
+  // prefix missed and the bare number fell through to the default document.
+  'gi',
 );
 
 // "Handbook §5 and §7" elides the prefix on the second citation. A bare §n inherits the
 // nearest qualified one within 60 characters, then falls back to its own file, then the spec.
+// 26 citations rely on that fallback, so it is convention, not a guess, and the gate does not
+// flag it. The limit: "Handbook §5, plus §2 of the spec" still binds §2 to the handbook.
 const citations = (text) => {
   const clean = text;
   const out = [];
@@ -291,7 +359,7 @@ const citations = (text) => {
     at: m.index,
     surface: m[0].trim(),
     number: m[2],
-    hint: m[1] ? PREFIXES.find(([p]) => p === m[1])[1] : null,
+    hint: m[1] ? PREFIXES.find(([p]) => p.toLowerCase() === m[1].toLowerCase())[1] : null,
   }));
   secs.forEach((s, i) => {
     let hint = s.hint;
@@ -310,7 +378,7 @@ const citations = (text) => {
   return out;
 };
 
-export const buildIndex = () => {
+export const buildIndex = ({ wide = false } = {}) => {
   const chunks = new Map();
   const byNumber = {};
   const byKey = new Map();
@@ -325,12 +393,19 @@ export const buildIndex = () => {
     const p = parse(key, text);
     docs[key] = { path: posix(cfg.path), ...p };
     byNumber[key] = {};
+    for (const t of p.stray)
+      errors.push({
+        code: 'fence-indent',
+        file: posix(cfg.path),
+        line: t.line,
+        msg: `this fence is indented ${t.indent} spaces, so it is code and does not close the block opened at line ${t.openedAt}; unindent it`,
+      });
     if (p.open)
       errors.push({
         code: 'unbalanced-fence',
         file: posix(cfg.path),
-        line: 0,
-        msg: 'fence never closed',
+        line: p.open.line,
+        msg: `the ${p.open.mark.repeat(p.open.len)} fence opened here never closes; a closing fence indented four spaces is code, not a fence`,
       });
 
     const seenSlug = new Map();
@@ -355,6 +430,13 @@ export const buildIndex = () => {
         else seenNum.set(c.number, c.line);
         byNumber[key][c.number] = c.slug;
       }
+      if (key === 'dlog' && !c.key && /^D-\d+\b/.test(c.title))
+        errors.push({
+          code: 'unparsed-decision',
+          file: c.path,
+          line: c.line,
+          msg: `"${c.title}" is a heading but not a decision: put an em dash or a colon between the id and the title, or nothing can cite it`,
+        });
       if (c.key) {
         if (seenKey.has(c.key)) {
           const was = seenKey.get(c.key);
@@ -406,19 +488,20 @@ export const buildIndex = () => {
     }
   }
 
-  for (const rel of SOURCES) {
+  for (const rel of sources(wide)) {
     const abs = join(root, ...rel.split('/'));
     if (!existsSync(abs)) continue;
     const text = readFileSync(abs, 'utf8');
     for (const cit of citations(text)) {
       const to = target(cit, null);
       if (!to) {
-        errors.push({
-          code: 'dangling-citation',
-          file: posix(rel),
-          line: lineAt(text, cit.at, 1),
-          msg: `"${cit.surface}" resolves to nothing`,
-        });
+        if (GATED.has(posix(rel)))
+          errors.push({
+            code: 'dangling-citation',
+            file: posix(rel),
+            line: lineAt(text, cit.at, 1),
+            msg: `"${cit.surface}" resolves to nothing`,
+          });
         continue;
       }
       const t = chunks.get(to);
@@ -430,10 +513,11 @@ export const buildIndex = () => {
   for (const c of chunks.values())
     for (const a of c.aliases) if (!(a in byAlias)) byAlias[a] = c.slug;
 
+  const fences = errors.filter((e) => e.code === 'unbalanced-fence' || e.code === 'fence-indent');
   return {
     chunks: Object.fromEntries(chunks),
     byAlias,
-    errors,
+    errors: fences.length ? fences : errors,
     stats: {
       chunks: chunks.size,
       citations: [...chunks.values()].reduce((n, c) => n + c.citedBy.length, 0),
