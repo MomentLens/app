@@ -170,6 +170,9 @@ const parse = (key, text) => {
     c.tokens = tokens(lines.slice(c.line - 1, end).join('\n'));
     c.selfTokens = tokens(c.selfBody);
     c.children = [];
+    // Citations are read per segment, each carrying the file line its first line sits on.
+    // Stripping text before scanning would shift every line number reported after it.
+    c.segments = [{ text: c.selfBody, from: c.selfSpan.start }];
   });
   chunks.forEach((c, i) => {
     for (let j = i - 1; j >= 0; j--) {
@@ -204,6 +207,7 @@ const parse = (key, text) => {
         selfTokens: tokens(line),
         children: [],
         notes: [],
+        segments: [{ text: line, from: i + 1 }],
       };
       rows.push(c);
       chunks.push(c);
@@ -235,7 +239,22 @@ const parse = (key, text) => {
       // Citations in a note become the slice's own edges, so D-19 reaches S-04.
       c.selfBody += '\n' + c.attached.map((p) => p.lines.join('\n')).join('\n');
       c.tokens = c.selfTokens = tokens(c.selfBody);
+      for (const p of c.attached) c.segments.push({ text: p.lines.join('\n'), from: p.start });
       delete c.attached;
+    }
+
+    // A row and its warning paragraph also sit inside a phase heading's body. Blank those
+    // lines out of the heading rather than deleting them: the row already owns the edge,
+    // and counting it twice inflates every `doc why` answer.
+    const owned = new Set();
+    for (const c of rows) {
+      owned.add(c.line);
+      for (const n of c.notes) for (let l = n.start; l <= n.end; l++) owned.add(l);
+    }
+    for (const c of chunks) {
+      if (c.flags.includes('row')) continue;
+      const kept = c.selfBody.split('\n').map((l, i) => (owned.has(c.selfSpan.start + i) ? '' : l));
+      c.segments = [{ text: kept.join('\n'), from: c.selfSpan.start }];
     }
   }
 
@@ -295,6 +314,9 @@ export const buildIndex = () => {
   const chunks = new Map();
   const byNumber = {};
   const byKey = new Map();
+  // Corpus-wide: `docs/DecisionLog.md` is merge=union, so two branches each appending D-81
+  // is the expected collision, and the second would be unreachable forever.
+  const seenKey = new Map();
   const docs = {};
   const errors = [];
 
@@ -313,7 +335,6 @@ export const buildIndex = () => {
 
     const seenSlug = new Map();
     const seenNum = new Map();
-    const seenKey = new Map();
     for (const c of p.chunks) {
       if (seenSlug.has(c.slug))
         errors.push({
@@ -335,15 +356,18 @@ export const buildIndex = () => {
         byNumber[key][c.number] = c.slug;
       }
       if (c.key) {
-        if (seenKey.has(c.key))
+        if (seenKey.has(c.key)) {
+          const was = seenKey.get(c.key);
           errors.push({
             code: 'duplicate-id',
             file: c.path,
             line: c.line,
-            msg: `${c.key} is also defined at line ${seenKey.get(c.key)}; every citation to it resolves to one of them`,
+            msg: `${c.key} is also defined at ${was.file}:${was.line}; every citation to it resolves to one of them`,
           });
-        else seenKey.set(c.key, c.line);
-        byKey.set(c.key, c.slug);
+        } else {
+          seenKey.set(c.key, { file: c.path, line: c.line });
+          byKey.set(c.key, c.slug);
+        }
       }
       chunks.set(c.slug, c);
     }
@@ -361,30 +385,23 @@ export const buildIndex = () => {
 
   for (const [key, doc] of Object.entries(docs)) {
     for (const c of doc.chunks) {
-      // In WorkSlices.md a row is its own chunk and also sits inside a phase heading's body.
-      // Attribute a row's citations to the row only, or every one is counted twice.
-      const text =
-        key === 'slices' && !c.flags.includes('row')
-          ? c.selfBody
-              .split('\n')
-              .filter((l) => !ROW.test(l))
-              .join('\n')
-          : c.selfBody;
-      for (const cit of citations(text)) {
-        const to = target(cit, key);
-        if (!to) {
-          errors.push({
-            code: 'dangling-citation',
-            file: doc.path,
-            line: lineAt(text, cit.at, c.selfSpan.start),
-            msg: `"${cit.surface}" resolves to nothing`,
-          });
-          continue;
+      for (const seg of c.segments) {
+        for (const cit of citations(seg.text)) {
+          const to = target(cit, key);
+          if (!to) {
+            errors.push({
+              code: 'dangling-citation',
+              file: doc.path,
+              line: lineAt(seg.text, cit.at, seg.from),
+              msg: `"${cit.surface}" resolves to nothing`,
+            });
+            continue;
+          }
+          if (to === c.slug) continue;
+          if (!c.cites.includes(to)) c.cites.push(to);
+          const t = chunks.get(to);
+          if (t && !t.citedBy.includes(c.slug)) t.citedBy.push(c.slug);
         }
-        if (to === c.slug) continue;
-        if (!c.cites.includes(to)) c.cites.push(to);
-        const t = chunks.get(to);
-        if (t && !t.citedBy.includes(c.slug)) t.citedBy.push(c.slug);
       }
     }
   }

@@ -26,7 +26,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Navigation or screens | Spec §2.5 + Handbook §16.5 |
 | Deployment | Handbook §13 |
 
-**Read sections, never whole docs, and address them by id.** The spec alone is about 24K tokens.
+**Read sections, never whole docs, and address them by id.** The spec alone is 21K tokens.
 
 | Want | Run |
 |---|---|
@@ -34,7 +34,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Everything a slice needs | `node scripts/doc.mjs slice S-21` |
 | What breaks if a decision is reopened | `node scripts/doc.mjs why D-57` |
 | Which sections mention a term | `node scripts/doc.mjs grep variant_version` |
-| What is in a doc at all | `node scripts/doc.mjs toc idea` (or `hb`, `dlog`, `arch`, `slices`) |
+| What is in a doc at all | `node scripts/doc.mjs toc spec` (or `hb`, `dlog`, `arch`, `slices`) |
 
 Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` is a section in
 three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
@@ -45,8 +45,8 @@ special character. `doc 7` alone is refused, because §7 is a section in three o
 
 **If the scripts are broken**, every section is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md`
 then `sed -n 'a,bp'` gets you there. Do not trust `grep -n '^#'` to list headings:
-`docs/EngineeringHandbook.md:542` is a shell comment inside a fenced block that it reads as one. Note that `grep -n '^#'` is *not* a reliable way to find headings
-here, because several docs contain `#` comments inside fenced code blocks.
+`docs/EngineeringHandbook.md:542` is a shell comment inside a fenced block that it reads as
+one. On Windows that fallback needs Git Bash or WSL2; `grep` and `sed` are not in PowerShell.
 
 Never `@`-import a doc into this file.
 
