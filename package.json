@@ -9,7 +9,6 @@
     "prepare": "husky",
     "check:machine": "node scripts/doctor.mjs",
     "docs": "node scripts/doc.mjs",
-    "docs:index": "node scripts/docindex.mjs --report",
     "docs:check": "node scripts/doc.mjs check",
     "lint": "pnpm -r --if-present run lint",
     "typecheck": "pnpm -r --if-present run typecheck",

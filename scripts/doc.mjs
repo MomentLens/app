@@ -20,7 +20,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Past this a parent prints its own preamble and a menu of children instead of the subtree.
 const MENU_OVER = 800;
 
-const argv = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const argv = process.argv.slice(2).filter((a) => !a.startsWith('-'));
 let index;
 try {
   index = buildIndex();
@@ -35,10 +35,13 @@ const C = index.chunks;
 const num = (s) => (s ?? '').toLowerCase().replace(/^[§#]/, '');
 
 // "doc arch §3" arrives as two words. Rejoin a file label with the section that follows it.
-const LABELS = new Set([...Object.keys(FILES), ...Object.values(FILES).flatMap((f) => f.prefixes)]);
+const LABEL = new Map();
+for (const [k, f] of Object.entries(FILES))
+  for (const n of [k, f.label, ...f.prefixes]) if (n) LABEL.set(n.toLowerCase(), k);
+const fileKey = (s) => LABEL.get((s ?? '').toLowerCase().trim());
 const args = [];
 for (let i = 0; i < argv.length; i++) {
-  if (LABELS.has(argv[i]) && /^§/.test(argv[i + 1] || ''))
+  if (fileKey(argv[i]) && /^§/.test(argv[i + 1] || ''))
     (args.push(`${argv[i]} ${argv[i + 1]}`), i++);
   else args.push(argv[i]);
 }
@@ -53,9 +56,9 @@ const resolve = (token) => {
     if (all.length > 1) return { ambiguous: all.map((c) => c.display) };
     if (all.length === 1) return all[0].slug;
   }
-  const scoped = t.match(/^(\w+):(.+)$/);
-  const key = scoped ? scoped[1] : null;
-  if (key && FILES[key]) {
+  const scoped = t.match(/^([\w.]+):(.+)$/);
+  const key = scoped && fileKey(scoped[1]);
+  if (key) {
     const hit = Object.values(C).find((c) => c.file === key && c.number === num(scoped[2]));
     if (hit) return hit.slug;
   }
@@ -157,13 +160,17 @@ verbs.slice = ([id]) => {
     return;
   }
   const slice = C[r];
+  if (!slice.flags.includes('row')) {
+    const d = slice.display || r;
+    return say(`${d} is not a slice. To read it: doc ${d}. To list the slices: doc toc slices`);
+  }
   const expand = [r];
   const next = [];
   const seen = new Set([r]);
   for (const id2 of slice.cites) {
     if (seen.has(id2)) continue;
     seen.add(id2);
-    // Never expand a retracted decision into a brief. Four of them sit one hop from S-21,
+    // Never expand a retracted decision into a brief. D-45 reaches S-21 through D-57,
     // the slice holding the image-serving authorization check.
     if (C[id2].flags.includes('superseded')) next.push(id2);
     else expand.push(id2);
@@ -225,9 +232,13 @@ verbs.grep = (list) => {
 };
 
 verbs.toc = ([key]) => {
-  if (!FILES[key]) return say(`unknown file "${key}". One of: ${Object.keys(FILES).join(' ')}`);
-  const list = Object.values(C).filter((c) => c.file === key && c.level < 9);
-  say(`=== toc ${key} · ${list.length} sections · ${FILES[key].path} ===`);
+  const fk = fileKey(key);
+  if (!fk)
+    return say(
+      `${key ? `unknown file "${key}". ` : ''}Which file? One of: spec hb dlog arch slices`,
+    );
+  const list = Object.values(C).filter((c) => c.file === fk && c.level < 9);
+  say(`=== toc ${FILES[fk].label || fk} · ${list.length} sections · ${FILES[fk].path} ===`);
   say('');
   for (const c of list) {
     const pad = '  '.repeat(Math.max(0, Math.min(c.level, 5) - 1));
