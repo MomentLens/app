@@ -23,7 +23,7 @@ verification check disabled, Phase 4 adds the gate" lives. It contradicts the sp
 below it on purpose. Phases 1, 4 and 6 have no such paragraph, so 11 briefs print none.
 
 A section over 800 tokens that has subsections comes back as a menu of them with their sizes
-and the command to read one. For 8 of the 41 slices that means a second command. Run it; the
+and the command to read one. For 2 of the 41 slices that means a second command. Run it; the
 menu is not the content. A section over 800 tokens with no subsections prints in full, so a
 brief can be large without any menu in it.
 

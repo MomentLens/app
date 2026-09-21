@@ -379,6 +379,14 @@ const SECTION = new RegExp(
 // convention, not a guess, and the gate does not flag it. 26 of those name a number that
 // exists in more than one document. The limit: in "Handbook §5, plus §2 of the spec" the bare
 // §2 inherits `hb` from six words earlier and the trailing qualifier is not read.
+// ARCHITECTURE.md's 17 table entries carry no section number, so nothing could cite one and
+// a row wanting `venue_verification` had to cite arch §2 and get a 17-item menu. `arch:slug`
+// is the form doc.mjs already accepts on the command line.
+const LABELS = Object.entries(FILES).flatMap(([k, f]) =>
+  [k, f.label].filter(Boolean).map((n) => [n, k]),
+);
+const SLUGREF = new RegExp(`\\b(${LABELS.map(([n]) => n).join('|')}):([a-z][a-z0-9_-]*)\\b`, 'g');
+
 const citations = (text) => {
   const clean = text;
   const out = [];
@@ -409,6 +417,13 @@ const citations = (text) => {
     out.push({ kind: 'key', surface: m[0], key: m[0], at: m.index });
   for (const m of clean.matchAll(/\b(S-\d+[a-z]?|P0-\d+)\b/g))
     out.push({ kind: 'key', surface: m[0], key: m[1], at: m.index });
+  for (const m of clean.matchAll(SLUGREF))
+    out.push({
+      kind: 'slug',
+      surface: m[0],
+      slug: `${LABELS.find(([n]) => n === m[1])[1]}/${m[2]}`,
+      at: m.index,
+    });
   return out;
 };
 
@@ -503,14 +518,18 @@ export const buildIndex = ({ wide = false } = {}) => {
   // the spec's §3, handing S-12 the event lifecycle where it asked for the R2 key formats,
   // with a green gate. An inherited prefix is a guess, so that one may still fall back.
   const target = (cit, from) =>
-    cit.kind === 'key'
-      ? byKey.get(cit.key) || null
-      : cit.explicit
-        ? byNumber[cit.hint]?.[cit.number] || null
-        : [cit.hint, from, 'idea'].reduce(
-            (hit, k) => hit || (k && byNumber[k]?.[cit.number]) || null,
-            null,
-          );
+    cit.kind === 'slug'
+      ? chunks.has(cit.slug)
+        ? cit.slug
+        : null
+      : cit.kind === 'key'
+        ? byKey.get(cit.key) || null
+        : cit.explicit
+          ? byNumber[cit.hint]?.[cit.number] || null
+          : [cit.hint, from, 'idea'].reduce(
+              (hit, k) => hit || (k && byNumber[k]?.[cit.number]) || null,
+              null,
+            );
 
   const lineAt = (text, at, offset) => offset + text.slice(0, at).split('\n').length - 1;
 
