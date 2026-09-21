@@ -68,9 +68,9 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63 | C | P0 |
-| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B | B | S-01 |
-| S-03 | Guest Link join: token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4 | U | S-02 |
+| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73 | C | P0 |
+| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17 | B | S-01 |
+| S-03 | Guest Link join: token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17 | U | S-02 |
 
 **S-01 writes the first migration, and D-63 says what has to be in it.** The `subject` row with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. Nothing in §4.1 mentions it, which is why the decision is cited on the row.
 
@@ -80,11 +80,11 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-04 | Sub-events CRUD, Schedule screen, **status computation** | §4.3, §4.6, §4.10 | U | S-02 |
+| S-04 | Sub-events CRUD, Schedule screen, **status computation** | §4.3, §4.6, §4.10, spec §5 | U | S-02 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03 |
 | S-06 | Attendees: search, filter, role change, block, remove | §4.4, §2.5.7 Manage | B | S-05 |
 | S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage | B | S-06 |
-| S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5, §2.2, §4.10, HB §16.5 | C | S-03 |
+| S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
 
 **S-04 carries a trap.** The status rule depends on the *next* sub-event's start time, not the current one's end (D-19). It reads two rows, not one. This is the slice most worth unit-testing, and an agent will get it wrong from the name alone.
 
@@ -102,12 +102,12 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-09 | Viewfinder: native aspect, Public/Local Only toggle, session strip, FAB visibility rule | §4.7, §2.5.4, D-21 | B | S-08 |
-| S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3 | C | S-04, S-08 |
-| S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, arch §4 | C | S-10 |
-| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, spec §4.11.1, arch §3, arch §4 | U | S-11 |
+| S-09 | Viewfinder: native aspect, Public/Local Only toggle, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20 | B | S-08 |
+| S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5 | C | S-04, S-08 |
+| S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
+| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73 | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72 | U | S-12 |
-| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5.2, §4.10, D-22 | B | S-12, S-18a |
+| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5.2, §4.10, D-22, D-55, HB §4 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69).
@@ -140,8 +140,8 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4, §4.13, D-57, D-60, D-69, D-72, D-27, D-30, D-65, arch §3, arch §6 | U | S-20 |
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4, D-77 | B | S-21 |
 | S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4, §4.10, D-74 | C | S-20 |
-| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-47, D-52, arch §6 | C | S-22, S-23 |
-| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, arch §3 | U | S-21 |
+| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §6 | C | S-22, S-23 |
+| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, arch §3 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
 
 **S-19 first, before the ML work.** Half a day, cannot fail, and it is your escape hatch when automatic matching misses something live (HB §14).
@@ -164,7 +164,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 |---|---|---|---|---|
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10 | C | S-07 |
 | S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, D-28 | U | S-21 |
-| S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5.9, D-35 | B | S-01 |
+| S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5.9, D-35, D-56 | B | S-01 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | Formalized screens, consent screens, album open/close confirm dialog, hard-coded limits | §2.5.8, §4.18, §4.9, §4.17, D-33 | B | S-08 |
 
@@ -217,12 +217,16 @@ lie. Sixteen decisions still reach no brief and should stay that way: cut scope,
 work, superseded entries, and the four Photographer rules, whose content spec §4.10 restates
 in full for the six slices that cite it.
 
-**The one to watch.** spec §5, edge cases and exception handling, has no owner and is about
-1,100 tokens of what the app does when an upload fails, connectivity drops, a join
-duplicates, access is revoked or a face match misses. Its rows belong to a dozen different
-slices, so it is not one unit of work and splitting it is a real decision nobody has made.
-Until then: **read spec §5 before building any error path, and treat a row in it as a
-requirement, not a suggestion.** Root `CLAUDE.md` routes to it.
+**The one to watch.** spec §5, edge cases and exception handling, is about 1,100 tokens of
+what the app does when an upload fails, connectivity drops, a join duplicates, access is
+revoked or a face match misses. Its rows belong to a dozen different slices, so it is not
+one unit of work and splitting it is a real decision nobody has made. It is now cited by
+S-04, S-10 and S-12, the three slices with rows in it that an implementer would otherwise
+get wrong: capture tags to the most recently started sub-event when two overlap, a photo
+from a never-verified guest waits in the local queue with a clock badge rather than failing,
+and an exact duplicate is rejected silently before any file transfer, with no prompt. That
+is not full coverage. **Read spec §5 before building any error path, whatever your slice
+cites, and treat a row in it as a requirement.** Root `CLAUDE.md` routes to it.
 
 ---
 
