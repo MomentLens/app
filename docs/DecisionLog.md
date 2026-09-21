@@ -367,12 +367,12 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 
 ### D-54 — Curated and auto-added references are tracked separately
 **Decision.** One boolean column. Matching and Find My Photos use curated plus auto-added. The D-23 abuse check uses curated only.
-**Why.** D-25 adds a confirmed tap crop to the reference set automatically with nothing damping it. A user tapping faces that score just above the loose threshold, meaning the sibling-and-cousin population §8 already expects to produce false positives, drifts their reference set toward that other person. The drifted set is what the abuse check runs against, so the check degrades exactly as the thing it guards against gets easier.
+**Why.** D-25 adds a confirmed tap crop to the reference set automatically with nothing damping it. A user tapping faces that score just above the loose threshold, meaning the sibling-and-cousin population spec §8 already expects to produce false positives, drifts their reference set toward that other person. The drifted set is what the abuse check runs against, so the check degrades exactly as the thing it guards against gets easier.
 **Rejected.** Capping the number of auto-added references, which slows the drift without stopping it, and dropping D-25 entirely, which throws away the best reference data the system ever gets.
 
 ### D-55 — A media row is not album-visible until processing completes
 **Decision.** The album query filters on `processed_at IS NOT NULL`. Before that the photo is visible only to its uploader in My Media, with a spinner badge.
-**Why.** The §3 lifecycle diagram had this right and §4.9 did not say it, and §4.9 is what the album gets built from. If visibility keys off upload completion, an unblurred photo is in the shared album for the length of the worker backlog. On an M1 with 100 photos that window is about a second, which makes the rule cheap rather than optional.
+**Why.** The spec §3 lifecycle diagram had this right and spec §4.9 did not say it, and spec §4.9 is what the album gets built from. If visibility keys off upload completion, an unblurred photo is in the shared album for the length of the worker backlog. On an M1 with 100 photos that window is about a second, which makes the rule cheap rather than optional.
 **Cost.** "A photo appears within seconds" is true when the queue is empty and degrades under a burst. Say that rather than claiming otherwise.
 
 ### D-56 — Do Not Publish cannot be activated without a reference image
@@ -515,7 +515,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Cost.** Ukasha reviews every PR that touches the file, which adds to the bottleneck WorkSlices already warns about.
 
 ### D-76: Development runs on the Oracle instance; the M1 demo stack goes up a month before the demo
-**Decision.** Amends D-50 and Handbook §13 and §14.0 Phase 0. All three developers build against the Oracle instance on the dev Supabase project and the dev R2 bucket. The M1 demo stack (API, worker, Cloudflare named tunnel, stable project and bucket) goes up one month before the demo, at the start of Phase 7. The tunnel leaves Phase 0.
+**Decision.** Amends D-50 and Handbook §13 and Handbook §14.0 Phase 0. All three developers build against the Oracle instance on the dev Supabase project and the dev R2 bucket. The M1 demo stack (API, worker, Cloudflare named tunnel, stable project and bucket) goes up one month before the demo, at the start of Phase 7. The tunnel leaves Phase 0.
 **Why.** Handbook §13 put the tunnel in Phase 0 for everyday remote testing, and the Oracle instance already gives the team a public HTTPS backend from Phase 0. The M1's advantage, faster inference (D-50), matters on demo day.
 **Rejected.** The tunnel in Phase 0 as the everyday remote-testing setup.
 **Cost.** The demo stack runs for the first time a month out. The M1 and Oracle share an architecture, so the remaining risk is configuration, which the Phase 7 rehearsal covers. If the M1 fails in demo week, Oracle only works as the fallback after its `.env` switches to the stable project, because the demo build logs in against stable.
@@ -523,7 +523,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 
 ### D-77: Pinch-zoom is core, as a named exception to D-44
 **Decision.** Amends D-59 and D-44. The single photo viewer ships with pinch-zoom and pan (spec §2.5) in S-22, although no demo beat shows it. It is the one named exception to D-44's rule that scope is what the demo script shows.
-**Why.** Spec §0 and §2.5 already called it core while D-59 said "built if there is time." The team judged it small: an agent has already built it in another project.
+**Why.** Spec §0 and Spec §2.5 already called it core while D-59 said "built if there is time." The team judged it small: an agent has already built it in another project.
 **Rejected.** Adding a zoom moment to beat 5, which would have changed the demo script.
 **Watch for.** Pan and the pager's swipe compete for the same gesture while zoomed in, and zoom has to reset when the pager moves to another photo.
 

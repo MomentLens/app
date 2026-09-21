@@ -25,6 +25,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5 |
 | Navigation or screens | Spec §2.5 + Handbook §16.5 |
 | Deployment | Handbook §13 |
+| Any error path: failed upload, lost connectivity, revoked access, a missed face match | Spec §5 |
 
 **Read sections, never whole docs, and address them by id.** The spec alone is 21K tokens.
 
