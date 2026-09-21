@@ -239,6 +239,9 @@ verbs.slice = ([id]) => {
   }
   out.unshift(`=== slice ${slice.key || id} · ${expand.length} sections · ~${total} tok ===`, '');
   say(`one hop out: ${next.map((s) => C[s].display || s).join(' ')}`);
+  // The checklist every slice is measured against is not in any brief and is too long to
+  // put in all 41. Name it, now that a chunk without a section number can be addressed.
+  say('done means: doc slices:definition-of-done');
 };
 
 // Every document calls the output a brief, so `doc brief S-21` is what someone types. It

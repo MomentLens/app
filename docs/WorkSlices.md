@@ -57,7 +57,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14.0 Phase 0 |
 | P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it on the x86-64 server | HB §14.0 Phase 0 |
-| P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §15, arch §2 |
+| P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §15 |
 | P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
 | P0-8 | Sentry free tier on the app and the API | HB §11 |
 | P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, HB §13.1 |
@@ -90,7 +90,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
-**The Photographer role is six restrictions spread across six slices, not a slice of its own.** §4.10 and §2.2 are cited on every row that carries one: S-08 (which tabs the role gets), S-13 (they see only their own uploads), S-04 (Schedule read-only, no Delay), S-15 (exempt from the verification gate), S-23 (Recognized Faces strip suppressed on their own photos), S-28 (no download button). Read §4.10 before building any of them. Every rule in it is something the role must *not* see, and an omission throws nothing and fails no test written from the Admin's or a Guest's perspective.
+**The Photographer role is six restrictions spread across six slices, not a slice of its own.** §4.10, which lists all six, is cited on every row that carries one; §2.2, the narrative, is on S-08 only: S-08 (which tabs the role gets), S-13 (they see only their own uploads), S-04 (Schedule read-only, no Delay), S-15 (exempt from the verification gate), S-23 (Recognized Faces strip suppressed on their own photos), S-28 (no download button). Read §4.10 before building any of them. Every rule in it is something the role must *not* see, and an omission throws nothing and fails no test written from the Admin's or a Guest's perspective.
 
 ---
 
@@ -121,7 +121,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification` | §4.5, §4.14, §4.10, D-14, D-36, arch:venue_verification | U | S-12 |
-| S-16 | Venue QR: per-sub-event generation, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5.1, D-17, arch:venue_verification | C | S-15 |
+| S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5.1, D-17, arch:venue, arch:venue_verification | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3, arch:venue_verification | B | S-15, S-06 |
 
 **S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Say that in the handoff.
@@ -139,7 +139,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, arch §5, arch §6, arch:face_reference | U | S-18 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-27, D-30, arch §3, arch §5, arch §6 | U | S-20 |
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4.2, D-77, D-60, HB §4 | B | S-21 |
-| S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §4.10, D-74 | C | S-20 |
+| S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §4.10, D-74, D-29 | C | S-20 |
 | S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §5, arch §6, arch:blur_request | C | S-22, S-23 |
 | S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, arch §3, arch §5 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
