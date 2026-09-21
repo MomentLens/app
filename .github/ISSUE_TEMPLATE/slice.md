@@ -12,6 +12,20 @@ title: "S-XX: <slice name>"
 **Depends on:**
 **Owner:**
 
+## Read-back, before any code
+
+<!-- Paste the agent's read-back here, or write your own, before work starts. -->
+
+- **What this slice is:**
+- **How it gets built, and which files:**
+- **What it inherits from its dependencies, and what later slices read from it:**
+- **Edge cases, each with what the docs say or "the docs do not say":**
+- **What the docs got wrong, with section ids:**
+- **Invariants and human-read surfaces touched:**
+
+The docs are a draft, not a contract. Fix what this list turned up, here and in the slices
+this one depends on, before starting. If it turned up nothing, look again.
+
 ## Definition of done
 
 - [ ] zod schema merged in `packages/shared-types` before any UI or handler

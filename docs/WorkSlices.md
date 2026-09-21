@@ -263,11 +263,20 @@ the upload queue. NativeWind v4 tokens, no hardcoded hex. No localStorage or
 AsyncStorage anywhere. No Node APIs in the app.
 
 Order of work:
-1. Propose the zod schema for this slice. Stop. I will review and merge it
+1. Read the slice back to me first, before anything is written: what it is in
+   one paragraph, how you would build it and which files that touches, what
+   interface you are building against from the slices it depends on, every
+   edge case you can find with "the docs do not say" where that is the honest
+   answer, and everything the docs get wrong about it. Stop. I will either say
+   go or fix the docs first.
+2. Propose the zod schema for this slice. Stop. I will review and merge it
    before you write anything else.
-2. Then describe how you'd structure the rest and what files you'd touch.
-   Stop. I will read the plan.
-3. Then build it.
+3. Then build it, in the order your read-back set out.
+
+The docs are a draft, not a contract. If two sections disagree or one cannot
+work, say so instead of picking one. The numbered invariants in CLAUDE.md and
+the decision log are decisions rather than descriptions: raise those, do not
+route around them.
 
 Done means: schema merged, RLS policy written or N/A (only `media` and `event`
 have one, D-73), loading +
