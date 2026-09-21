@@ -42,14 +42,13 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` is a section in
 three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
 large parent gets its children as summaries with their token costs, so you take the one you
-need; a slice brief does the same, so about ten slices need one follow-up command.
+need; a slice brief does the same, so two slices need one follow-up command.
 
 A slice brief opens with its phase's own instructions. Those apply to every slice in the phase
 and override the spec sections printed below them.
 
-Use the command. On tokens it is close: measured over all 41 slices it is 12% cheaper than
-hand retrieval by someone who already knows every section number, and more expensive on 31
-of them taken one at a time. It wins on the things a token count does not show: half the
+Use the command. On tokens it is level with hand retrieval by someone who already knows
+every section number, and more expensive on 35 of the 41 taken one at a time. It wins on the things a token count does not show: half the
 tool calls, and it carries the phase paragraph, the warning paragraph and the superseded
 flags that hand retrieval drops in silence. `docs/WorkSlices.md` has the measurement.
 

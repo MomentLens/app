@@ -9,9 +9,9 @@ Create one GitHub issue per slice from the **Work slice** issue template, titled
 
 ## Why a slice is not a screen
 
-A screen is roughly 30% of a feature. "Pending Approvals" as a Figma frame gives you a list, rows, and two buttons. It does not tell you the zod schema, the Express route, the RLS policy deciding who can approve, the query hook and what it invalidates, the empty state, the error state, or what happens when two Admins approve the same person at once. An agent handed only the image invents all of that, plausibly, and differently for each of the three of you. Three date formatters, three upload-progress components, three incompatible ideas of what the approvals endpoint returns.
+A screen is roughly 30% of a feature. "Pending Approvals" as a Figma frame gives you a list, rows, and two buttons. It does not tell you the zod schema, the Express route, the service-layer rule deciding who can approve, the query hook and what it invalidates, the empty state, the error state, or what happens when two Admins approve the same person at once. An agent handed only the image invents all of that, plausibly, and differently for each of the three of you. Three date formatters, three upload-progress components, three incompatible ideas of what the approvals endpoint returns.
 
-**A slice is all six layers of one feature:** schema, endpoint, RLS policy, query hook, screen, and the unglamorous states. Whoever owns the slice owns all six.
+**A slice is all six layers of one feature:** schema, endpoint, the authorization rule, query hook, screen, and the unglamorous states. Whoever owns the slice owns all six.
 
 ## The rule that makes parallel work possible
 
@@ -26,7 +26,7 @@ Corollary from the pre-Phase-0 setup: **an endpoint does not exist until its sch
 A slice is not done when the screen renders. It is done when all of these are true. The same list is in `.github/ISSUE_TEMPLATE/slice.md`, so every slice issue carries it as checkboxes.
 
 - [ ] zod schema merged in `packages/shared-types`
-- [ ] RLS policy written, or explicitly noted as not applicable
+- [ ] RLS policy written, or noted as not applicable. Only `media` and `event` have one; everything else is enforced in the service layer (D-73)
 - [ ] **Read by a human before merging** if the slice touches any RLS policy, the image-serving endpoint's authorization check, the upload queue's state machine, or auth and invite-token handling (D-68)
 - [ ] A negative test for each of those surfaces, and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-73)
 - [ ] Loading, empty, and error states exist, not just the happy path (Handbook §15)
@@ -68,7 +68,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73 | C | P0 |
+| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73, arch:subject, arch:profile | C | P0 |
 | S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17 | B | S-01 |
 | S-03 | Guest Link join: token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17 | U | S-02 |
 
@@ -105,8 +105,8 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20 | B | S-08 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
-| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73 | U | S-11 |
-| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72 | U | S-12 |
+| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification | U | S-11 |
+| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72, arch §5 | U | S-12 |
 | S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5.2, §4.10, D-22, D-55, D-60, HB §4, HB §16 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
 
@@ -120,9 +120,9 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification` | §4.5, §4.14, §4.10, D-14, D-36, arch §2 | U | S-12 |
-| S-16 | Venue QR: per-sub-event generation, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5.1, D-17 | C | S-15 |
-| S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3 | B | S-15, S-06 |
+| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification` | §4.5, §4.14, §4.10, D-14, D-36, arch:venue_verification | U | S-12 |
+| S-16 | Venue QR: per-sub-event generation, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5.1, D-17, arch:venue_verification | C | S-15 |
+| S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3, arch:venue_verification | B | S-15, S-06 |
 
 **S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Say that in the handoff.
 
@@ -136,15 +136,15 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 |---|---|---|---|---|
 | S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, HB §14.5 Phase 5, D-40, arch §5 | U | S-18a, P0-5 |
 | S-19 | **Manual blur box** (fallback rung 3). Build this before S-20 | HB §14.5 | B | S-13 |
-| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, arch §6 | U | S-18 |
-| S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-27, D-30, D-65, arch §3, arch §6 | U | S-20 |
+| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, arch §5, arch §6, arch:face_reference | U | S-18 |
+| S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-27, D-30, arch §3, arch §5, arch §6 | U | S-20 |
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4.2, D-77, D-60, HB §4 | B | S-21 |
 | S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §4.10, D-74 | C | S-20 |
-| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §6 | C | S-22, S-23 |
-| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, arch §3 | U | S-21 |
+| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §5, arch §6, arch:blur_request | C | S-22, S-23 |
+| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, arch §3, arch §5 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
 
-**S-19 first, before the ML work.** Half a day, cannot fail, and it is your escape hatch when automatic matching misses something live (HB §14).
+**S-19 first, before the ML work.** Half a day, cannot fail, and it is your escape hatch when automatic matching misses something live (HB §14.5).
 
 **S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5). Write its negative test before the endpoint (HB §11). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72).
 
@@ -166,7 +166,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10 | U | S-21 |
 | S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5.9, D-35, D-56 | B | S-01 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
-| S-31 | Formalized screens, consent screens, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, hard-coded limits | §2.5.8, §4.18, §4.9, §4.17, D-33 | B | S-08 |
+| S-31 | Formalized screens, consent screens, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, hard-coded limits | §2.5.8, §4.18, §4.9, §4.17, §2.5.2, arch §1, D-33 | B | S-08, S-13 |
 
 **S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later.
 
@@ -269,7 +269,8 @@ Order of work:
    Stop. I will read the plan.
 3. Then build it.
 
-Done means: schema merged, RLS policy written or explicitly N/A, loading +
+Done means: schema merged, RLS policy written or N/A (only `media` and `event`
+have one, D-73), loading +
 empty + error states, unit test for any pure logic, dark mode via tokens,
 a negative authorization test for every endpoint.
 
@@ -293,26 +294,26 @@ number of calls matters as much as the size of them.
 
 | Loading all 41 slices | Tokens | Tool calls |
 |---|---|---|
-| `doc slice`, plus a second command for the 8 slices that get a menu | 66,000 | 49 |
-| By hand, knowing every section number, one batched command per document | 75,000 | 105 |
-| By hand, also fetching the phase paragraph and the dependency rows the brief carries | 100,000 | 146 |
-| By hand, listing headings first, then reading each section | 145,000 | 218 |
+| `doc slice`, plus a second command for the 2 slices that get a menu | 91,000 | 43 |
+| By hand, knowing every section number, one batched command per document | 89,000 | 105 |
+| By hand, also fetching the phase paragraph and the dependency rows the brief carries | 118,000 | 146 |
+| By hand, listing headings first, then reading each section | 180,000 | 313 |
 
-**Read the second row honestly: in aggregate the tool is 12% cheaper, and on 31 of the 41
-slices it is more expensive**, usually by 50 to 300 tokens. Every brief carries a phase
-paragraph, a `--- id · file:lines · ~N tok` line per section, the rows of the slices it depends
-on, and a trailing list of ids one hop out. On a small slice that fixed scaffolding is a large
-fraction. The aggregate win comes from the handful of large slices where a cited section is too
-big to print and the menu saves thousands.
+**Read the second row honestly: on tokens the command and expert hand retrieval are level,
+and slice by slice the command is the more expensive one on 35 of the 41.** Every brief
+carries a phase paragraph, a `--- id · file:lines · ~N tok` line per section, the rows of the
+slices it depends on, and a trailing list of ids one hop out. On a small slice that fixed
+scaffolding is a large fraction. The briefs also grew as the coverage gaps closed, and that
+growth is content somebody has to read either way.
 
 So the case for the command is not the token count. It is:
 
-1. **Half the tool calls**, which is latency and failure surface, not only tokens.
+1. **Two and a half times fewer tool calls**, which is latency and failure surface.
 2. **Three things hand retrieval drops without telling you**: the phase paragraph above the
    table, which contradicts the spec sections below it on purpose; the warning paragraph
    written under the table; and the refusal to expand a decision that has been superseded.
 3. **The hand baseline above assumes you already know every section number.** The recipe
-   someone actually falls back to costs 145,000, more than twice the command.
+   someone actually falls back to costs 180,000 and 313 calls, twice the command.
 
 **The menu rule.** When `doc toc slices` marks a slice `+`, a section it cites is too large to
 print, so the brief lists the parts with their sizes and you read one. That is cheaper than

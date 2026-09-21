@@ -223,9 +223,9 @@ There is **no `variant.py`** either. D-58 removed the client resize, so there is
 
 **Superseded in part by D-73.** The API uses the secret key and enforces the rules below in its service layer, each with a negative authorization test. RLS stays on for every table, with `SELECT` policies only on `media` and `event` for Realtime, so the app cannot read or write any other table directly. The rules still describe who may see what; `docs/ARCHITECTURE.md` §1 has the current table.
 
-**The rules themselves, and where they live now.** Because Photographer uploads land in the shared album, there is no per-role media visibility rule. The list below is what the service layer enforces, one negative authorization test each. Only `media` and `event` get an actual RLS policy, because Realtime needs them, and those two check membership through a `security definer` function since `membership` has no policy of its own (D-73, `docs/ARCHITECTURE.md` §1). Do not turn any of these into a database policy:
+**The rules themselves, and where they live now.** Because Photographer uploads land in the shared album, there is no per-role media visibility rule. The list below is what the service layer enforces, one negative authorization test each. Only `media` and `event` get an actual RLS policy, because Realtime needs them, and those two check membership through a `security definer` function since `membership` has no policy of its own (D-73, `docs/ARCHITECTURE.md` §1). Those two are the only database policies in the project. Nothing else below is one, and adding one to make a client query work is the mistake root `CLAUDE.md` names:
 
-- **`media`**: `SELECT` allowed to any member of the event, with one exception. A Photographer can `SELECT` only rows where they are the uploader (spec §4.10). `UPDATE`/`DELETE` allowed to the uploader and to the Admin of that event.
+- **`media`**: `SELECT` allowed to an **active** member of the event, and only **once `processed_at` is set**, or at any time to the uploader (D-55). A Photographer can `SELECT` only rows where they are the uploader (spec §4.10). `UPDATE`/`DELETE` allowed to the uploader and to the Admin of that event.
   - `uploader_role_at_upload` still exists as a column, but it is **display metadata only**. It drives the Uploader filter chip and nothing else. In v3 it also routed the download endpoint between an original and a 2048px version; D-58 collapsed those into one file, so it now routes nothing. Do not put it in an RLS predicate and do not put it in a routing branch either.
 - **`event`**: visible only to members of that event.
 - **`membership`**: a user can read their own rows; Admin can read all rows for their own events.
@@ -256,7 +256,7 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 |---|---|---|
 | `thumbnail_dims` | Any upload completes, from Phase 3 until S-21 retires it (D-72) | No ML. Write `width`/`height`, the thumbnail only if the client's is missing, bump `variant_version`, then set `processed_at`. Never runs on the same upload as `face_process` |
 | `face_process` | Any upload completes | Detect faces once, extract an embedding per face, match against event members' Do Not Publish reference sets, write the public blurred file plus one variant per matched subject and a blurred thumbnail for each (D-69), write `width`/`height`, then set `processed_at` |
-| `reprocess` | A user activates Do Not Publish, or a manual blur correction is confirmed or reverted | **Match only, never detect.** Compare the already-stored embeddings for that event against the newly-active reference set, then regenerate the public file, the new per-subject variant and the thumbnails of both for matched photos only, bumping `variant_version` |
+| `reprocess` | A user activates Do Not Publish, a subject's references change, or a blur request is reverted (`docs/ARCHITECTURE.md` §5) | **Match only, never detect.** Compare the already-stored embeddings for that event against the newly-active reference set, then regenerate the public file, the new per-subject variant and the thumbnails of both for matched photos only, bumping `variant_version` |
 
 `reference_process` and `manual_blur` joined these jobs later (D-74). `docs/ARCHITECTURE.md` §5 has the current list.
 
@@ -280,7 +280,7 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 
 **Do not route media bytes through Express.** If every photo flows through Node, you pay for that bandwidth and CPU twice, once receiving and once forwarding, on a box you are specifically keeping light. Instead:
 
-1. **Pre-flight** (small JSON, this *does* go through Express): content hash, album ID, sub-event ID, and the GPS reading taken at capture time. No image bytes, the thumbnail included (D-69). Express does two lookups. First, a SHA-256 match against existing media for this event; an exact match is silently rejected with no file transfer. Second, the verification check: a `VenueVerification` row for this user and sub-event, **or** `membership.admin_verified_at IS NOT NULL`, **or** `role = 'photographer'`. Both are single indexed lookups. Neither risks blocking the event loop.
+1. **Pre-flight** (small JSON, this *does* go through Express): content hash, sub-event ID, and the GPS reading taken at capture time. No image bytes, the thumbnail included (D-69). Express does two lookups. First, a SHA-256 match against existing media for this event; an exact match is silently rejected with no file transfer. Second, the verification check: a `venue_verification` row for this user and sub-event, **or** `membership.admin_verified_at IS NOT NULL`, **or** `role = 'photographer'`. Both are single indexed lookups. Neither risks blocking the event loop.
 2. **Presigned URLs.** If it passes, Express builds the upload keys for the photo and its thumbnail in its one key function, writes them onto the new media row (D-70), and presigns a PUT URL for each via `@aws-sdk/client-s3` (R2 is S3-API-compatible; this is standard SDK functionality).
 3. **Direct upload.** The client PUTs the photo and its thumbnail straight to R2. Express is not in this path.
 4. **Completion.** The client tells Express "done," and Express enqueues the `pgmq` job.
@@ -300,7 +300,7 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 
 There is no role branch left to unit-test here. There is still a branch in the pre-flight verification check, and that one is worth a test.
 
-**Why the client-side check is not a security hole.** Spec §4.5 has the client compare GPS against cached coordinates on-device so the queue can unlock without connectivity, which matters at venues with bad WiFi. The client is optimistic; the server is the authority. The pre-flight submits the reading, the server re-validates it against the sub-event's stored coordinates, and only the server writes the `VenueVerification` row. Do not let anyone "simplify" this by trusting a client-supplied `verified: true` boolean.
+**Why the client-side check is not a security hole.** Spec §4.5 has the client compare GPS against cached coordinates on-device so the queue can unlock without connectivity, which matters at venues with bad WiFi. The client is optimistic; the server is the authority. The pre-flight submits the reading, the server re-validates it against the sub-event's stored coordinates, and only the server writes the `venue_verification` row. Do not let anyone "simplify" this by trusting a client-supplied `verified: true` boolean.
 
 ---
 
