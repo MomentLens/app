@@ -75,6 +75,9 @@ const resolve = (token) => {
   return hit.length === 1 ? hit[0] : null;
 };
 
+// A mistyped id can be any length; echoing 300 characters of it back is noise.
+const show = (t) => (t.length > 60 ? t.slice(0, 60) + '…' : t);
+
 const near = (t) =>
   !t
     ? []
@@ -190,7 +193,7 @@ verbs.print = (list) => {
       say('');
     } else if (!r) {
       const n = near(t);
-      say(`no chunk matches "${t}".`);
+      say(`no chunk matches "${show(t)}".`);
       if (n.length) out.push(...n);
       else say(`  ids look like: spec §4.11 · hb §7 · arch §3 · D-57 · S-21`);
       say('');
@@ -203,7 +206,7 @@ verbs.slice = ([id]) => {
   const r = resolve(id);
   if (!r || r.ambiguous) {
     const n = near(id);
-    say(`no slice matches "${id}".`);
+    say(`no slice matches "${show(id)}".`);
     if (n.length) out.push(...n);
     else say('  slice ids look like S-01 … S-31 and P0-1 … P0-9. List them: doc toc slices');
     return;
@@ -286,7 +289,7 @@ verbs.toc = ([key]) => {
   const fk = fileKey(key);
   if (!fk)
     return say(
-      `${key ? `unknown file "${key}". ` : ''}Which file? One of: spec hb dlog arch slices`,
+      `${key ? `unknown file "${show(key)}". ` : ''}Which file? One of: spec hb dlog arch slices`,
     );
   const list = Object.values(C).filter((c) => c.file === fk && c.level < 9);
   const rows = Object.values(C).filter((c) => c.file === fk && c.flags.includes('row'));

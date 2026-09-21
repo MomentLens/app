@@ -396,7 +396,14 @@ const citations = (text) => {
         if (s.at - secs[j].at <= 60) hint = secs[j].hint;
         break;
       }
-    out.push({ kind: 'section', surface: s.surface, number: s.number, hint, at: s.at });
+    out.push({
+      kind: 'section',
+      surface: s.surface,
+      number: s.number,
+      hint,
+      at: s.at,
+      explicit: !!s.hint,
+    });
   });
   for (const m of clean.matchAll(/\bD-\d+\b/g))
     out.push({ kind: 'key', surface: m[0], key: m[0], at: m.index });
@@ -491,13 +498,19 @@ export const buildIndex = ({ wide = false } = {}) => {
     }
   }
 
+  // A written-out prefix is an assertion about which document, so it never falls through.
+  // It used to: renumber ARCHITECTURE.md's §3 and every `arch §3` citation silently became
+  // the spec's §3, handing S-12 the event lifecycle where it asked for the R2 key formats,
+  // with a green gate. An inherited prefix is a guess, so that one may still fall back.
   const target = (cit, from) =>
     cit.kind === 'key'
       ? byKey.get(cit.key) || null
-      : [cit.hint, from, 'idea'].reduce(
-          (hit, k) => hit || (k && byNumber[k]?.[cit.number]) || null,
-          null,
-        );
+      : cit.explicit
+        ? byNumber[cit.hint]?.[cit.number] || null
+        : [cit.hint, from, 'idea'].reduce(
+            (hit, k) => hit || (k && byNumber[k]?.[cit.number]) || null,
+            null,
+          );
 
   const lineAt = (text, at, offset) => offset + text.slice(0, at).split('\n').length - 1;
 
