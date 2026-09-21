@@ -52,7 +52,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Reference |
 |---|---|---|
-| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, §11 |
+| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, HB §11 |
 | P0-2 | Server provisioned by `scripts/provision.sh`, nginx, TLS, both systemd units running something trivial | HB §13.3 |
 | P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14.0 Phase 0 |
@@ -60,7 +60,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §18 |
 | P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
 | P0-8 | Sentry free tier on the app and the API | HB §11 |
-| P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, §13.1 |
+| P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, HB §13.1 |
 
 ---
 
@@ -105,7 +105,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, session strip, FAB visibility rule | §4.7, §2.5.4 | B | S-08 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69 | C | S-10 |
-| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, §4.11.1 | U | S-11 |
+| S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, spec §4.11.1 | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72 | U | S-12 |
 | S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5.2, §4.10 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
@@ -134,7 +134,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, §14.5 Phase 5 | U | S-18a, P0-5 |
+| S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, HB §14.5 Phase 5 | U | S-18a, P0-5 |
 | S-19 | **Manual blur box** (fallback rung 3). Build this before S-20 | HB §14.5 | B | S-13 |
 | S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74 | U | S-18 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4, §4.13, D-57, D-60, D-69, D-72 | U | S-20 |
@@ -178,6 +178,41 @@ Testing pass, performance pass, seeded demo dataset, standby rehearsal (D-79), d
 
 ---
 
+# Spec coverage
+
+Every numbered section of `docs/Idea.md` is either cited by a slice above, listed below, or
+listed under "Not in any slice yet". `pnpm docs:check` fails when one is none of those, so a
+spec section cannot exist without someone having decided who builds it. A section nothing
+points at is behaviour nobody is assigned, and an agent asked to build near it invents it.
+
+**Read, not built.** Narrative and reference. Real, but not units of work.
+
+| Section | Why no slice owns it |
+|---|---|
+| spec §0 | What changed in v11. A changelog. |
+| spec §1 | User roles overview. Context for every slice, built by none. |
+| spec §3 | Event lifecycle end to end. The narrative the phases implement. |
+| spec §2.1.5 | Admin journey, post-event. Narrative over slices that already exist. |
+| spec §2.3.2 | Guest journey, pre-event. Same. |
+| spec §2.3.3 | Guest journey, event day. Same. |
+| spec §2.3.4 | Guest journey, post-event. Same. |
+| spec §8 | Known limitations. For the report, not the build. |
+
+**Deferred on purpose.** spec §6.1 is permanently out of scope, spec §6.2 is post-FYP, and
+spec §7 is stretch goals. The spec is locked; new features go to spec §6.2 (D-44).
+
+**Built from the handbook instead.** spec §4.20 is deployment and hosting. The P0 rows build
+it from HB §13, D-76 and D-78, which are current where spec §4.20 is not.
+
+**The one to watch.** spec §5, edge cases and exception handling, has no owner and is about
+1,100 tokens of what the app does when an upload fails, connectivity drops, a join
+duplicates, access is revoked or a face match misses. Its rows belong to a dozen different
+slices, so it is not one unit of work and splitting it is a real decision nobody has made.
+Until then: **read spec §5 before building any error path, and treat a row in it as a
+requirement, not a suggestion.** Root `CLAUDE.md` routes to it.
+
+---
+
 # Not in any slice yet
 
 The spec describes these and no slice above owns them. Fold each into a slice or give it its own before its phase starts.
@@ -186,7 +221,7 @@ The spec describes these and no slice above owns them. Fold each into a slice or
 - Photo soft delete by the uploader, and Admin remove and restore (§2.1.4 Phase D, §4.9, §4.21)
 - Delete and archive event (§4.3, §4.21)
 - The retention job that permanently deletes media from R2 and rows from Postgres (§4.21). No demo beat uses it (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes (`docs/ARCHITECTURE.md` §5)
-- Delay a sub-event (§4.3). Probably S-04; confirm
+- Delay a sub-event (spec §4.3). Probably S-04; confirm
 - The Admin's album open/close toggle itself (§4.9). S-31 covers only the confirm dialog, and beat 9 needs the toggle
 
 ---

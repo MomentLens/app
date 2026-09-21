@@ -8,7 +8,7 @@ Read §1 (stack), §2 (architecture), §8 or §9 (environment setup), and **§18
 
 §18 is not optional reading and it is not last for a reason of importance. It is last because it makes more sense once you know the shape of the system. Read it before you write code, not after, because retrofitting a team policy on AI-generated code three weeks in is much harder than agreeing on one now.
 
-One framing before anything else. Everything here assumes v11's scope. If building this starts taking meaningfully longer than planned, the answer is almost never "work faster." It is "cut more," and spec §6 and §7 already list what is cuttable. Revisit that list before you panic, and revisit it early rather than in April.
+One framing before anything else. Everything here assumes v11's scope. If building this starts taking meaningfully longer than planned, the answer is almost never "work faster." It is "cut more," and spec §6 and spec §7 already list what is cuttable. Revisit that list before you panic, and revisit it early rather than in April.
 
 ---
 
@@ -76,7 +76,7 @@ Four decisions embedded in that diagram, none of them obvious the first time you
 - **The app never talks to R2 or the worker directly for anything that needs a permission check.** It talks to Express, which is the only thing issuing presigned URLs. Express is the single source of truth for "is this request allowed."
 - **Media bytes bypass Express on upload.** The app uploads directly to R2 with a presigned URL. §7 explains why this is deliberate.
 - **The worker never serves live user requests.** It consumes `pgmq` jobs only. FastAPI's HTTP surface is a `/health` endpoint and nothing else. This is what keeps Python's GIL out of your user-facing latency.
-- **Every image request is authorized before it becomes a URL, and there is no exception to that.** The client never constructs a bucket URL. It asks Express for a photo's image; Express checks whether the requester is a Do Not Publish subject in that photo and mints a short-lived presigned R2 URL for the correct pre-generated file (spec §4.11, §4.13). Viewing and downloading use the same endpoint. **Media bytes still never pass through Express**, because the variants already exist in R2 and Express only signs a URL. v3 described an authenticated compositing endpoint here, which would have contradicted the rule two bullets above; D-57 removed it.
+- **Every image request is authorized before it becomes a URL, and there is no exception to that.** The client never constructs a bucket URL. It asks Express for a photo's image; Express checks whether the requester is a Do Not Publish subject in that photo and mints a short-lived presigned R2 URL for the correct pre-generated file (spec §4.11, spec §4.13). Viewing and downloading use the same endpoint. **Media bytes still never pass through Express**, because the variants already exist in R2 and Express only signs a URL. v3 described an authenticated compositing endpoint here, which would have contradicted the rule two bullets above; D-57 removed it.
 
 ---
 

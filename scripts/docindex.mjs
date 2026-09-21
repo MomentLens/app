@@ -207,6 +207,8 @@ const parse = (key, text) => {
   const lines = text.split('\n');
   const { out: heads, open, stray } = headings(lines);
   const chunks = [];
+  // A note header naming a slice that does not exist is a typo that drops the note.
+  const notesBad = [];
 
   for (const h of heads) {
     const title = plain(h.title);
@@ -288,8 +290,11 @@ const parse = (key, text) => {
       chunks.push(c);
     });
 
-    // The file's idiom is a paragraph opening with the slice in bold. Matching anywhere in
-    // the paragraph instead swallows any bullet list that happens to mention one.
+    // All 13 notes in this file are written the same way: the paragraph opens with the id
+    // in bold. Match exactly that, because the looser rule this replaces counted the ids
+    // anywhere on the first line and required there to be only one, so editing a note to
+    // mention a second slice silently detached it from the first.
+    const NOTE = /^\*\*(S-\d+[a-z]?|P0-\d+)\b/;
     const byKey = new Map(rows.map((c) => [c.key, c]));
     let para = null;
     let inBlock = false;
@@ -309,11 +314,11 @@ const parse = (key, text) => {
       // attach as if it were a note.
       if (inBlock) return;
       inBlock = true;
-      if (/^\s*[-*+]\s/.test(line)) return;
-      const named = [...new Set(line.match(/\b(S-\d+[a-z]?|P0-\d+)\b/g) || [])];
-      if (named.length !== 1 || !byKey.has(named[0])) return;
+      const m = line.match(NOTE);
+      if (!m) return;
+      if (!byKey.has(m[1])) return (notesBad.push({ line: i + 1, key: m[1] }), undefined);
       para = { start: i + 1, end: i + 1, lines: [line] };
-      const c = byKey.get(named[0]);
+      const c = byKey.get(m[1]);
       c.attached = c.attached || [];
       c.attached.push(para);
     });
@@ -357,7 +362,7 @@ const parse = (key, text) => {
     c.cites = [];
     c.citedBy = [];
   }
-  return { chunks, open, stray, lines };
+  return { chunks, open, stray, notesBad, lines };
 };
 
 const PREFIXES = Object.entries(FILES).flatMap(([k, c]) => c.prefixes.map((p) => [p, k]));
@@ -415,6 +420,13 @@ export const buildIndex = ({ wide = false } = {}) => {
     const p = parse(key, text);
     docs[key] = { path: posix(cfg.path), ...p };
     byNumber[key] = {};
+    for (const t of p.notesBad)
+      errors.push({
+        code: 'orphan-note',
+        file: posix(cfg.path),
+        line: t.line,
+        msg: `this paragraph opens "**${t.key}" but there is no such slice, so the note reaches no brief`,
+      });
     for (const t of p.stray)
       errors.push({
         code: 'fence-indent',
@@ -536,6 +548,24 @@ export const buildIndex = ({ wide = false } = {}) => {
   const byAlias = {};
   for (const c of chunks.values())
     for (const a of c.aliases) if (!(a in byAlias)) byAlias[a] = c.slug;
+
+  // Every numbered leaf section of the spec is either reachable from a slice or named
+  // somewhere in WorkSlices.md. A section nothing points at is behaviour nobody is assigned
+  // to build, and an agent asked to build around it invents it instead. spec §5, the whole
+  // of the error handling, had zero inbound citations when this check was written.
+  for (const c of chunks.values()) {
+    if (c.file !== 'idea' || !c.number || c.children.length) continue;
+    let seen = false;
+    for (let x = c; x && !seen; x = x.parent ? chunks.get(x.parent) : null)
+      seen = x.citedBy.some((b) => chunks.get(b)?.file === 'slices');
+    if (!seen)
+      errors.push({
+        code: 'uncovered-spec',
+        file: c.path,
+        line: c.line,
+        msg: `nothing in docs/WorkSlices.md points at §${c.number}; give it a slice, or name it under "Spec coverage" and say why not`,
+      });
+  }
 
   const broken = errors.some((e) => e.code === 'unbalanced-fence' || e.code === 'fence-indent');
   return {
