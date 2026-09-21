@@ -39,7 +39,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Dangling citations, unbalanced code fences and duplicate heading slugs in docs/.
+      # Dangling citations, code fences that are unbalanced or indented out of use, a D-nn
+      # heading the parser cannot read, duplicate slugs, section numbers and ids, a note
+      # naming a slice that does not exist, a spec section nothing points at, and a crash in
+      # the brief builder. Retrieval never fails the build; only this does.
       - name: Check docs cross-references
         run: node scripts/doc.mjs check
       - run: pnpm format:check
