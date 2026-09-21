@@ -32,13 +32,18 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 |---|---|
 | A section, a decision, a table | `node scripts/doc.mjs spec §4.11.4 D-57 arch §3` |
 | Everything a slice needs | `node scripts/doc.mjs slice S-21` |
+| A section too large to print, once the brief lists its parts | `node scripts/doc.mjs spec §4.11.4.2` |
 | What breaks if a decision is reopened | `node scripts/doc.mjs why D-57` |
 | Which sections mention a term | `node scripts/doc.mjs grep variant_version` |
 | What is in a doc at all | `node scripts/doc.mjs toc spec` (or `hb`, `dlog`, `arch`, `slices`) |
 
 Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` is a section in
 three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
-large parent gets its children as summaries with their token costs, so you take the one you need.
+large parent gets its children as summaries with their token costs, so you take the one you
+need; a slice brief does the same, so about ten slices need one follow-up command.
+
+A slice brief opens with its phase's own instructions. Those apply to every slice in the phase
+and override the spec sections printed below them.
 
 **Typing ids.** `§` is optional: `doc 4.11.4`, `doc hb:7` and `doc arch:3` work and need no
 special character. `doc 7` alone is refused, because §7 is a section in three of the five docs.

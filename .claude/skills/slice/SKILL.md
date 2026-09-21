@@ -13,10 +13,17 @@ Start slice $ARGUMENTS.
 node scripts/doc.mjs slice $ARGUMENTS
 ```
 
-One command. It prints the slice row with any warning paragraph written about it, then every
-section and decision the row cites. A section over 800 tokens comes back as a menu of its
-subsections with their sizes, so take the one you need. A superseded decision is never
-expanded, only flagged.
+It prints the phase's own instructions, then the slice row with any warning paragraph
+written about it, then every section and decision the row cites. A superseded decision is
+never expanded, only flagged.
+
+**Read the phase paragraph first.** It carries what applies to every slice in the phase and
+to none of them in particular, which is where "build this with the verification check
+disabled, Phase 4 adds the gate" lives. It contradicts the spec sections below it on purpose.
+
+A section over 800 tokens comes back as a menu of its subsections with their sizes and the
+command to read one. For about ten of the 41 slices that means a second command. Run it;
+the menu is not the content.
 
 The brief ends with a line of ids one hop further out. Fetch one only when the brief says
 it matters: `doc D-55`.
@@ -31,10 +38,10 @@ Then, and only then:
 
 If the user attaches a design image, use it for layout only. The spec section decides behavior.
 
-**If `doc.mjs` is unavailable**, `node scripts/doc.mjs toc <file>` is the map when it works,
-and failing that read the sections the slice row cites with `sed -n 'a,bp'`. Do not read a
-whole doc, and do not trust `grep -n '^#'` to find headings; several docs have `#` comments
-inside fenced blocks.
+**If `doc.mjs` is unavailable**, read the sections the slice row cites directly: every one is
+numbered, so `grep -n '^#### 4.11.4' docs/Idea.md` then `sed -n 'a,bp'`. Do not read a whole
+doc, and do not trust `grep -n '^#'` to find headings; `docs/EngineeringHandbook.md:542` is a
+shell comment inside a fenced block. On Windows this needs Git Bash or WSL2.
 
 ## 2. Three stops
 

@@ -23,7 +23,8 @@ const MENU_OVER = 800;
 const argv = process.argv.slice(2).filter((a) => !a.startsWith('-'));
 let index;
 try {
-  index = buildIndex();
+  // Only `why` reports the blast radius, so only `why` pays for the code backlink walk.
+  index = buildIndex({ wide: argv[0] === 'why' });
 } catch (e) {
   // A missing or unreadable doc cannot be recovered from. Say which, never stack-trace.
   // Retrieval exits 0 so a broken doc never fails the caller; the gate exits 1, because
@@ -108,18 +109,19 @@ const say = (l = '') => out.push(l);
 const emit = (c) => {
   const id = c.display || c.slug;
   const flags = c.flags.includes('risk') ? ' · risk accepted' : '';
-  say(`--- ${id} · ${c.path}:${c.span.start}-${c.span.end} · ${c.tokens} tok${flags}`);
+  say(`--- ${id} · ${c.path}:${c.span.start}-${c.span.end} · ~${c.tokens} tok${flags}`);
   if (c.flags.includes('superseded'))
     say(`!!! SUPERSEDED BY ${c.supersededBy}. Do not build from it.`);
   say('');
   if (c.children.length && c.tokens > MENU_OVER) {
     say(body(c, true));
     say('');
-    say(`    ${c.children.length} sections under this one (${c.tokens} tok in total):`);
+    say(`    ${c.children.length} sections under this one (~${c.tokens} tok in total).`);
+    say(`    Read the one you need: doc ${C[c.children[0]].display || C[c.children[0]].slug}`);
     for (const ch of c.children) {
       const k = C[ch];
       say(
-        `      ${String(k.tokens).padStart(5)} tok  ${(k.display || k.slug).padEnd(14)} ${k.abstract}`,
+        `      ~${String(k.tokens).padStart(5)} tok  ${(k.display || k.slug).padEnd(14)} ${k.abstract}`,
       );
     }
     say('');
@@ -178,7 +180,29 @@ verbs.slice = ([id]) => {
   for (const id2 of expand.slice(1))
     for (const n of C[id2].cites) if (!seen.has(n)) (seen.add(n), next.push(n));
 
+  const phase = Object.values(C)
+    .filter(
+      (c) =>
+        c.file === 'slices' &&
+        !c.flags.includes('row') &&
+        c.span.start < slice.span.start &&
+        c.span.end >= slice.span.start,
+    )
+    .sort((a, b) => b.level - a.level || b.span.start - a.span.start)[0];
   let total = 0;
+  if (phase) {
+    const prose = phase.segments[0].text
+      .split('\n')
+      .filter((l) => l.trim() && !/^(#|\||---)/.test(l.trim()))
+      .join('\n');
+    if (prose) {
+      say(`--- ${phase.title} · applies to every slice in this phase`);
+      say('');
+      say(prose);
+      say('');
+      total += Math.ceil(prose.length / 4);
+    }
+  }
   for (const s of expand) total += emit(C[s]);
   for (const s of next.filter((x) => C[x].flags.includes('superseded'))) {
     say(`--- ${C[s].display} NOT EXPANDED`);
