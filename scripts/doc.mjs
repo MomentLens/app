@@ -198,6 +198,8 @@ verbs.print = (list) => {
       const n = near(t);
       say(`no chunk matches "${show(t)}".`);
       if (n.length) out.push(...n);
+      else if (/^[a-z]+$/i.test(t) && list.length > 1)
+        say(`  "${t}" is not a command either. Commands: slice, brief, why, grep, toc, check`);
       else say(`  ids look like: spec §4.11 · hb §7 · arch §3 · D-57 · S-21`);
       say('');
     } else emit(C[r]);
@@ -238,6 +240,11 @@ verbs.slice = ([id]) => {
   out.unshift(`=== slice ${slice.key || id} · ${expand.length} sections · ~${total} tok ===`, '');
   say(`one hop out: ${next.map((s) => C[s].display || s).join(' ')}`);
 };
+
+// Every document calls the output a brief, so `doc brief S-21` is what someone types. It
+// used to fall through to print, which returned the one-line row and none of the sections,
+// looking like a successful retrieval.
+verbs.brief = verbs.slice;
 
 verbs.why = ([id]) => {
   if (!id) return say('which decision? e.g. doc why D-57');

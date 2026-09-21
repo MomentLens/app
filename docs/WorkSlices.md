@@ -57,7 +57,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14.0 Phase 0 |
 | P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it on the x86-64 server | HB §14.0 Phase 0 |
-| P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §18 |
+| P0-6 | Figma tokens into `apps/mobile/tailwind.config.js`. Naming convention is settled: singular snake_case tables (`docs/ARCHITECTURE.md` §2). `docs/ARCHITECTURE.md` is owned by Ukasha (D-75) | HB §15, arch §2 |
 | P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
 | P0-8 | Sentry free tier on the app and the API | HB §11 |
 | P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, HB §13.1 |
@@ -107,7 +107,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
 | S-12 | Pre-flight endpoint, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73 | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72 | U | S-12 |
-| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5.2, §4.10, D-22, D-55, HB §4, HB §16 | B | S-12, S-18a |
+| S-13 | Home/Album: grid, sub-event chips, People/Uploader filter, Realtime | §4.9, §2.5.2, §4.10, D-22, D-55, D-60, HB §4, HB §16 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69).
@@ -138,7 +138,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-19 | **Manual blur box** (fallback rung 3). Build this before S-20 | HB §14.5 | B | S-13 |
 | S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, arch §6 | U | S-18 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-27, D-30, D-65, arch §3, arch §6 | U | S-20 |
-| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4.2, D-77 | B | S-21 |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4.2, D-77, D-60, HB §4 | B | S-21 |
 | S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §4.10, D-74 | C | S-20 |
 | S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §6 | C | S-22, S-23 |
 | S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, arch §3 | U | S-21 |
@@ -166,7 +166,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10 | U | S-21 |
 | S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5.9, D-35, D-56 | B | S-01 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
-| S-31 | Formalized screens, consent screens, album open/close confirm dialog, hard-coded limits | §2.5.8, §4.18, §4.9, §4.17, D-33 | B | S-08 |
+| S-31 | Formalized screens, consent screens, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, hard-coded limits | §2.5.8, §4.18, §4.9, §4.17, D-33 | B | S-08 |
 
 **S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later.
 
@@ -239,7 +239,6 @@ The spec describes these and no slice above owns them. Fold each into a slice or
 - Delete and archive event (§4.3, §4.21)
 - The retention job that permanently deletes media from R2 and rows from Postgres (§4.21). No demo beat uses it (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes (`docs/ARCHITECTURE.md` §5)
 - Delay a sub-event (spec §4.3). Probably S-04; confirm
-- The Admin's album open/close toggle itself (§4.9). S-31 covers only the confirm dialog, and beat 9 needs the toggle
 
 ---
 
