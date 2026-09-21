@@ -14,7 +14,11 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const readDoc = (rel) => {
   const abs = join(root, ...rel.split('/'));
   try {
-    return readFileSync(abs, 'utf8');
+    // Line endings are normalised here and nowhere else. A stray \r reaching the fence
+    // regex disables fence tracking for the whole file and the gate still passes.
+    return readFileSync(abs, 'utf8')
+      .split(/\r\n|\r/)
+      .join('\n');
   } catch {
     throw new Error(`cannot read ${rel}. Expected it at ${abs}.`);
   }
@@ -40,7 +44,16 @@ export const FILES = {
 // Scanned for citations so `doc why` reports the whole blast radius. Not chunked.
 // Code counts: apps/api/eslint.config.mjs bans sharp and jimp citing D-57, and reopening
 // D-57 means changing that rule. Listing only the CLAUDE.md files missed it.
-const SOURCE_DIRS = ['apps', 'worker', 'scripts', 'supabase', '.github', '.claude'];
+const SOURCE_DIRS = [
+  'apps',
+  'packages',
+  'worker',
+  'e2e',
+  'scripts',
+  'supabase',
+  '.github',
+  '.claude',
+];
 const SOURCE_EXT = /\.(ts|tsx|js|mjs|cjs|py|sh|sql|md|ya?ml)$/;
 const SKIP = new Set(['node_modules', 'dist', 'build', '.venv', '.expo', 'coverage', 'docs']);
 
@@ -82,12 +95,12 @@ const sources = (wide) =>
       ]
     : [...GATED];
 
-const FENCE = /^\s{0,3}(`{3,}|~{3,})(.*)$/;
+const FENCE = /^([ \t]*)(`{3,}|~{3,})(.*)$/;
 const HEADING = /^(#{1,6})\s+(.*?)\s*$/;
 const D_HEAD = /^(D-\d+)\s*[—:–-]\s*(.+)$/; // 68 entries use an em dash, 12 a colon
 const NUMBERED = /^(\d+(?:\.\d+)*)\.?\s+(.+)$/;
 const ROW = /^\|\s*\*{0,2}(S-\d+[a-z]?|P0-\d+)\*{0,2}\s*\|\s*(.+?)\s*\|/;
-const ABSTRACT = /<!--\s*abstract:\s*([\s\S]*?)-->/;
+const ABSTRACT = /^[ \t]*<!--\s*abstract:\s*([\s\S]*?)-->/m;
 
 // GitHub's anchor algorithm. "2.5 Navigation & screen architecture" becomes
 // "25-navigation--screen-architecture", double hyphen included, which is what Idea.md's
@@ -120,7 +133,9 @@ const plain = (t) =>
 // "§4.8 Stage 1" reading as a sentence end, which starts the summary mid-word at "8 Stage 1".
 const sentence = (text, min = 40) => {
   const flat = text.replace(/\s+/g, ' ').trim();
-  const guarded = flat.replace(/(\d)\.(\d)/g, '$1\u0000$2');
+  // A period with no space after it never ends a sentence: 4.11, health_check.sql, e.g.
+  // Guarding only decimals left `arch/health_check` summarised as "... not a feature table. sql."
+  const guarded = flat.replace(/\.(?=[A-Za-z0-9])/g, '\u0000');
   let out = '';
   for (const m of guarded.matchAll(/[^.!?]*[.!?]+(?:\s|$)/g)) {
     out += m[0];
@@ -132,12 +147,6 @@ const sentence = (text, min = 40) => {
 
 // Headings, with fence state respected. EngineeringHandbook.md has a shell comment inside a
 // fenced block that `grep -n '^#'` reads as an H1.
-// A bare fence marker indented four or more spaces is content, not a fence. Indenting a
-// closer (what happens when a code block is moved into a list item) flips every fence pair
-// after it, so real headings vanish and lines inside code become headings. The symptom is
-// a page of dangling citations that name no fence, which nobody can diagnose.
-const STRAY_FENCE = /^(\s{4,})(`{3,}|~{3,})\s*$/;
-
 const headings = (lines) => {
   const out = [];
   const stray = [];
@@ -145,20 +154,25 @@ const headings = (lines) => {
   lines.forEach((line, i) => {
     const f = line.match(FENCE);
     if (f) {
-      const mark = f[1][0];
-      const len = f[1].length;
+      const indent = f[1].length;
+      const mark = f[2][0];
+      const len = f[2].length;
+      // Four spaces turn a fence into code. Inside an open block a shorter run is ordinary
+      // content, which is how a ``` example sits inside a ````markdown block. Anything else
+      // is a fence someone indented by accident, and it reshapes the document in silence:
+      // an indented opener leaves every `#` in the block looking like a heading.
+      if (indent > 3) {
+        if (fence === null || (mark === fence.mark && len >= fence.len))
+          stray.push({ line: i + 1, indent, openedAt: fence && fence.line });
+        return;
+      }
       // A closer is the same character, at least as long, and carries no info string.
-      // ````markdown wrapping a ```bash block is how anyone documents this tool, and a
-      // three-long closer ending a four-long opener silently truncates the section.
+      // A three-long closer ending a four-long opener silently truncates the section.
       if (fence === null) fence = { mark, len, line: i + 1 };
-      else if (mark === fence.mark && len >= fence.len && !f[2].trim()) fence = null;
+      else if (mark === fence.mark && len >= fence.len && !f[3].trim()) fence = null;
       return;
     }
-    if (fence !== null) {
-      const t = line.match(STRAY_FENCE);
-      if (t) stray.push({ line: i + 1, indent: t[1].length, openedAt: fence.line });
-      return;
-    }
+    if (fence !== null) return;
     const h = line.match(HEADING);
     if (h) out.push({ level: h[1].length, title: h[2], line: i + 1 });
   });
@@ -169,7 +183,7 @@ const headings = (lines) => {
 const abstractOf = (c) => {
   const body = c.selfBody;
   const explicit = body.match(ABSTRACT);
-  if (explicit) return [explicit[1].replace(/\s+/g, ' ').trim(), 'explicit'];
+  if (explicit?.[1].trim()) return [explicit[1].replace(/\s+/g, ' ').trim(), 'explicit'];
   if (c.file === 'dlog') {
     const d = body.match(/^\*\*Decision\.\*\*\s*(.+)$/m);
     if (d) return [sentence(plain(d[1])), 'decision'];
@@ -348,7 +362,7 @@ const parse = (key, text) => {
 
 const PREFIXES = Object.entries(FILES).flatMap(([k, c]) => c.prefixes.map((p) => [p, k]));
 const SECTION = new RegExp(
-  `(?:\`?(${PREFIXES.map(([p]) => p.replace(/\./g, '\\.')).join('|')})\`?\\s*)?§(\\d+(?:\\.\\d+)*)`,
+  `(?:\`?\\b(${PREFIXES.map(([p]) => p.replace(/\./g, '\\.')).join('|')})\`?\\s*)?§(\\d+(?:\\.\\d+)*)`,
   // Case-insensitive: `handbook §7` silently resolved to the spec's §7, because the
   // prefix missed and the bare number fell through to the default document.
   'gi',
@@ -356,8 +370,10 @@ const SECTION = new RegExp(
 
 // "Handbook §5 and §7" elides the prefix on the second citation. A bare §n inherits the
 // nearest qualified one within 60 characters, then falls back to its own file, then the spec.
-// 26 citations rely on that fallback, so it is convention, not a guess, and the gate does not
-// flag it. The limit: "Handbook §5, plus §2 of the spec" still binds §2 to the handbook.
+// 289 of the 397 § citations in docs/ carry no prefix and resolve by that fallback, so it is
+// convention, not a guess, and the gate does not flag it. 26 of those name a number that
+// exists in more than one document. The limit: in "Handbook §5, plus §2 of the spec" the bare
+// §2 inherits `hb` from six words earlier and the trailing qualifier is not read.
 const citations = (text) => {
   const clean = text;
   const out = [];
@@ -404,14 +420,16 @@ export const buildIndex = ({ wide = false } = {}) => {
         code: 'fence-indent',
         file: posix(cfg.path),
         line: t.line,
-        msg: `this fence is indented ${t.indent} spaces, so it is code and does not close the block opened at line ${t.openedAt}; unindent it`,
+        msg: t.openedAt
+          ? `this fence is indented ${t.indent} spaces, so it is code and does not close the block opened at line ${t.openedAt}; unindent it`
+          : `this fence is indented ${t.indent} spaces, so it opens a block the parser cannot see and every # below it reads as a heading; unindent it`,
       });
     if (p.open)
       errors.push({
         code: 'unbalanced-fence',
         file: posix(cfg.path),
         line: p.open.line,
-        msg: `the ${p.open.mark.repeat(p.open.len)} fence opened here never closes; a closing fence indented four spaces is code, not a fence`,
+        msg: `the ${p.open.mark.repeat(p.open.len)} fence opened here never closes`,
       });
 
     const seenSlug = new Map();
@@ -519,11 +537,11 @@ export const buildIndex = ({ wide = false } = {}) => {
   for (const c of chunks.values())
     for (const a of c.aliases) if (!(a in byAlias)) byAlias[a] = c.slug;
 
-  const fences = errors.filter((e) => e.code === 'unbalanced-fence' || e.code === 'fence-indent');
+  const broken = errors.some((e) => e.code === 'unbalanced-fence' || e.code === 'fence-indent');
   return {
     chunks: Object.fromEntries(chunks),
     byAlias,
-    errors: fences.length ? fences : errors,
+    errors: broken ? errors.filter((e) => e.code !== 'dangling-citation') : errors,
     stats: {
       chunks: chunks.size,
       citations: [...chunks.values()].reduce((n, c) => n + c.citedBy.length, 0),

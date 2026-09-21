@@ -46,10 +46,11 @@ need; a slice brief does the same, so about ten slices need one follow-up comman
 A slice brief opens with its phase's own instructions. Those apply to every slice in the phase
 and override the spec sections printed below them.
 
-Loading a slice by hand costs 66% more than `doc slice` even when you already know every
-section number, counting tool calls as well as text, and it silently drops the phase
-paragraph, the warning paragraph and the superseded flags. `docs/WorkSlices.md` has the
-measurement. Use the command.
+Use the command. On tokens it is close: measured over all 41 slices it is 12% cheaper than
+hand retrieval by someone who already knows every section number, and more expensive on 31
+of them taken one at a time. It wins on the things a token count does not show: half the
+tool calls, and it carries the phase paragraph, the warning paragraph and the superseded
+flags that hand retrieval drops in silence. `docs/WorkSlices.md` has the measurement.
 
 **Typing ids.** `§` is optional: `doc 4.11.4`, `doc hb:7` and `doc arch:3` work and need no
 special character. `doc 7` alone is refused, because §7 is a section in three of the five docs.

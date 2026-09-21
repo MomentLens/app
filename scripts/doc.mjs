@@ -121,7 +121,7 @@ const emit = (c) => {
     for (const ch of c.children) {
       const k = C[ch];
       say(
-        `      ~${String(k.tokens).padStart(5)} tok  ${(k.display || k.slug).padEnd(14)} ${k.abstract}`,
+        `      ~${String(k.tokens).padStart(5)} tok  ${(k.display || k.slug).padEnd(14)} ${gist(k)}`,
       );
     }
     say('');
@@ -155,6 +155,11 @@ const phaseProse = (phase) =>
 
 const menued = (c) => c.children.length > 0 && c.tokens > MENU_OVER;
 
+// What a chunk costs to read through this tool: a menued parent charges only its preamble.
+const cost = (c) => (menued(c) ? c.selfTokens : c.tokens);
+const gist = (c) =>
+  c.flags.includes('superseded') ? `SUPERSEDED BY ${c.supersededBy}. ${c.abstract}` : c.abstract;
+
 const plan = (slice) => {
   const expand = [slice.slug];
   const next = [];
@@ -170,9 +175,8 @@ const plan = (slice) => {
   for (const id of expand.slice(1))
     for (const n of C[id].cites) if (!seen.has(n)) (seen.add(n), next.push(n));
   const prose = phaseProse(phaseOf(slice));
-  const cost =
-    tokens(prose) + expand.reduce((n, s) => n + (menued(C[s]) ? C[s].selfTokens : C[s].tokens), 0);
-  return { expand, next, prose, cost, menus: expand.filter((s) => menued(C[s])).length };
+  const total = tokens(prose) + expand.reduce((n, s) => n + cost(C[s]), 0);
+  return { expand, next, prose, cost: total, menus: expand.filter((s) => menued(C[s])).length };
 };
 
 const verbs = {};
@@ -256,14 +260,22 @@ verbs.grep = (list) => {
   if (term.length > 200) return say(`that term is ${term.length} characters. Try a shorter one.`);
   const re = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
   const hits = Object.values(C)
-    .map((c) => ({ c, n: (body(c, true).match(re) || []).length }))
+    .map((c) => ({
+      c,
+      n: (
+        c.segments
+          .map((s) => s.text)
+          .join('\n')
+          .match(re) || []
+      ).length,
+    }))
     .filter((h) => h.n)
     .sort((a, b) => b.n - a.n);
   say(`=== grep ${term} · ${hits.length} sections ===`);
   say('');
   for (const { c, n } of hits) {
     say(
-      `${String(n).padStart(3)}x  ${(c.display || c.slug).padEnd(16)} ${String(c.selfTokens).padStart(5)} tok  ${c.path}:${c.selfSpan.start}`,
+      `${String(n).padStart(3)}x  ${(c.display || c.slug).padEnd(16)} ~${String(cost(c)).padStart(5)} tok  ${c.path}:${c.selfSpan.start}`,
     );
     say(`      ${c.abstract}`);
   }
@@ -285,7 +297,7 @@ verbs.toc = ([key]) => {
   say('');
   for (const c of list) {
     const pad = '  '.repeat(Math.max(0, Math.min(c.level, 5) - 1));
-    const sum = c.abstract !== c.title ? `  ${c.abstract}` : '';
+    const sum = c.abstract !== c.title || c.flags.includes('superseded') ? `  ${gist(c)}` : '';
     say(
       `${String(c.tokens).padStart(6)} tok  ${pad}${(c.display || '').padEnd(12)} ${c.title}${sum}`.slice(
         0,
@@ -314,7 +326,22 @@ verbs.toc = ([key]) => {
 };
 
 verbs.check = () => {
-  const e = index.errors;
+  const e = [...index.errors];
+  // Parsing clean is not the same as working. Build every brief, because the gate runs on
+  // every markdown commit and a crash in the slice path is invisible to a parse check.
+  for (const c of Object.values(C)) {
+    if (!c.flags.includes('row')) continue;
+    try {
+      plan(c);
+    } catch (err) {
+      e.push({
+        code: 'brief-fails',
+        file: c.path,
+        line: c.span.start,
+        msg: `${c.key}: ${err.message}`,
+      });
+    }
+  }
   if (e.length) {
     console.log(`docs:check FAILED, ${e.length} error(s)`);
     for (const x of e) console.log(`  ${x.code}  ${x.file}:${x.line}  ${x.msg}`);

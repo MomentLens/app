@@ -596,6 +596,8 @@ Add the on-device GPS check, the server-side re-validation, the queue gate, the 
 
 ### 14.5 Phase 5 — the AI worker and face blur
 
+<!-- abstract: Build order for the worker: start on thumbnail_dims to prove the pgmq round trip, retire it in the same PR that turns on face_process, then detection, embedding, the blur pipeline and the serving endpoint, whose negative test is written first. -->
+
 **The warm-up job changed, because D-58 deleted the old one.** v3 started this phase with the `variant` job, which no longer exists. Start instead with a **thumbnail-and-dimensions job**, which D-72 moved into Phase 3 so it already exists by now: consume from `pgmq`, open the file from R2, write `width` and `height` onto the media row, write the 300px WebP if the client's upload failed to include one, bump `variant_version`, set `processed_at`. No ML, real output, and it proves the whole `pgmq` round trip plus the two rules that everything else depends on: `processed_at` written last (D-55) and the version bumped on every write (D-60). If those two are right here, they will be right in the job that matters.
 
 **Retire it in the same PR that turns on `face_process`** (D-72). Once Do Not Publish users exist, `thumbnail_dims` is a publishing bug. It sets `processed_at` without blurring anything, and if it runs on the same upload as `face_process` it can publish the photo first or point the public keys back at the unblurred upload afterwards.
