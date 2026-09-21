@@ -60,13 +60,16 @@ const resolve = (token) => {
   const scoped = t.match(/^([\w.]+):(.+)$/);
   const key = scoped && fileKey(scoped[1]);
   if (key) {
-    const hit = Object.values(C).find((c) => c.file === key && c.number === num(scoped[2]));
+    const want = num(scoped[2]);
+    const hit = Object.values(C).find(
+      (c) => c.file === key && (c.number === want || c.slug === `${key}/${want}`),
+    );
     if (hit) return hit.slug;
   }
   if (Object.hasOwn(C, t)) return t;
   if (Object.hasOwn(index.byAlias, t)) return index.byAlias[t];
-  const up = t.toUpperCase();
-  if (Object.hasOwn(index.byAlias, up)) return index.byAlias[up];
+  const low = t.toLowerCase();
+  if (Object.hasOwn(index.byAlias, low)) return index.byAlias[low];
   // A structured id must match exactly. `D-8` is not a short form of `D-80`, it is a typo,
   // and resolving it silently is the failure this tool exists to remove. Free text like
   // `dnp` still matches on prefix, because there it is a search, not an id.
