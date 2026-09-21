@@ -13,17 +13,19 @@ Start slice $ARGUMENTS.
 node scripts/doc.mjs slice $ARGUMENTS
 ```
 
-It prints the phase's own instructions, then the slice row with any warning paragraph
-written about it, then every section and decision the row cites. A superseded decision is
-never expanded, only flagged.
+It prints the phase's instructions where that phase has any, then the slice row with any
+warning paragraph written about it, then every section and decision the row cites. A
+superseded decision is never expanded, only flagged.
 
-**Read the phase paragraph first.** It carries what applies to every slice in the phase and
-to none of them in particular, which is where "build this with the verification check
-disabled, Phase 4 adds the gate" lives. It contradicts the spec sections below it on purpose.
+**Read the phase paragraph first** when there is one. It carries what applies to every slice
+in the phase and to none of them in particular, which is where "build this with the
+verification check disabled, Phase 4 adds the gate" lives. It contradicts the spec sections
+below it on purpose. Phases 1, 4 and 6 have no such paragraph, so 11 briefs print none.
 
-A section over 800 tokens comes back as a menu of its subsections with their sizes and the
-command to read one. For about ten of the 41 slices that means a second command. Run it;
-the menu is not the content.
+A section over 800 tokens that has subsections comes back as a menu of them with their sizes
+and the command to read one. For 8 of the 41 slices that means a second command. Run it; the
+menu is not the content. A section over 800 tokens with no subsections prints in full, so a
+brief can be large without any menu in it.
 
 The brief ends with a line of ids one hop further out. Fetch one only when the brief says
 it matters: `doc D-55`.

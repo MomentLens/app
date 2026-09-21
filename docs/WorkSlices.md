@@ -233,29 +233,41 @@ a negative authorization test for every endpoint.
 
 # How to load a slice, and what it costs
 
-**Use `node scripts/doc.mjs slice <id>`. Measured against hand retrieval, it wins on all 41
-slices.** `doc toc slices` lists every slice with what its brief costs, so you can see the
-price before you pay it.
+**Use `node scripts/doc.mjs slice <id>`.** `doc toc slices` lists every slice with what its
+brief costs, so you can see the price before you pay it.
 
-The numbers, measured with a real tokenizer over all 41 slices, counting the tool-call
-framing as well as the text, against two hand baselines fetching the same content:
+Measured over all 41 slices with a real tokenizer, counting the tool-call framing as well as
+the text. A Bash call costs 90 to 112 tokens of envelope and command before any output, so the
+number of calls matters as much as the size of them.
 
 | Loading all 41 slices | Tokens | Tool calls |
 |---|---|---|
-| `doc slice` | 64,000 | 41 |
-| By hand, knowing every section number, one batched command per document | 106,000 | 136 |
-| By hand, listing headings first, then reading each section | 158,000 | 286 |
+| `doc slice`, plus a second command for the 8 slices that get a menu | 66,000 | 49 |
+| By hand, knowing every section number, one batched command per document | 75,000 | 105 |
+| By hand, also fetching the phase paragraph and the dependency rows the brief carries | 100,000 | 146 |
+| By hand, listing headings first, then reading each section | 145,000 | 218 |
 
-Hand retrieval costs 66% more even when the operator already knows where everything is, and
-about a third of that gap is the tool calls themselves rather than the text. It also silently
-omits three things the brief always carries: the phase paragraph above the table, the warning
-paragraph written under it, and the flag on a superseded decision.
+**Read the second row honestly: in aggregate the tool is 12% cheaper, and on 31 of the 41
+slices it is more expensive**, usually by 50 to 300 tokens. Every brief carries a phase
+paragraph, a `--- id · file:lines · ~N tok` line per section, the rows of the slices it depends
+on, and a trailing list of ids one hop out. On a small slice that fixed scaffolding is a large
+fraction. The aggregate win comes from the handful of large slices where a cited section is too
+big to print and the menu saves thousands.
 
-**The one case where it is close.** When a slice cites a section too large to print, the brief
-lists its parts and you read one more (`+` in `doc toc slices`). That is cheaper unless the
-slice needs nearly every part, which is true only of S-08, where reading §2.5 whole costs about
-4% less. Not worth thinking about. If a slice is marked `+` and you find yourself reading every
-part, narrow its citation in the table instead; that is what happened to S-16 and S-17.
+So the case for the command is not the token count. It is:
+
+1. **Half the tool calls**, which is latency and failure surface, not only tokens.
+2. **Three things hand retrieval drops without telling you**: the phase paragraph above the
+   table, which contradicts the spec sections below it on purpose; the warning paragraph
+   written under the table; and the refusal to expand a decision that has been superseded.
+3. **The hand baseline above assumes you already know every section number.** The recipe
+   someone actually falls back to costs 145,000, more than twice the command.
+
+**The menu rule.** When `doc toc slices` marks a slice `+`, a section it cites is too large to
+print, so the brief lists the parts with their sizes and you read one. That is cheaper than
+printing the parent unless you need nearly all of it. If you find yourself fetching most of the
+parts, the citation in the table is too wide; narrow it there instead. That is what S-16 and
+S-17 got wrong and now get right.
 
 ---
 
