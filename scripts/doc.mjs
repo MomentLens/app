@@ -12,7 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildIndex, FILES } from './docindex.mjs';
+import { buildIndex, FILES, tokens } from './docindex.mjs';
 
 // Anchored to this file, not the shell's directory, so `node ../../scripts/doc.mjs D-57`
 // works from anywhere in the repo.
@@ -132,6 +132,49 @@ const emit = (c) => {
   return c.tokens;
 };
 
+// A slice row sits under a phase heading but is not its child, since rows are found after
+// the heading tree is built. Locate it by span.
+const phaseOf = (slice) =>
+  Object.values(C)
+    .filter(
+      (c) =>
+        c.file === 'slices' &&
+        !c.flags.includes('row') &&
+        c.span.start < slice.span.start &&
+        c.span.end >= slice.span.start,
+    )
+    .sort((a, b) => b.level - a.level || b.span.start - a.span.start)[0];
+
+const phaseProse = (phase) =>
+  !phase
+    ? ''
+    : phase.segments[0].text
+        .split('\n')
+        .filter((l) => l.trim() && !/^(#|\||---)/.test(l.trim()))
+        .join('\n');
+
+const menued = (c) => c.children.length > 0 && c.tokens > MENU_OVER;
+
+const plan = (slice) => {
+  const expand = [slice.slug];
+  const next = [];
+  const seen = new Set([slice.slug]);
+  for (const id of slice.cites) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    // Never expand a retracted decision into a brief. D-45 reaches S-21 through D-57,
+    // the slice holding the image-serving authorization check.
+    if (C[id].flags.includes('superseded')) next.push(id);
+    else expand.push(id);
+  }
+  for (const id of expand.slice(1))
+    for (const n of C[id].cites) if (!seen.has(n)) (seen.add(n), next.push(n));
+  const prose = phaseProse(phaseOf(slice));
+  const cost =
+    tokens(prose) + expand.reduce((n, s) => n + (menued(C[s]) ? C[s].selfTokens : C[s].tokens), 0);
+  return { expand, next, prose, cost, menus: expand.filter((s) => menued(C[s])).length };
+};
+
 const verbs = {};
 
 verbs.print = (list) => {
@@ -166,42 +209,14 @@ verbs.slice = ([id]) => {
     const d = slice.display || r;
     return say(`${d} is not a slice. To read it: doc ${d}. To list the slices: doc toc slices`);
   }
-  const expand = [r];
-  const next = [];
-  const seen = new Set([r]);
-  for (const id2 of slice.cites) {
-    if (seen.has(id2)) continue;
-    seen.add(id2);
-    // Never expand a retracted decision into a brief. D-45 reaches S-21 through D-57,
-    // the slice holding the image-serving authorization check.
-    if (C[id2].flags.includes('superseded')) next.push(id2);
-    else expand.push(id2);
-  }
-  for (const id2 of expand.slice(1))
-    for (const n of C[id2].cites) if (!seen.has(n)) (seen.add(n), next.push(n));
-
-  const phase = Object.values(C)
-    .filter(
-      (c) =>
-        c.file === 'slices' &&
-        !c.flags.includes('row') &&
-        c.span.start < slice.span.start &&
-        c.span.end >= slice.span.start,
-    )
-    .sort((a, b) => b.level - a.level || b.span.start - a.span.start)[0];
+  const { expand, next, prose } = plan(slice);
   let total = 0;
-  if (phase) {
-    const prose = phase.segments[0].text
-      .split('\n')
-      .filter((l) => l.trim() && !/^(#|\||---)/.test(l.trim()))
-      .join('\n');
-    if (prose) {
-      say(`--- ${phase.title} · applies to every slice in this phase`);
-      say('');
-      say(prose);
-      say('');
-      total += Math.ceil(prose.length / 4);
-    }
+  if (prose) {
+    say(`--- ${phaseOf(slice).title} · applies to every slice in this phase`);
+    say('');
+    say(prose);
+    say('');
+    total += tokens(prose);
   }
   for (const s of expand) total += emit(C[s]);
   for (const s of next.filter((x) => C[x].flags.includes('superseded'))) {
@@ -262,7 +277,11 @@ verbs.toc = ([key]) => {
       `${key ? `unknown file "${key}". ` : ''}Which file? One of: spec hb dlog arch slices`,
     );
   const list = Object.values(C).filter((c) => c.file === fk && c.level < 9);
-  say(`=== toc ${FILES[fk].label || fk} · ${list.length} sections · ${FILES[fk].path} ===`);
+  const rows = Object.values(C).filter((c) => c.file === fk && c.flags.includes('row'));
+  const n = rows.length
+    ? `${list.length} sections, ${rows.length} slices`
+    : `${list.length} sections`;
+  say(`=== toc ${FILES[fk].label || fk} · ${n} · ${FILES[fk].path} ===`);
   say('');
   for (const c of list) {
     const pad = '  '.repeat(Math.max(0, Math.min(c.level, 5) - 1));
@@ -271,6 +290,24 @@ verbs.toc = ([key]) => {
       `${String(c.tokens).padStart(6)} tok  ${pad}${(c.display || '').padEnd(12)} ${c.title}${sum}`.slice(
         0,
         160,
+      ),
+    );
+  }
+  // The slices are the point of this file, and what matters about one before you start is
+  // what its brief costs. Derived, so it cannot disagree with the brief.
+  if (!rows.length) return;
+  say('');
+  say(`    what \`doc slice <id>\` costs. + means a cited section is too large to print,`);
+  say(`    so the brief lists its parts and you read one more:`);
+  let phase = null;
+  for (const r of rows) {
+    const p = phaseOf(r);
+    if (p && p !== phase) (say(''), say(`    ${p.title}`), (phase = p));
+    const { cost, menus } = plan(r);
+    say(
+      `      ~${String(cost).padStart(5)} tok${menus ? ' +' : '  '} ${(r.key || '').padEnd(6)} ${r.title}`.slice(
+        0,
+        150,
       ),
     );
   }

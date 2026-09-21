@@ -121,8 +121,8 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-15 | On-device GPS check, server re-validation, queue gate, `VenueVerification` | §4.5, §4.14, §4.10 | U | S-12 |
-| S-16 | Venue QR: per-sub-event generation, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5 | C | S-15 |
-| S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5 | B | S-15, S-06 |
+| S-16 | Venue QR: per-sub-event generation, print view, Scan tab, **offline scan record** | §4.5, §4.14, §2.5.1 | C | S-15 |
+| S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3 | B | S-15, S-06 |
 
 **S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Say that in the handoff.
 
@@ -228,6 +228,34 @@ a negative authorization test for every endpoint.
 **Why the two stops.** You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines, and you learn the reasoning, which is what you need in June 2027 when an examiner points at a function (HB §18).
 
 **Why the Figma frame goes last.** An image at the top of a session dominates everything after it, and the agent designs from the picture and backfills the logic. Constraints first, picture last.
+
+---
+
+# How to load a slice, and what it costs
+
+**Use `node scripts/doc.mjs slice <id>`. Measured against hand retrieval, it wins on all 41
+slices.** `doc toc slices` lists every slice with what its brief costs, so you can see the
+price before you pay it.
+
+The numbers, measured with a real tokenizer over all 41 slices, counting the tool-call
+framing as well as the text, against two hand baselines fetching the same content:
+
+| Loading all 41 slices | Tokens | Tool calls |
+|---|---|---|
+| `doc slice` | 64,000 | 41 |
+| By hand, knowing every section number, one batched command per document | 106,000 | 136 |
+| By hand, listing headings first, then reading each section | 158,000 | 286 |
+
+Hand retrieval costs 66% more even when the operator already knows where everything is, and
+about a third of that gap is the tool calls themselves rather than the text. It also silently
+omits three things the brief always carries: the phase paragraph above the table, the warning
+paragraph written under it, and the flag on a superseded decision.
+
+**The one case where it is close.** When a slice cites a section too large to print, the brief
+lists its parts and you read one more (`+` in `doc toc slices`). That is cheaper unless the
+slice needs nearly every part, which is true only of S-08, where reading §2.5 whole costs about
+4% less. Not worth thinking about. If a slice is marked `+` and you find yourself reading every
+part, narrow its citation in the table instead; that is what happened to S-16 and S-17.
 
 ---
 

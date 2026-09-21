@@ -36,6 +36,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | What breaks if a decision is reopened | `node scripts/doc.mjs why D-57` |
 | Which sections mention a term | `node scripts/doc.mjs grep variant_version` |
 | What is in a doc at all | `node scripts/doc.mjs toc spec` (or `hb`, `dlog`, `arch`, `slices`) |
+| Every slice and what its brief costs | `node scripts/doc.mjs toc slices` |
 
 Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` is a section in
 three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
@@ -44,6 +45,11 @@ need; a slice brief does the same, so about ten slices need one follow-up comman
 
 A slice brief opens with its phase's own instructions. Those apply to every slice in the phase
 and override the spec sections printed below them.
+
+Loading a slice by hand costs 66% more than `doc slice` even when you already know every
+section number, counting tool calls as well as text, and it silently drops the phase
+paragraph, the warning paragraph and the superseded flags. `docs/WorkSlices.md` has the
+measurement. Use the command.
 
 **Typing ids.** `§` is optional: `doc 4.11.4`, `doc hb:7` and `doc arch:3` work and need no
 special character. `doc 7` alone is refused, because §7 is a section in three of the five docs.
