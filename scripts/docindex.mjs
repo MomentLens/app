@@ -223,7 +223,7 @@ const parse = (key, text) => {
       c.number = n[1];
       c.title = n[2];
       c.aliases.push(`§${n[1]}`);
-      if (cfg.prefixes[0]) c.aliases.push(`${cfg.prefixes[0]} §${n[1]}`);
+      for (const pre of cfg.prefixes) c.aliases.push(`${pre} §${n[1]}`);
     }
     c.slug = `${key}/${slug(h.title)}`;
     chunks.push(c);
@@ -560,7 +560,11 @@ export const buildIndex = ({ wide = false } = {}) => {
 
   const byAlias = {};
   for (const c of chunks.values())
-    for (const a of c.aliases) if (!(a in byAlias)) byAlias[a] = c.slug;
+    for (const a of c.aliases) {
+      if (!(a in byAlias)) byAlias[a] = c.slug;
+      const low = a.toLowerCase();
+      if (!(low in byAlias)) byAlias[low] = c.slug;
+    }
 
   // Every numbered leaf section of the spec is either reachable from a slice or named
   // somewhere in WorkSlices.md. A section nothing points at is behaviour nobody is assigned
