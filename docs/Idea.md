@@ -552,7 +552,7 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - Compute a **SHA-256 hash of the exact byte stream about to be uploaded**, after EXIF stripping and HEIC conversion. v10 hashed the re-encoded 300px thumbnail, which is not reproducible: WebP encoders differ across iOS, Android and library versions, so the same photo would hash differently on two devices and deduplication would have caught almost nothing.
 
 #### 4.8.2 Stage 2 — pre-flight
-- A single small JSON round-trip: content hash, album ID, sub-event ID, and the GPS reading captured with the photo. No image bytes travel in it, the thumbnail included (D-69).
+- A single small JSON round-trip: content hash, sub-event ID, and the GPS reading captured with the photo. There is no album id; media belongs to an event through its sub-event (`docs/ARCHITECTURE.md` §2). No image bytes travel in it, the thumbnail included (D-69).
 - **Exact duplicate** (identical SHA-256) is silently rejected, with no upload and no user-facing prompt. This is one indexed lookup, not a distance computation. There is no near-duplicate detection of any kind; anything that isn't byte-identical after processing uploads.
 - **Verification check**: `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role = 'photographer')`. If it fails, the upload is rejected and the photo waits in the local queue.
 - If both checks pass, Express names the upload keys and issues presigned R2 upload URLs for the photo and its thumbnail (D-70).
