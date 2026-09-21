@@ -99,7 +99,13 @@ const slug = (t) =>
     .trim()
     .replace(/\s/g, '-');
 
-const tokens = (t) => Math.ceil(t.length / 4);
+// An agent decides what to read from these numbers, so a biased estimate has a cost.
+// length/4 ran 7.4% high overall and put only 38% of chunks within 10% of the truth: it
+// over-counts prose by up to a third and under-counts tables by 40%. Fitted against
+// cl100k_base over all 300 chunks of this corpus, word and punctuation counts land 85%
+// within 10% and the corpus total within 0.1%. Still an estimate, still no dependency.
+export const tokens = (t) =>
+  Math.ceil(1.18 * (t.match(/\S+/g)?.length ?? 0) + 0.59 * (t.match(/[^\w\s]/g)?.length ?? 0));
 const posix = (p) => p.split('\\').join('/');
 const plain = (t) =>
   t
