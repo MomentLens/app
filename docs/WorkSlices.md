@@ -236,12 +236,14 @@ TanStack Query for server state, Zustand for UI state only, expo-sqlite for
 the upload queue. NativeWind v4 tokens, no hardcoded hex. No localStorage or
 AsyncStorage anywhere. No Node APIs in the app.
 
-Order of work: follow sections 2 to 4 of .claude/skills/slice/SKILL.md
-exactly, the same steps the /slice command runs.
+Order of work: follow sections 2 to 5 of .claude/skills/slice/SKILL.md
+exactly, the same stages the /slice command runs, each in a fresh session
+that starts from the slice card in the issue (Handbook §18.8).
 1. Read the slice back: the seven items in section 2, every one required.
-   Stop. I will either say go or fix the docs first.
+   Stop. I will either say go or fix the docs first. Then write the card.
 2. Write the zod schema alone and open it as its own PR. Stop until I merge it.
-3. Build it in the order your read-back set out, each negative test first.
+3. Build it in the order the card sets out, each negative test first.
+4. Report every Definition of done item with its evidence.
 
 The docs are a draft, not a contract. If two sections disagree or one cannot
 work, say so instead of picking one. The numbered invariants in CLAUDE.md and

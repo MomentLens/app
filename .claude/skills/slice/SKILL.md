@@ -1,18 +1,31 @@
 ---
 name: slice
 description: Start a MomentLens work slice (S-XX or P0-X) from docs/WorkSlices.md, reading only the doc sections that slice cites.
-argument-hint: S-XX
+argument-hint: S-XX [schema|build|done]
 disable-model-invocation: true
 ---
 
-Start slice $ARGUMENTS.
+Run slice work for: $ARGUMENTS
 
-These steps are the same for every developer and every agent. An agent tool that cannot run skills follows this file through the handoff template in `docs/WorkSlices.md`.
+The first word is the slice id. A second word picks the stage; with none, the stage is the read-back.
+
+| Stage | Command | Runs sections | Ends at |
+|---|---|---|---|
+| Read-back | `/slice S-12` | 1, 2 | the slice card written to the issue |
+| Schema | `/slice S-12 schema` | 3 | the schema PR merged |
+| Build | `/slice S-12 build` | 4 | the slice PR opened |
+| Done | `/slice S-12 done` | 5 | every Definition of done item reported |
+
+**Each stage starts in a fresh session** (`/clear`). The only thing carried from one stage to the next is the slice card in the slice's GitHub issue, which a person approved. Never carry a stage's conversation into the next one (Handbook §18.8).
+
+These steps are the same for every developer and every agent. An agent tool that cannot run skills or subagents follows this file through the handoff template in `docs/WorkSlices.md`, doing the subagents' work itself.
+
+Find the slice's issue once and reuse its number: `gh issue list --state all --search "<id> in:title" --json number,title,state`, the one whose title starts with `<id>:`.
 
 ## 1. Load the slice, not the docs
 
 ```
-node scripts/doc.mjs slice $ARGUMENTS
+node scripts/doc.mjs slice <id>
 ```
 
 It prints the phase's instructions where that phase has any, then the slice row with any warning paragraph written about it, then every section and decision the row cites, then the rows of the slices it depends on. A superseded or void decision is never expanded, only flagged.
@@ -36,6 +49,8 @@ If the user attaches a design image, use it for layout only. The spec section de
 ## 2. Read the slice back before anything else
 
 **Write nothing until this is done and the user has answered it.** Not a schema, not a file, not a test. This step exists to find what the docs get wrong about *this* slice while it is still cheap.
+
+**Delegate the hunt.** Start two subagents at once: `slice-auditor` with the slice id, which does items 4 and 5 below in its own context and returns findings, gaps, what it checked and the decisions needed; and the built-in `Explore` agent, asked what already exists in the code for each interface in the "Depends on" column, answering with paths and exported names only. Write items 1 to 3 while they run. Use their reports for items 3 to 7, and check any finding you pass on against the ids it cites.
 
 This is an audit, not a summary. Do not open by praising the docs or restating the brief. Short sentences, complete lists: every item below is required, and "none" is only an answer if you say what you checked to reach it.
 
@@ -66,13 +81,27 @@ Produce these seven, in this order:
 
 Then **stop**. The user either says go or fixes the docs for this slice and the ones it depends on first.
 
+**When the user has answered**, write the slice card into the issue's "Slice card" section with `gh issue edit <n> --body-file`, following the template there. It holds ids and paths, never copied doc text, and stays under about 900 tokens. Doc fixes the read-back turned up go in their own docs PR. Then tell the user this stage is finished and the next is `/slice <id> schema` in a fresh session.
+
 **The docs are a draft, not a contract.** They are written by the same agents that read them, and every review of them so far has found something wrong. If two sections disagree, or one describes something that cannot work, say so in step 5 and propose the wording. Do not bend the build to match a document, and do not invent a reading that makes a contradiction go away. Two things are different in kind: the numbered invariants in root `CLAUDE.md` and the entries in `docs/DecisionLog.md` are decisions, not descriptions. Those you raise and the team rules on; you do not quietly build the other thing. `docs/ARCHITECTURE.md` wins over the spec and the handbook when they disagree (D-75), and it has been wrong too, so say when it is the one that looks wrong.
 
-## 3. Two stops after that
+## 3. Schema
 
-1. **The schema.** Write the zod schemas for this slice in `packages/shared-types` and nothing else: every request, response and error shape the slice's endpoints use. Open it as its own PR titled `<id>: schema`. Stop. Nothing else gets written until the user has reviewed and merged it.
-2. **The build**, in the order the read-back set out. Write each negative test before the handler it tests and run it once to watch it fail, so it is known to test something. A test that has never failed has not been shown to catch anything.
+Load the card: `gh issue view <n> --json body`. Read `packages/shared-types`. Write the zod schemas the card's "Produces" line names, and nothing else: every request, response and error shape the slice's endpoints use. Run `pnpm typecheck`. Open it as its own PR titled `<id>: schema`. Stop. Nothing else gets written until the user has reviewed and merged it.
 
-## 4. Done
+## 4. Build
 
-Go through the Definition of done in `docs/WorkSlices.md` item by item. For each one say met or not met, with the evidence: the test name and file, the command and its result, or the reason it does not apply. If `docs/ARCHITECTURE.md` needs an update, say which section and what changes. Do not describe a slice as done while an item is unmet. The PR description names which of the four human-read surfaces the slice touches, or says it touches none.
+Load the card, and confirm the schema PR has merged. Then, for each package in the card's build order, one at a time, since they share a working tree:
+
+1. Run `slice-implementer` with the slice id, the package and the full card. It writes each negative test first, watches it fail, then builds.
+2. Run `slice-verifier` with the slice id, the packages touched so far, and the card's invariant numbers and negative tests.
+3. If the verifier reports a failure, pass the failing excerpt to a new `slice-implementer` call. After two failed rounds on the same failure, stop and ask the user; a third attempt means context is missing (Handbook §18.2).
+4. When the verifier is clean, commit that package's work in small conventional commits.
+
+A `BLOCKED` item from any subagent goes to the user as a question. Never answer it yourself. A card that turns out wrong goes back to the user too; fix the card in the issue before building on the fix.
+
+If the card says the slice touches the camera, GPS or the upload queue, ask the user to run it on a physical phone and report back before the PR. Then open the PR titled `<id>: <name>`, naming the human-read surfaces the verifier listed.
+
+## 5. Done
+
+Run `slice-verifier` once more against the whole branch. Then go through the Definition of done in `docs/WorkSlices.md` item by item. For each one say met or not met, with the evidence: the test name and file, the command and its result, or the reason it does not apply. If `docs/ARCHITECTURE.md` needs an update, say which section and what changes; Ukasha reviews it (D-75). Do not describe a slice as done while an item is unmet. The PR description names which of the four human-read surfaces the slice touches, or says it touches none.
