@@ -7,7 +7,7 @@ Every entry records a decision, the reasoning behind it, and **what was rejected
 
 Each entry has a **Reopen if** line. That is not permission to reopen casually. It is the specific condition that would make revisiting rational. If that condition has not occurred, the decision stands and the discussion is over.
 
-**Rules for this file.** Append, do not rewrite. If a decision is reversed, add a new entry that supersedes the old one and mark the old one, rather than editing history. When you make a decision that is not here, add it the same day, while you still remember the alternative you rejected.
+**Rules for this file.** Append, do not rewrite. If a decision is reversed, add a new entry that supersedes the old one and mark the old one, rather than editing history. When you make a decision that is not here, add it the same day, while you still remember the alternative you rejected. New entries are headed `### D-nn: Title`. Mark a retired one by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading, the only two forms `doc` masks (Handbook §18.7).
 
 **Superseded and void entries keep their text.** The heading says which entry replaced them, and `doc` never expands one into a brief. Their reasoning is still worth reading, because the reason a decision stopped applying is itself an answer in a viva.
 
