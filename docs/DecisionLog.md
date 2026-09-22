@@ -9,7 +9,7 @@ Each entry has a **Reopen if** line. That is not permission to reopen casually. 
 
 **Rules for this file.** Append, do not rewrite. If a decision is reversed, add a new entry that supersedes the old one and mark the old one, rather than editing history. When you make a decision that is not here, add it the same day, while you still remember the alternative you rejected.
 
-**Section J was added when the resolution log was applied to spec v11.** D-06, D-11, D-28 and D-48 are marked superseded in place; their text is intact and their reasoning is still worth reading, because the reason a decision stopped applying is itself an answer in a viva.
+**Superseded and void entries keep their text.** The heading says which entry replaced them, and `doc` never expands one into a brief. Their reasoning is still worth reading, because the reason a decision stopped applying is itself an answer in a viva.
 
 Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these cold before your defense; they are the most likely questions.
 
@@ -171,6 +171,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** The concern that drove this was real: without a check, anyone could blur the bride out of every photo. But a genuine missed match lands in the middle similarity band, while someone maliciously blurring another person scores near zero against their own references. Those are not close numbers, and separating them is one cosine comparison against data the system already has.
 **Rejected.** Routing every manual blur to the Admin. That fills the queue with legitimate corrections he has to rubber-stamp, which is the same "Admin juggling a queue during the event" problem that D-07 rejected a staging pool over.
 **Cost.** It contradicts v9.1's rule that no AI uncertainty is ever routed to a human. That rule was rewritten deliberately, not violated by accident.
+**Amended (see D-83).** A tap on a face already matched to another Do Not Publish subject is refused, because applying it would show the requester that face unblurred.
 
 ### D-24 — The blur applies immediately and the Admin reverts, rather than approving first
 **Decision.** A queued blur request is already applied while it waits. The Admin's actions are Confirm and Revert, not Approve and Reject.
@@ -255,7 +256,9 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 
 # H. Infrastructure
 
-### D-38 — One Oracle Always Free ARM instance, no provider rotation
+### D-38 — One Oracle Always Free ARM instance, no provider rotation ~~(SUPERSEDED by D-78)~~
+> **Superseded.** Both halves were reversed. D-78 moved development and the demo to a Netcup server, and D-79 made the rotation this entry rejected into the standby plan. The reasons below were correct for a free-tier plan.
+
 **Decision.** A single `VM.Standard.A1.Flex` in Singapore, permanently. One team member's Azure student credit held completely untouched as a standby for demo week.
 **Why.** Of the four options considered, three were not what they appeared. AWS "xLarge" is not a free-tier shape at all. GCP's c2-standard-4 burns a $300 credit in under three months, and the credit expires on the calendar rather than on use. Azure B2ms consumes $100 of student credit in about six weeks. Oracle is the only permanently free option, and even after its allowance was halved to 2 OCPUs and 12 GB in mid-2026, it beats the others on cost by an unbounded margin.
 **Rejected.** The rotation plan, where the team burns each member's credits in turn. Every migration means a new IP, DNS, TLS certificates, secrets, firewall rules, and a fresh install, for a team that has never done it once. Three rotations is a week of buffer spent on infrastructure, and the Supabase keep-alive cron lives on the box that keeps moving.
@@ -274,6 +277,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** Resident in memory, never lazy-loaded per job.
 **Why.** This matters more than which cloud provider was chosen. Inference on a 2048px photo is roughly one to two seconds; a cold model load is several seconds. Lazy loading is the single most likely reason the demo would feel slow, and it is entirely avoidable.
 **Related.** Run one worker process on a 2-core box, not two. The second core belongs to Express, Postgres connections, and nginx.
+**Amended (see D-78).** The server has four cores. One worker process still holds (`docs/ARCHITECTURE.md` §5). How many ONNX Runtime threads it runs is measured on the server, not carried over from the 2-core reasoning.
 
 ### D-41 — React Native over Flutter
 **Decision.** React Native with Expo.
@@ -336,7 +340,7 @@ Two constraints settled a third of these before any of them were argued individu
 ### D-49 — No real event is ever covered; the dataset is ~100 seeded photos
 **Decision.** Development and the demo run on roughly 100 photos at 1 to 3MB each, under 500MB against a 10GB R2 budget.
 **Why.** This is a project to defend, not a product to operate. Stating it plainly stops the team from paying design cost for scale it will never see.
-**What this killed outright.** R2 storage pressure. The retention-of-photographer-originals problem. The worker-backlog argument against generating extra variants. Rate limiting as a build item (D-63).
+**What this killed outright.** R2 storage pressure. The retention-of-photographer-originals problem. The worker-backlog argument against generating extra variants. Rate limiting as a build item (D-64).
 **Cost.** ⚠ Anything justified by scale is now unjustified, which cuts both ways: several v10 decisions that read as prudent were prudent about a constraint that does not exist. Do not reintroduce one by reflex.
 **Reopen if.** Someone decides to cover a real wedding. Nobody has.
 
@@ -359,6 +363,7 @@ Two constraints settled a third of these before any of them were argued individu
 Three reasons for this side of it. It matches what the feature is for, since a user without Do Not Publish has nothing to correct. It collapses the abuse surface, because an attacker must first permanently and irreversibly blur their own face across every event they will ever join. And combined with D-56 it removes the undefined case where a requester has no reference set to compare against.
 **Rejected.** Leaving it open to everyone, which is the more permissive reading and the one that makes "what stops a malicious guest" a harder question than it needs to be.
 **Cost.** Demo beat 7 now needs a second pre-configured account with Do Not Publish enabled. One line on the pre-demo checklist.
+**Amended (see D-83).** Beat 7's second account aims at a face nobody has blurred, such as the Admin's. Aimed at the first subject's face, the tap is refused.
 
 ### D-53 — Hash the bytes being uploaded, not a re-encoded thumbnail
 **Decision.** SHA-256 over the exact byte stream the client is about to PUT, after EXIF stripping and HEIC conversion.
@@ -379,6 +384,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Decision.** Activation is blocked unless the user has at least one reference photo or a profile photo.
 **Why.** Spec v10 made both optional and gated activation on a checkbox, so a user could complete a permanent, irreversible privacy action, see a static "Active" badge, and be protected against nobody, because the pipeline had no vector to match on. This is the same class of bug as D-34, where "Private mode" wrote to the camera roll: a name that promises something the mechanism does not do.
 **Rejected.** Activating anyway and prompting for references afterwards, which leaves a window where the badge lies.
+**Amended (see D-87).** "A reference" means a curated `face_reference` row, which exists only once the worker has found a face, and the last one cannot be deleted while Do Not Publish is active.
 
 ### D-57 — Personalized variants replace the crop-and-overlay design ⚠
 **Decision.** For a photo with N Do Not Publish subjects the worker writes N+1 files: one public with every subject blurred, and one per subject with only that subject clear. One serving endpoint checks whether the requester is a subject and mints a presigned R2 URL for the correct file. Viewing and downloading use the same mechanism.
@@ -386,6 +392,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Rejected.** Keeping the crops, which win decisively on storage at 5 to 20KB against a full file, and lose on everything else. D-49 made storage irrelevant, which is what let this trade flip.
 **Also rejected.** Compositing on the client with `react-native-view-shot`, which is the cheapest possible fix for downloads alone and does nothing about the overlay or the `dnp_crop` policy.
 **Cost.** ⚠ The subject's own views lose CDN caching, which affects one to three people per event. Mitigated with a one-hour presigned URL lifetime and an explicit `expo-image` cache key.
+**Amended (see D-86).** The cache key is the signed object key plus `variant_version`, returned by the endpoint, so two accounts on one phone never share a cached file.
 **Enables.** D-59.
 
 ### D-58 — No client-side resize, with a 4096px guard
@@ -573,18 +580,56 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Cost.** One more stop before every slice, and the owner has to read it. That is the trade: one round of reading against a class of silent bug that has appeared in every audit so far. The read-back is also where the docs stop being a thing to be defended, which is a real change in posture for a corpus this heavily cross-referenced.
 **Reopen if.** Three consecutive read-backs turn up nothing worth fixing, which would mean the corpus has converged and the stop is pure overhead.
 
+---
+
+# O. Found in the whole-corpus audit (2026-09-23)
+
+Six gaps, each of which would have failed without an error. Written by the audit and listed for Ukasha's veto.
+
+### D-82: Pre-flight resumes a crashed upload and enforces every upload rule the API owns
+**Decision.** Pre-flight checks, in order: the caller is an active member, the event is not deleted and the album is open; then the hash; then, for a new row, the 2,000-photo cap and verification. A row with the same hash that the same caller created and never completed is not a duplicate: pre-flight re-signs PUT URLs for its existing keys, and a resumed upload skips the cap and verification it already passed. `media.uploaded_at` marks completion. The completion call sets it only while it is null and enqueues the job in the same transaction, so a retried completion enqueues nothing.
+**Why.** Pre-flight inserts the media row, hash included, before any byte reaches R2. An app killed between pre-flight and completion retries on the next launch, the dedup lookup finds its own unfinished row, and the photo is rejected as a duplicate with no prompt. The queue marks it done and the row never gets processed. That is the upload queue's state machine losing a photo with no error (D-68). Separately, album state (D-12), membership and the upload cap were enforced only in the app, and D-73 puts every rule in the API.
+**Rejected.** Inserting the row at completion, which breaks D-70, because the upload keys go onto the row before the PUT URLs are signed. Asking R2 whether the object exists, which puts a network call inside the endpoint that must stay cheap.
+**Cost.** The album-open check blocks every upload until an Admin opens the album, and the toggle only arrives in S-31. S-12 builds the check switched off and S-31 turns it on, as Phase 3 does with the verification gate.
+
+### D-83: Tap-to-blur never claims a face that belongs to another Do Not Publish subject
+**Decision.** Amends D-23 and D-52. The affordance renders only on faces that are unblurred in the requester's own view. `manual_blur` refuses, writing nothing, a face already matched to a different subject with Do Not Publish active. `reprocess` leaves `match_source = manual` faces as they are; only a revert clears one.
+**Why.** `face.matched_subject_id` holds one subject. If requester B claims a face matched to subject A, the worker regenerates B's variant with that face clear, and B sees a face Do Not Publish hides from everyone. D-27's guarantee fails the moment the request applies, before any Admin sees it, and demo beat 7 as written did exactly this. Separately, a `reprocess` that re-matches every face drops every manual match, because a manual match exists only where the automatic score fell below the threshold.
+**Rejected.** Relying on the Admin's Revert, which leaves A exposed to B until the Admin acts. Allowing two subjects per face, which breaks N+1 (D-57) for a case no honest request produces.
+
+### D-84: Joining an event re-matches the new member's references
+**Decision.** When a subject with references becomes an active member of an event, by auto-approve or by an Admin's approval, the API enqueues `reprocess` for that subject in that event.
+**Why.** `face_process` matches against the subjects who are active members at the moment a photo is processed (D-74). A Do Not Publish user who joins after photos were uploaded stays unblurred in all of them, and nothing reruns the match. The same gap leaves Find My Photos missing every photo taken before the user joined.
+**Rejected.** Matching against every subject in the system, which D-74 and spec §4.11.4.5 scope to event members on purpose.
+**Cost.** One enqueue on each join path. The job is milliseconds of cosine comparison (D-66).
+
+### D-85: A Venue QR verifies the sub-event running at its venue when it was scanned
+**Decision.** The QR payload carries the venue and its `qr_secret`, never a sub-event. The device stores the scan time with the payload. At pre-flight the API checks the secret and writes a `venue_verification` row for the sub-event at that venue that was In Progress at the scan time, by spec §4.3's rule. A scan while nothing at that venue was In Progress verifies nothing.
+**Why.** `docs/ARCHITECTURE.md` §2 prints one QR per venue, shared by every sub-event there. Spec §2.5.1 said the payload names a sub-event, and D-15 makes verification per sub-event. With one QR per venue and no time rule, a scan at the mehndi would verify the nikkah held in the same hall, which is the case D-15 rejected.
+**Rejected.** One QR per sub-event, which puts near-identical posters on one wall and leaves the Guest to pick the right one. Verifying every sub-event at the venue, which is simpler and breaks D-15.
+**Cost.** The scan time comes from the device clock, so a modified client can choose it. The gate was never a security boundary (D-16).
+
+### D-86: The image cache key is the signed object key plus `variant_version`
+**Decision.** Amends D-57's cache-key mitigation. The serving endpoint returns, with each presigned URL, a cache key built from the object key it signed and the row's `variant_version`, and a flag saying whether the file is the requester's own variant. `expo-image` caches under that key, and the flag drives the self-visible marker. Logging out clears the image disk cache. The endpoint takes a batch of media ids, so a grid page costs one request.
+**Why.** A key of media id plus version is the same for the public file and a subject's variant. On a shared phone, and the demo hands team phones around (D-61), the next account to log in would get the subject's unblurred variant from the disk cache. An object key names one file whose bytes never change (D-60), so it cannot hand one viewer another's file. The app also had no way to know when to draw the marker, since it never learns who the subjects are.
+**Rejected.** Caching by URL, which rotates every hour and defeats the cache. Deriving the marker on the client, which needs subject identity the client must not have (root invariant 4).
+
+### D-87: Do Not Publish always keeps a reference to match on
+**Decision.** Amends D-56. Activation counts curated `face_reference` rows, and the worker writes one only for a photo in which it found a face, so an uploaded photo that has not been processed yet, or has no usable face, does not unlock activation. While Do Not Publish is active, the API refuses to delete the last curated reference. `is_curated` is a generated column over `source`.
+**Why.** D-56 blocked activation without a reference, and nothing stopped the user deleting every reference afterwards, which puts the badge back to reading "Active" while it protects nobody. "Has a reference photo", the spec's wording, was also true before `reference_process` ran and when the photo held no face. And an `is_curated` written separately from `source` can be true on an auto-added row, which then feeds the abuse check (root invariant 6).
+**Rejected.** Allowing the deletion behind a warning, which is the failure D-56 exists to prevent.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
 
-- **Similarity thresholds.** The numbers in the spec are placeholders. They must be measured on roughly 30 real photos of the team in varied lighting before Phase 5 ends, and the measured values plus the date recorded in `docs/ARCHITECTURE.md`. Shipping an example number is how the blur silently fails in a demo. Related and equally unsettled: those 30 photos are three people, so the thresholds are overfitted to the demo set. That is fine to do and must be volunteered rather than extracted.
+- **Similarity thresholds.** Not measured; the plan and the table are `docs/ARCHITECTURE.md` §6. Shipping an example number is how the blur silently fails in a demo.
 - **`buffalo_l` versus `buffalo_s`.** Decide with a measurement, on the Netcup server, since D-78 makes it the demo runtime.
-- ~~Whether `insightface` compiles on aarch64.~~ **Settled on 2026-09-15.** InsightFace 2.0 installs as pure Python and ran on an ARM64 server and on the M1. The Phase 0 spike still has to be rerun on the x86-64 server (D-78).
 - **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
-- ~~Who owns `docs/ARCHITECTURE.md`.~~ **Settled by D-75.** Ukasha owns it; agents write it.
-- **Whether the standby actually works.** D-79 defines it. `scripts/provision.sh` exists and the DNS record is written down, but the standby is not real until the script has been run against a real VM on one of the three credits. Half a day in Phase 7.
-- ~~The demo-week fallback.~~ **Settled by D-79.** The rotated standby replaces the arrangement D-78 ended, and counts once the Phase 7 rehearsal has run it.
-- **The feature-complete date.** The plan is to build fast, harden afterwards, and hold a month of buffer. That buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Two things that plan gets wrong and that the team should settle before relying on it. AI velocity does almost nothing for the parts that actually consume months: the viewfinder, background upload, the SQLite queue's state machine, deep links, push certificates, and RLS, all of which fail at device and configuration boundaries rather than in code, with a debug loop that is manual and one device at a time. And "harden later" is false for anything with a shape, including D-60's version column, D-63's schema split, D-54's curated flag and D-55's visibility predicate; get those wrong and it is a migration against live rows, not a refactor.
-- ~~Whether D-45 survives contact with generated code volume.~~ **Settled by D-68.** Comprehension moves to the Phase 7 month; a named list of dangerous surfaces still gets read before merging.
+- **Whether the standby actually works.** D-79 defines it. It is not real until `scripts/provision.sh` has run against a real VM on one of the three credits. Half a day in Phase 7.
+- **What S-19's manual blur box does.** Handbook §14.5 makes it the bottom rung of the fallback ladder and no spec section describes it. Undecided: who may draw a box, which files it blurs (the public file and every variant, or the public file only), and where the box is stored. It has to be stored, or the next `reprocess` regenerates the files from the upload and the face comes back. Settle before Phase 5.
+- **Which GPS reading a gallery import carries.** Spec §4.5 sends the reading taken at capture time, and a photo added through "+ Add Media" was not captured by the app. The candidates are the photo's own EXIF location, read before the strip, or the device's reading when the photo is added, which fails for anyone importing from home. A guest already verified for that sub-event passes either way. Settle before S-15.
+- **Whether a Public capture is also saved to the phone's gallery.** Spec §4.12 keeps Local Only captures out of the gallery and says nothing about Public ones. Settle before S-09.
+- **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
