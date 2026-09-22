@@ -145,8 +145,8 @@ const sentence = (text, min = 40) => {
   return out.length > 220 ? out.slice(0, 217).trimEnd() + '...' : out;
 };
 
-// Headings, with fence state respected. EngineeringHandbook.md has a shell comment inside a
-// fenced block that `grep -n '^#'` reads as an H1.
+// Headings, with fence state respected. A shell comment inside a fenced block is exactly what
+// `grep -n '^#'` reads as an H1.
 const headings = (lines) => {
   const out = [];
   const stray = [];
@@ -284,6 +284,11 @@ const parse = (key, text) => {
         selfTokens: tokens(line),
         children: [],
         notes: [],
+        // The "Depends on" cell, the fifth. A brief prints these rows in full; a slice that a
+        // row or note merely mentions goes one hop out. Phase 0's three-column table has none.
+        deps: [...(line.split('|')[5] ?? '').matchAll(/\b(S-\d+[a-z]?|P0-\d+)\b/g)].map(
+          (d) => d[1],
+        ),
         segments: [{ text: line, from: i + 1 }],
       };
       rows.push(c);
@@ -351,9 +356,13 @@ const parse = (key, text) => {
     const [abstract, source] = abstractOf(c);
     c.abstract = abstract;
     c.abstractSource = source;
-    if (/SUPERSEDED by (D-\d+)/i.test(c.title)) {
+    // A void entry is retired as surely as a superseded one. D-48's heading says "VOID, see
+    // D-58", which this used to miss, so D-48 printed with no warning and could be expanded.
+    const retired = c.title.match(/\b(SUPERSEDED by|VOID, see) (D-\d+)/i);
+    if (retired) {
       c.flags.push('superseded');
-      c.supersededBy = c.title.match(/SUPERSEDED by (D-\d+)/i)[1];
+      c.supersededBy = retired[2];
+      c.retiredAs = /^void/i.test(retired[1]) ? 'VOID, SEE' : 'SUPERSEDED BY';
     }
     if (c.title.includes('⚠')) c.flags.push('risk');
     c.path = posix(cfg.path);

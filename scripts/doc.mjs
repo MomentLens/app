@@ -20,7 +20,9 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Past this a parent prints its own preamble and a menu of children instead of the subtree.
 const MENU_OVER = 800;
 
-const argv = process.argv.slice(2).filter((a) => !a.startsWith('-'));
+// Only the `--` a package runner inserts is dropped. Dropping every word that starts with a
+// dash also dropped the term in `doc grep --skip-worker` and reported that no term was given.
+const argv = process.argv.slice(2).filter((a) => a !== '--');
 let index;
 try {
   // Only `why` reports the blast radius, so only `why` pays for the code backlink walk.
@@ -35,15 +37,17 @@ try {
 const C = index.chunks;
 const num = (s) => (s ?? '').toLowerCase().replace(/^[§#]/, '');
 
-// "doc arch §3" arrives as two words. Rejoin a file label with the section that follows it.
+// "doc arch §3" arrives as two words. Rejoin a file label with the section that follows it,
+// with or without the §: `doc hb 7` used to search for "hb", then refuse a bare 7 as
+// ambiguous. Not for grep, where "spec 4" is a phrase to search for.
 const LABEL = new Map();
 for (const [k, f] of Object.entries(FILES))
   for (const n of [k, f.label, ...f.prefixes]) if (n) LABEL.set(n.toLowerCase(), k);
 const fileKey = (s) => LABEL.get((s ?? '').toLowerCase().trim());
 const args = [];
 for (let i = 0; i < argv.length; i++) {
-  if (fileKey(argv[i]) && /^§/.test(argv[i + 1] || ''))
-    (args.push(`${argv[i]} ${argv[i + 1]}`), i++);
+  const sec = (argv[i + 1] || '').match(/^§?(\d+(?:\.\d+)*)$/);
+  if (argv[0] !== 'grep' && fileKey(argv[i]) && sec) (args.push(`${argv[i]} §${sec[1]}`), i++);
   else args.push(argv[i]);
 }
 
@@ -92,7 +96,8 @@ const near = (t) =>
 const files = new Map();
 const read = (path, a, b) => {
   if (!files.has(path))
-    files.set(path, readFileSync(join(root, ...path.split('/')), 'utf8').split('\n'));
+    // Split the way docindex.mjs does, or a CRLF working copy puts a \r on every line.
+    files.set(path, readFileSync(join(root, ...path.split('/')), 'utf8').split(/\r\n|\r|\n/));
   return files
     .get(path)
     .slice(a - 1, b)
@@ -112,30 +117,29 @@ const say = (l = '') => out.push(l);
 
 // Prints a chunk. A large parent gives its preamble and a menu, so nobody pays 3,600 tokens
 // for an answer that lives in 300.
-const emit = (c) => {
+const emit = (c, put = say) => {
   const id = c.display || c.slug;
   const flags = c.flags.includes('risk') ? ' · risk accepted' : '';
-  say(`--- ${id} · ${c.path}:${c.span.start}-${c.span.end} · ~${c.tokens} tok${flags}`);
+  put(`--- ${id} · ${c.path}:${c.span.start}-${c.span.end} · ~${c.tokens} tok${flags}`);
   if (c.flags.includes('superseded'))
-    say(`!!! SUPERSEDED BY ${c.supersededBy}. Do not build from it.`);
-  say('');
-  if (c.children.length && c.tokens > MENU_OVER) {
-    say(body(c, true));
-    say('');
-    say(`    ${c.children.length} sections under this one (~${c.tokens} tok in total).`);
-    say(`    Read the one you need: doc ${C[c.children[0]].display || C[c.children[0]].slug}`);
+    put(`!!! ${c.retiredAs} ${c.supersededBy}. Do not build from it.`);
+  put('');
+  if (menued(c)) {
+    put(body(c, true));
+    put('');
+    put(`    ${c.children.length} sections under this one (~${c.tokens} tok in total).`);
+    put(`    Read the one you need: doc ${C[c.children[0]].display || C[c.children[0]].slug}`);
     for (const ch of c.children) {
       const k = C[ch];
-      say(
+      put(
         `      ~${String(k.tokens).padStart(5)} tok  ${(k.display || k.slug).padEnd(14)} ${gist(k)}`,
       );
     }
-    say('');
-    return c.selfTokens;
+    put('');
+    return;
   }
-  say(body(c));
-  say('');
-  return c.tokens;
+  put(body(c));
+  put('');
 };
 
 // A slice row sits under a phase heading but is not its child, since rows are found after
@@ -159,12 +163,15 @@ const phaseProse = (phase) =>
         .filter((l) => l.trim() && !/^(#|\||---)/.test(l.trim()))
         .join('\n');
 
-const menued = (c) => c.children.length > 0 && c.tokens > MENU_OVER;
+// A menu of one child is not a choice: the reader fetches that child every time. arch §1 is
+// one child, the "who may see what" table, and 80 more tokens would have hidden it from the
+// three slices that cite it.
+const menued = (c) => c.children.length > 1 && c.tokens > MENU_OVER;
 
 // What a chunk costs to read through this tool: a menued parent charges only its preamble.
 const cost = (c) => (menued(c) ? c.selfTokens : c.tokens);
 const gist = (c) =>
-  c.flags.includes('superseded') ? `SUPERSEDED BY ${c.supersededBy}. ${c.abstract}` : c.abstract;
+  c.flags.includes('superseded') ? `${c.retiredAs} ${c.supersededBy}. ${c.abstract}` : c.abstract;
 
 const plan = (slice) => {
   const expand = [slice.slug];
@@ -176,13 +183,48 @@ const plan = (slice) => {
     // Never expand a retracted decision into a brief. D-45 reaches S-21 through D-57,
     // the slice holding the image-serving authorization check.
     if (C[id].flags.includes('superseded')) next.push(id);
+    // A brief carries the rows of the slices it depends on. S-25's note names S-03, S-07
+    // and S-24 as places it touches, and printing those rows and their notes cost 235
+    // tokens of other slices' warnings.
+    else if (C[id].flags.includes('row') && !slice.deps.includes(C[id].key)) next.push(id);
     else expand.push(id);
   }
   for (const id of expand.slice(1))
     for (const n of C[id].cites) if (!seen.has(n)) (seen.add(n), next.push(n));
   const prose = phaseProse(phaseOf(slice));
-  const total = tokens(prose) + expand.reduce((n, s) => n + cost(C[s]), 0);
-  return { expand, next, prose, cost: total, menus: expand.filter((s) => menued(C[s])).length };
+  return { expand, next, prose, menus: expand.filter((s) => menued(C[s])).length };
+};
+
+// One brief, as lines. `slice`, `toc` and `check` all go through this, so the cost `toc`
+// prints is the size of the brief `slice` prints. Both used to add up section sizes only,
+// leaving out every provenance line and the one-hop list, and ran about 10% low.
+const render = (slice) => {
+  const lines = [];
+  const put = (l = '') => lines.push(l);
+  const { expand, next, prose, menus } = plan(slice);
+  if (prose) {
+    put(`--- ${phaseOf(slice).title} · applies to every slice in this phase`);
+    put('');
+    put(prose);
+    put('');
+  }
+  for (const s of expand) emit(C[s], put);
+  for (const s of next.filter((x) => C[x].flags.includes('superseded'))) {
+    put(`--- ${C[s].display} NOT EXPANDED`);
+    put(`    ${C[s].abstract}`);
+    put(`    ${C[s].retiredAs} ${C[s].supersededBy}. Do not build from it.`);
+    put('');
+  }
+  put(`one hop out: ${next.map((s) => C[s].display || s).join(' ')}`);
+  // The checklist every slice is measured against is not in any brief and is too long to
+  // put in all 41. Name it, now that a chunk without a section number can be addressed.
+  put('done means: doc slices:definition-of-done');
+  const cost = tokens(lines.join('\n'));
+  return {
+    lines: [`=== slice ${slice.key} · ${expand.length} sections · ~${cost} tok ===`, '', ...lines],
+    cost,
+    menus,
+  };
 };
 
 const verbs = {};
@@ -206,42 +248,27 @@ verbs.print = (list) => {
   }
 };
 
-verbs.slice = ([id]) => {
-  if (!id) return say('which slice? e.g. doc slice S-21. List them: doc toc slices');
-  const r = resolve(id);
-  if (!r || r.ambiguous) {
-    const n = near(id);
-    say(`no slice matches "${show(id)}".`);
-    if (n.length) out.push(...n);
-    else say('  slice ids look like S-01 … S-31 and P0-1 … P0-9. List them: doc toc slices');
-    return;
-  }
-  const slice = C[r];
-  if (!slice.flags.includes('row')) {
-    const d = slice.display || r;
-    return say(`${d} is not a slice. To read it: doc ${d}. To list the slices: doc toc slices`);
-  }
-  const { expand, next, prose } = plan(slice);
-  let total = 0;
-  if (prose) {
-    say(`--- ${phaseOf(slice).title} · applies to every slice in this phase`);
-    say('');
-    say(prose);
-    say('');
-    total += tokens(prose);
-  }
-  for (const s of expand) total += emit(C[s]);
-  for (const s of next.filter((x) => C[x].flags.includes('superseded'))) {
-    say(`--- ${C[s].display} NOT EXPANDED`);
-    say(`    ${C[s].abstract}`);
-    say(`    SUPERSEDED BY ${C[s].supersededBy}. Do not build from it.`);
-    say('');
-  }
-  out.unshift(`=== slice ${slice.key || id} · ${expand.length} sections · ~${total} tok ===`, '');
-  say(`one hop out: ${next.map((s) => C[s].display || s).join(' ')}`);
-  // The checklist every slice is measured against is not in any brief and is too long to
-  // put in all 41. Name it, now that a chunk without a section number can be addressed.
-  say('done means: doc slices:definition-of-done');
+// Every id given gets a brief. `doc slice S-01 S-02` used to build S-01 and drop S-02 in
+// silence.
+verbs.slice = (ids) => {
+  if (!ids.length) return say('which slice? e.g. doc slice S-21. List them: doc toc slices');
+  ids.forEach((id, i) => {
+    if (i) say('');
+    const r = resolve(id);
+    if (!r || r.ambiguous) {
+      const n = near(id);
+      say(`no slice matches "${show(id)}".`);
+      if (n.length) out.push(...n);
+      else say('  slice ids look like S-01 … S-31 and P0-1 … P0-9. List them: doc toc slices');
+      return;
+    }
+    const slice = C[r];
+    if (!slice.flags.includes('row')) {
+      const d = slice.display || r;
+      return say(`${d} is not a slice. To read it: doc ${d}. To list the slices: doc toc slices`);
+    }
+    out.push(...render(slice).lines);
+  });
 };
 
 // Every document calls the output a brief, so `doc brief S-21` is what someone types. It
@@ -259,7 +286,7 @@ verbs.why = ([id]) => {
   say(
     `${c.path}:${c.span.start}-${c.span.end} · ${c.tokens} tok${c.flags.includes('risk') ? ' · risk accepted' : ''}`,
   );
-  if (c.flags.includes('superseded')) say(`SUPERSEDED BY ${c.supersededBy}`);
+  if (c.flags.includes('superseded')) say(`${c.retiredAs} ${c.supersededBy}`);
   say('');
   say('REOPENING THIS BREAKS:');
   const groups = {};
@@ -331,7 +358,7 @@ verbs.toc = ([key]) => {
   for (const r of rows) {
     const p = phaseOf(r);
     if (p && p !== phase) (say(''), say(`    ${p.title}`), (phase = p));
-    const { cost, menus } = plan(r);
+    const { cost, menus } = render(r);
     say(
       `      ~${String(cost).padStart(5)} tok${menus ? ' +' : '  '} ${(r.key || '').padEnd(6)} ${r.title}`.slice(
         0,
@@ -343,12 +370,13 @@ verbs.toc = ([key]) => {
 
 verbs.check = () => {
   const e = [...index.errors];
-  // Parsing clean is not the same as working. Build every brief, because the gate runs on
-  // every markdown commit and a crash in the slice path is invisible to a parse check.
+  // Parsing clean is not the same as working. Render every brief, file reads included,
+  // because the gate runs on every markdown commit and a crash in the slice path is
+  // invisible to a parse check.
   for (const c of Object.values(C)) {
     if (!c.flags.includes('row')) continue;
     try {
-      plan(c);
+      render(c);
     } catch (err) {
       e.push({
         code: 'brief-fails',
@@ -370,7 +398,7 @@ verbs.check = () => {
 };
 
 const [head, ...rest] = args;
-if (!head)
+if (!head || head === '--help' || head === '-h')
   console.log(
     'usage: doc <id|§n|D-nn>... | slice S-nn | why D-nn | grep <term> | toc <file> | check',
   );
