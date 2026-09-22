@@ -181,10 +181,7 @@ Testing pass, performance pass, seeded demo dataset, standby rehearsal (D-79), d
 
 # Spec coverage
 
-Every numbered section of `docs/Idea.md` is either cited by a slice above, listed below, or
-listed under "Not in any slice yet". `pnpm docs:check` fails when one is none of those, so a
-spec section cannot exist without someone having decided who builds it. A section nothing
-points at is behaviour nobody is assigned, and an agent asked to build near it invents it.
+Every numbered section of `docs/Idea.md` is either cited by a slice above, listed below, or listed under "Not in any slice yet". `pnpm docs:check` fails when one is none of those, so a spec section cannot exist without someone having decided who builds it. A section nothing points at is behaviour nobody is assigned, and an agent asked to build near it invents it.
 
 **Read, not built.** Narrative and reference. Real, but not units of work.
 
@@ -220,12 +217,13 @@ The spec describes these and no slice above owns them. Fold each into a slice or
 
 # The handoff template
 
-In Claude Code, type `/slice S-XX` instead. The skill in `.claude/skills/slice/` follows the same order and reads only the sections the slice cites. Use the template below with any other tool. Fill the blanks. Nothing else.
+In Claude Code, type `/slice S-XX` instead. Use the template below with any other agent tool; it points at the same skill file, so every developer's agent runs the same steps. Fill the blanks from `node scripts/doc.mjs slice S-XX`, which lists the sections to read. Nothing else.
 
 ```
 Building slice S-XX: <name>, from MomentLens.
 
-Read only these sections, in this order:
+Run `node scripts/doc.mjs slice S-XX` and read what it prints, phase paragraph
+first. If you cannot run commands, read only these sections, in this order:
 What to build:    docs/Idea.md, sections <§X, §Y>
 How to build it:  docs/EngineeringHandbook.md, sections <§X>
 Rules:            CLAUDE.md, plus the CLAUDE.md of each package this touches
@@ -238,26 +236,20 @@ TanStack Query for server state, Zustand for UI state only, expo-sqlite for
 the upload queue. NativeWind v4 tokens, no hardcoded hex. No localStorage or
 AsyncStorage anywhere. No Node APIs in the app.
 
-Order of work:
-1. Read the slice back to me first, before anything is written: what it is in
-   one paragraph, how you would build it and which files that touches, what
-   interface you are building against from the slices it depends on, every
-   edge case you can find with "the docs do not say" where that is the honest
-   answer, and everything the docs get wrong about it. Stop. I will either say
-   go or fix the docs first.
-2. Propose the zod schema for this slice. Stop. I will review and merge it
-   before you write anything else.
-3. Then build it, in the order your read-back set out.
+Order of work: follow sections 2 to 4 of .claude/skills/slice/SKILL.md
+exactly, the same steps the /slice command runs.
+1. Read the slice back: the seven items in section 2, every one required.
+   Stop. I will either say go or fix the docs first.
+2. Write the zod schema alone and open it as its own PR. Stop until I merge it.
+3. Build it in the order your read-back set out, each negative test first.
 
 The docs are a draft, not a contract. If two sections disagree or one cannot
 work, say so instead of picking one. The numbered invariants in CLAUDE.md and
 the decision log are decisions rather than descriptions: raise those, do not
 route around them.
 
-Done means: schema merged, RLS policy written or N/A (only `media` and `event`
-have one, D-73), loading +
-empty + error states, unit test for any pure logic, dark mode via tokens,
-a negative authorization test for every endpoint.
+Done means: every item of the Definition of done in docs/WorkSlices.md, each
+reported as met or not met with its evidence.
 
 [paste the Figma frame here]
 ```
@@ -273,9 +265,7 @@ a negative authorization test for every endpoint.
 **Use `node scripts/doc.mjs slice <id>`.** `doc toc slices` lists every slice with what its
 brief costs, so you can see the price before you pay it.
 
-Measured over all 41 slices with `cl100k_base`, counting the tool-call framing as well as the
-text: a Bash call costs 90 to 112 tokens of envelope before any output (D-80). The briefs have
-changed since, and no brief holds a menu now; `doc toc slices` prints what each one costs today.
+Measured over all 41 slices with `cl100k_base`, counting the tool-call framing as well as the text: a Bash call costs 90 to 112 tokens of envelope before any output (D-80). The briefs have changed since, and no brief holds a menu now; `doc toc slices` prints what each one costs today.
 
 | Loading all 41 slices | Tokens | Tool calls |
 |---|---|---|
@@ -291,10 +281,7 @@ changed since, and no brief holds a menu now; `doc toc slices` prints what each 
 3. **The hand baseline assumes you already know every section number.** The recipe someone actually falls back to costs 180,000 tokens and 313 calls, twice the command.
 
 **The menu rule.** When `doc toc slices` marks a slice `+`, a section it cites is too large to
-print, so the brief lists the parts with their sizes and you read one. That is cheaper than
-printing the parent unless you need nearly all of it. If you find yourself fetching most of the
-parts, the citation in the table is too wide; narrow it there instead. That is what S-16 and
-S-17 got wrong and now get right.
+print, so the brief lists the parts with their sizes and you read one. That is cheaper than printing the parent unless you need nearly all of it. If you find yourself fetching most of the parts, the citation in the table is too wide; narrow it there instead. That is what S-16 and S-17 got wrong and now get right.
 
 ---
 

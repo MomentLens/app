@@ -19,9 +19,10 @@ title: "S-XX: <slice name>"
 - **What this slice is:**
 - **How it gets built, and which files:**
 - **What it inherits from its dependencies, and what later slices read from it:**
-- **Edge cases, each with what the docs say or "the docs do not say":**
-- **What the docs got wrong, with section ids:**
-- **Invariants and human-read surfaces touched:**
+- **Edge cases by category (roles, Do Not Publish viewer, offline and crashes, concurrency, limits, time, Realtime), each with what the docs say or "the docs do not say":**
+- **What the docs got wrong, with the two section ids that disagree, and what was checked and found consistent:**
+- **Invariants and human-read surfaces touched, each with the negative test that covers it:**
+- **Decisions needed from the team, each with a recommendation:**
 
 The docs are a draft, not a contract. Fix what this list turned up, here and in the slices
 this one depends on, before starting. If it turned up nothing, look again.
