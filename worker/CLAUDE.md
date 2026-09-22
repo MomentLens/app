@@ -69,7 +69,7 @@ Thumbnails are cut from the blurred output, never blurred separately at 300px.
 
 ## Local rules
 
-- `requirements.txt` is exactly pinned, never ranges.
+- `requirements.txt` is exactly pinned, never ranges. Locally, from `worker/`: `uv venv --python 3.12 && uv pip install -r requirements.txt`, which `pnpm check:machine` verifies. The server builds its own with `python3.12 -m venv` in `scripts/provision.sh`.
 - InsightFace 2.0 installs as a pure-Python package, and `onnxruntime` and OpenCV ship wheels for x86-64 and ARM64. The server is x86-64 and the M1 is ARM64 (D-78), so local and production no longer match. If a dependency misbehaves only on the server, debug it on the server.
 - Ruff replaces flake8, black and isort. One tool.
 - Tests in `tests/`, pytest.
