@@ -22,10 +22,10 @@ in the phase and to none of them in particular, which is where "build this with 
 verification check disabled, Phase 4 adds the gate" lives. It contradicts the spec sections
 below it on purpose. Phases 1, 4 and 6 have no such paragraph, so 11 briefs print none.
 
-A section over 800 tokens that has subsections comes back as a menu of them with their sizes
-and the command to read one. For 2 of the 41 slices that means a second command. Run it; the
-menu is not the content. A section over 800 tokens with no subsections prints in full, so a
-brief can be large without any menu in it.
+A section over 800 tokens with two or more subsections comes back as a menu of them with their
+sizes and the command to read one. `doc toc slices` marks a slice whose brief holds a menu with
+`+`, and none does today. When one does, run the second command; the menu is not the content.
+Any other section prints in full, so a brief can be large without any menu in it.
 
 The brief ends with a line of ids one hop further out. Fetch one only when the brief says
 it matters: `doc D-55`.
