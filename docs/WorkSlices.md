@@ -140,7 +140,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-27, D-30, arch §3, arch §5, arch §6 | U | S-20 |
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4.2, D-77, D-60, HB §4 | B | S-21 |
 | S-23 | Find My Photos and Recognized Faces strip from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §4.10, D-74, D-29 | C | S-20 |
-| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §5, arch §6, arch:blur_request | C | S-22, S-23 |
+| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, arch §5, arch §6, arch:blur_request | U | S-22, S-23 |
 | S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, arch §3, arch §5 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
 
@@ -163,7 +163,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10 | C | S-07 |
-| S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10 | U | S-21 |
+| S-28 | Download: multi-select, save to gallery, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10 | C | S-21 |
 | S-29 | Settings, theme, and the **Do Not Publish activation flow** | §4.19, §2.5.9, D-35, D-56 | B | S-01 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | Formalized screens, consent screens, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, hard-coded limits | §2.5.8, §4.18, §4.9, §4.17, §2.5.2, arch §1, D-33 | B | S-08, S-13 |
@@ -340,4 +340,4 @@ S-17 got wrong and now get right.
 
 **An agent will add something nobody asked for.** Small PRs are the defense. D-68 dropped the rule that someone must be able to explain every line, so PR size is what keeps a review meaningful. A slice that produces a 900-line PR was scoped too big; split it along feature boundaries and re-review (HB §18).
 
-**Ukasha will become the bottleneck.** He owns the worker, the docs, and most of Phase 5, and S-18a adds one more slice to his Phase 3. Watch the board. If two slices are waiting on him for more than a few days, move S-25 or S-28 to someone else even though it is slower for them, because a team moving at one person's speed is the failure mode this whole file exists to prevent.
+**Ukasha will become the bottleneck.** He owns the worker, the docs, and most of Phase 5 (including S-24's `manual_blur` job), and S-18a adds one more slice to his Phase 3. Watch the board. S-28 was already moved to C to keep worker jobs on U; if two slices are waiting on him for more than a few days, reassign a non-worker slice, because a team moving at one person's speed is the failure mode this whole file exists to prevent.
