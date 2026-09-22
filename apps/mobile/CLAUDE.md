@@ -21,6 +21,8 @@ Routes live in `src/app/` (Expo Router) and everything else under `src/`. Screen
 
 **The upload queue is neither Zustand nor TanStack Query.** It must survive a force-kill and needs real queries. A thin hook reads it for the My Media banner counts.
 
+**Every queued item and every Local Only file belongs to the account that created it** (spec §4.1). A queued item uploads only under that account's session, and My Media shows each account only its own. The team hands phones around at the demo, so this is not hypothetical.
+
 **Supabase in the app means Auth and Realtime on `media` and `event`, nothing else** (root invariant 14). Every other read and write goes through the API. A direct table query returns empty rows without an error, which looks exactly like an empty event.
 
 ---
@@ -38,7 +40,7 @@ Routes live in `src/app/` (Expo Router) and everything else under `src/`. Screen
 ## Images
 
 - **Never build an R2 URL.** Ask the API for the photo's image or thumbnail. It decides which file you get and returns a presigned URL (root invariant 3).
-- **`expo-image` cache keys must include `variant_version`** (root invariant 2), for thumbnails as much as full images. Without it, a retroactive blur leaves the pre-blur image in local disk cache and the feature silently fails for the people it exists for.
+- **`expo-image` caches under the key the serving endpoint returns** with each URL, the signed object key plus `variant_version` (root invariant 2, D-86), for thumbnails as much as full images. A media-ID key leaves the pre-blur image in disk cache after a retroactive blur, and on a shared phone it hands the next account the previous one's unblurred variant. Clear the image cache on logout.
 - Presigned URLs live one hour. Do not treat the URL itself as a stable identity.
 
 ---
@@ -52,7 +54,7 @@ One pipeline for every role. There is no role branch; do not reintroduce one.
 3. Resize **only** if the longest edge exceeds 4096px
 4. 300px WebP thumbnail. It shows the unblurred photo, so it goes to R2 and nowhere else (root invariant 13)
 5. SHA-256 over the exact bytes about to be uploaded, **not the thumbnail** (root invariant 7). Use `expo-crypto`'s `digest()`; Node's `crypto` does not exist here
-6. Pre-flight (JSON, no image bytes) → presigned URLs for the photo and the thumbnail → direct PUT of both to R2 → notify the API
+6. Pre-flight (JSON, no image bytes) → presigned URLs for the photo and the thumbnail → direct PUT of both to R2 → notify the API. A retry after a crash sends the same pre-flight and gets the same row back (D-82). A rejection for a closed album or failed verification leaves the item queued. The queue unlocks on the local GPS or QR check, or on the verification state the event response carries, refetched on foreground and on reconnect (spec §4.5)
 
 All Stage 1 image work goes through `expo-image-manipulator`, never hand-rolled JS.
 
@@ -96,5 +98,5 @@ Two things stop working, both on purpose. A 32-bit-only Android device cannot in
 
 ## Two pieces of UI that carry real weight
 
-- **The self-visible marker** (spec §4.11): a static lock badge on the photo plus a metadata line, shown when a Do Not Publish user views a photo of themselves. It is the only way they can distinguish "blur is working" from "the match failed and everyone can see me." Static badge, not a positioned box.
-- **Do Not Publish is not a toggle** (spec §2.5): row → explanation screen → checkbox → confirm → permanent static "Active" badge. Activation is blocked without a reference image (root invariant 8).
+- **The self-visible marker** (spec §4.11): a static lock badge on the photo plus a metadata line, shown when a Do Not Publish user views a photo of themselves. It is the only way they can distinguish "blur is working" from "the match failed and everyone can see me." Static badge, not a positioned box. Draw it from the serving endpoint's own-variant flag; the app never knows who the subjects are (D-86). The tap-to-blur affordance that goes with it renders only for a Do Not Publish user, and only on faces unblurred in their own view (D-83).
+- **Do Not Publish is not a toggle** (spec §2.5): row → explanation screen → checkbox → confirm → permanent static "Active" badge. Activation is blocked without a curated reference, and the last one cannot be deleted while it is active (root invariant 8).
