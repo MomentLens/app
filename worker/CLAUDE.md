@@ -26,9 +26,9 @@ Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 |---|---|---|
 | `thumbnail_dims` | Upload completion, from S-18a (Phase 3) until S-21 removes it (D-72) | No ML. Write `width`/`height`, point the public file and public thumbnail at the upload keys, generate a thumbnail at the public thumbnail key only if the client's is missing, bump version, then `processed_at` |
 | `face_process` | Upload completion, from S-21 | Detect once, store each face's box and embedding, match every face against subjects with references who are active members of this event, cluster the unmatched ones. If a matched subject has Do Not Publish active, write the public file, one variant per subject and a blurred thumbnail for each, at new versioned keys. Write dimensions. Then `processed_at` |
-| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Store or delete the `face_reference` embedding, then enqueue `reprocess` for that subject |
-| `reprocess` | Do Not Publish activated, a subject's references changed, or a blur request reverted | **Match only.** Compare stored embeddings against the reference set, regenerate files and thumbnails for photos whose output changed, bump version |
-| `manual_blur` | Tap-to-blur | Score the tapped face against the requester's **curated** references, mark it as theirs (`match_source = manual`), add the crop as an auto-added reference, regenerate files and thumbnails, set the request to `applied` or `queued` |
+| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Store or delete the `face_reference` embedding, then enqueue `reprocess` for that subject. A photo with no face gets no row. More than one face is **Open** for S-20 |
+| `reprocess` | Do Not Publish activated, a subject's references changed, a blur request reverted, or a subject with references joined the event (D-84) | **Match only.** Compare stored embeddings against the reference set, leave `match_source = manual` faces alone (D-83), regenerate files and thumbnails for photos whose output changed, bump version |
+| `manual_blur` | Tap-to-blur | Refuse, writing nothing, a face already matched to a different subject with Do Not Publish active (D-83). Otherwise score the tapped face against the requester's **curated** references, mark it as theirs (`match_source = manual`), add the crop as an auto-added reference carrying the face's stored embedding, regenerate files and thumbnails, set the request to `applied` or `queued` |
 
 ---
 
@@ -52,6 +52,8 @@ Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 - **Matching is biased toward blurring when uncertain.** A missed match is the expensive failure; a false positive is visible and fixable.
 - **Reference sets are split.** Matching uses curated + auto-added. The manual-blur abuse check uses **curated only** (root invariant 6).
 - **A reverted blur request deletes the auto-added reference it created.** Left in place, it keeps pulling the requester's matching toward someone else's face (D-54).
+- **A manual match survives `reprocess`.** It exists only because the automatic score fell below the threshold, so re-matching it would undo every correction. Only a revert clears one (D-83).
+- **Never let one subject claim another Do Not Publish subject's face.** The claimant's own variant would show that face clear, which breaks the one guarantee the feature makes (D-83).
 - Matching is scoped to subjects who are **active members of this event**, never global.
 - **Thresholds come from `docs/ARCHITECTURE.md` §6.** If they are not measured yet, say so. Do not invent one and do not use the placeholders from the spec.
 

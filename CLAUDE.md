@@ -18,7 +18,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 
 | Working on | Read first |
 |---|---|
-| Upload pipeline | Spec §4.8 + Handbook §7 |
+| Upload pipeline | Spec §4.8 + Handbook §7 + `docs/ARCHITECTURE.md` §4 |
 | Blur, face detection, Do Not Publish | Spec §4.11 + Handbook §6 |
 | Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §2 + D-69 |
 | Album, grid, filters | Spec §4.9 + Handbook §16 |
@@ -71,13 +71,13 @@ Spec sections are stable identifiers. Cite them (`spec §4.11`) rather than para
 These fail **silently**. Wrong code here looks correct, throws nothing, and passes tests written from the wrong angle. Do not violate them, and say so if asked to.
 
 1. **`processed_at` is written last**, after every variant is in R2. It is what makes a media row album-visible, and the album query filters on it. Write it early and an unblurred photo is published. (D-55)
-2. **Every object key the worker writes carries `variant_version`**, bumped on every regeneration including the first. That includes blurred thumbnails. Image cache keys must include it. A stable key means clients keep serving the pre-blur image from disk cache after a retroactive blur. (D-60)
+2. **Every object key the worker writes carries `variant_version`**, bumped on every regeneration including the first. That includes blurred thumbnails. Image cache keys must include it: the app caches under the key the serving endpoint returns, the signed object key plus `variant_version`. A stable key means clients keep serving the pre-blur image from disk cache after a retroactive blur. (D-60, D-86)
 3. **The server decides which image file a requester gets.** Never derive "is this the subject" from client input. Never hand out a bucket URL. One endpoint: authorization check, then a presigned URL. (D-57)
 4. **The Do Not Publish filter is a read-time predicate parameterized by the viewer**, never a write-time exclusion. The wrong version passes every test written from another viewer's perspective and returns nothing for the subject, who is the one person who needs it. (D-29, D-46)
 5. **Media bytes never pass through Express.** No compositing, resizing, or format inspection in a route handler, under any deadline. That includes the thumbnail. (Handbook §7)
 6. **The manual-blur abuse check compares against curated references only**, never auto-added ones. (D-54)
 7. **The dedup hash is SHA-256 over the exact bytes being uploaded**, after EXIF strip and HEIC conversion. Not the thumbnail; WebP encoders differ across platforms so that hash is not reproducible. (D-53)
-8. **Do Not Publish activation is blocked without at least one reference image.** No reference embedding means the flag protects nobody while the UI reads "Active." (D-56)
+8. **Do Not Publish activation is blocked without at least one curated reference**, a reference or profile photo in which the worker found a face, and the last one cannot be deleted while Do Not Publish is active. No reference embedding means the flag protects nobody while the UI reads "Active." (D-56, D-87)
 9. **No client-side resize**, except a guard for anything over 4096px on the longest edge. One pipeline for all roles, no role branch. (D-58)
 10. **Reprocessing compares stored embeddings and never re-runs detection.** Every face already has one. (D-66)
 11. **N Do Not Publish subjects means N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. (D-57)
