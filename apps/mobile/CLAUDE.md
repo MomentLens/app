@@ -62,7 +62,13 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 
 ## Native modules
 
-`expo-camera` (viewfinder + QR), `expo-image-picker` (+ Add Media only, never in the viewfinder), `expo-image`, `expo-image-manipulator`, `expo-crypto` (upload hash), `expo-location` (foreground reads only, no background APIs), `expo-file-system` (Local Only storage), `expo-sqlite`, `expo-notifications`, `expo-haptics`. Background upload is iOS `beginBackgroundTask` + an Android foreground service.
+`expo-camera` (viewfinder + QR), `expo-image-picker` (+ Add Media only, never in the viewfinder), `expo-image`, `expo-image-manipulator`, `expo-crypto` (upload hash), `expo-location` (foreground reads only, no background APIs), `expo-file-system` (Local Only storage), `expo-sqlite`, `expo-notifications`, `expo-haptics`, `expo-media-library` (saving a download to the gallery, write-only), `expo-clipboard`, `expo-sharing`, `expo-network` (the queue needs to know it is offline), `react-native-maps` (the venue pin), `react-native-svg` (draws the Venue QR), `react-native-mmkv` + `react-native-nitro-modules`. Background upload is iOS `beginBackgroundTask` + an Android foreground service, and it is the one native package still unchosen.
+
+**Every native package the build needs is already installed, ahead of the slice that uses it.** Two of the three machines take a long time to rebuild, so a package landing mid-phase costs the whole team an hour. Adding one is a decision, not a detail: say so in the PR, because everyone reinstalls the dev build after it merges.
+
+**Three things deliberately not installed, because a JavaScript package costs nobody a rebuild.** `react-native-qrcode-svg` (S-16), `@quidone/react-native-wheel-picker` (the date and time wheel, same on both platforms) and the sheet content. Install each in the slice that needs it.
+
+**Do not reach for these.** `@react-native-community/datetimepicker` and `react-native-pager-view` both duplicate something already in the build, and each costs a rebuild. Dates use the wheel above or `@expo/ui`; the S-22 pager is built from gesture-handler and Reanimated, which D-77 needs anyway so that panning a zoomed photo and swiping to the next one can be coordinated. Bottom sheets are `@expo/ui`'s `BottomSheet`, with React Native content inside its `RNHostView`.
 
 **The app runs in the development build, not Expo Go.** MMKV, the `momentlens` URL scheme for invite links, remote push and the background upload module all need native code that Expo Go does not ship. `pnpm --filter mobile android` (or `ios` on the Mac) builds it and installs it on the connected phone or emulator, and `pnpm --filter mobile start` then serves JavaScript to it. Rebuild only after adding a package with native code or changing native config in `app.json` (Handbook §10). When a native module fails to load, check whether the installed build predates the package before debugging the code.
 
