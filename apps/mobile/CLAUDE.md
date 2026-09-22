@@ -88,7 +88,7 @@ Two things stop working, both on purpose. A 32-bit-only Android device cannot in
 - **`className` works on React Native core components only.** NativeWind maps it on `View`, `Text`, `Pressable` and the rest of `react-native`, and a third-party component such as `SafeAreaView` ignores it. Pass that component `style`, or put the classes on a `View` inside it.
 - **`react-native-css-interop` and `@sentry/cli` are direct dependencies on purpose.** pnpm's isolated installs hide a package's dependencies from the app. NativeWind's Babel step imports css-interop from the app's own files, and Sentry's Gradle upload step looks for `@sentry/cli` from `android/`, so a release build fails without it. Pin each to the exact version its parent (`nativewind`, `@sentry/react-native`) depends on, and bump them together.
 - **Fonts load in `src/app/_layout.tsx` with `useFonts`**, keyed by the family names `tailwind.config.js` uses. A weight added to the type scale goes in both files. Styling, tokens and fonts are JavaScript and assets, so none of them needs a native rebuild.
-- **Gestures and animation use Reanimated worklets**, not the JS-driven `Animated` API. This is one of the three places where performance beats simplicity.
+- **Gestures and animation use Reanimated worklets**, not the JS-driven `Animated` API.
 - **No `AsyncStorage` patterns.** `react-native-mmkv` for key-value, SQLite for the queue.
 - Simulators fake camera and GPS badly. Develop the viewfinder and the verification gate on a real phone, not at the end.
 - Types crossing the API boundary come from `packages/shared-types`. Do not redeclare a shape locally.

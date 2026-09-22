@@ -19,13 +19,14 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Working on | Read first |
 |---|---|
 | Upload pipeline | Spec §4.8 + Handbook §7 + `docs/ARCHITECTURE.md` §4 |
-| Blur, face detection, Do Not Publish | Spec §4.11 + Handbook §6 |
-| Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §2 + D-69 |
+| Blur, face detection, Do Not Publish | Spec §4.11 + Handbook §6 + `docs/ARCHITECTURE.md` §5 |
+| Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §2 + D-69 + D-86 + `docs/ARCHITECTURE.md` §3 |
 | Album, grid, filters | Spec §4.9 + Handbook §16 |
 | RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5.1 |
 | Navigation or screens | Spec §2.5 + Handbook §16.5 |
-| Deployment | Handbook §13 |
+| Deployment | Handbook §13 + `docs/ARCHITECTURE.md` §7 |
 | Any error path: failed upload, lost connectivity, revoked access, a missed face match | Spec §5 |
+| Editing anything in `docs/` | Handbook §18.7 |
 
 **Read sections, never whole docs, and address them by id.** The spec alone is 21K tokens.
 
@@ -39,26 +40,13 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | What is in a doc at all | `node scripts/doc.mjs toc spec` (or `hb`, `dlog`, `arch`, `slices`) |
 | Every slice and what its brief costs | `node scripts/doc.mjs toc slices` |
 
-Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` is a section in
-three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
-large parent gets its children as summaries with their token costs, so you take the one you
-need; a slice brief does the same, and `doc toc slices` marks any slice that needs a follow-up
-command with `+`.
+Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `arch:venue`, `D-57`, `S-21`. `§` is optional: `doc 4.11.4`, `doc hb 7` and `doc arch:3` all work. A bare `§7` is a section in three of the five docs, so the tool refuses it and names the three rather than guessing. Citing a large parent gets its children as summaries with their token costs, so you take the one you need; `doc toc slices` marks with `+` any slice whose brief needs that second command.
 
-A slice brief opens with its phase's own instructions. Those apply to every slice in the phase
-and override the spec sections printed below them.
+A slice brief opens with its phase's own instructions. Those apply to every slice in the phase and override the spec sections printed below them.
 
-Use the command. On tokens it is level with hand retrieval by someone who already knows
-every section number, and more expensive on 35 of the 41 taken one at a time. It wins on the things a token count does not show: half the
-tool calls, and it carries the phase paragraph, the warning paragraph and the superseded
-flags that hand retrieval drops in silence. `docs/WorkSlices.md` has the measurement.
+Use the command rather than reading by hand. It carries the phase paragraph, the warning paragraph and the superseded flags that hand retrieval drops in silence.
 
-**Typing ids.** `§` is optional: `doc 4.11.4`, `doc hb:7` and `doc arch:3` work and need no
-special character. `doc 7` alone is refused, because §7 is a section in three of the five docs.
-
-**If the scripts are broken**, every section is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md`
-then `sed -n 'a,bp'` gets you there. Do not trust `grep -n '^#'` to list headings:
-it also matches a `#` comment inside a fenced code block, which is not one. On Windows that fallback needs Git Bash or WSL2; `grep` and `sed` are not in PowerShell.
+**If the scripts are broken**, every section is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md` then `sed -n 'a,bp'` gets you there. Do not trust `grep -n '^#'` to list headings: it also matches a `#` comment inside a fenced code block, which is not one. On Windows that fallback needs Git Bash or WSL2; `grep` and `sed` are not in PowerShell.
 
 Never `@`-import a doc into this file.
 
@@ -100,7 +88,7 @@ Not a comprehension exercise. These four fail silently when they are wrong, so a
 
 ## Stack
 
-Pinned. Do not upgrade to fix a problem; fix the problem.
+Pinned. Do not upgrade to fix a problem; fix the problem. **Never add a dependency without naming it in the plan and getting a yes**, native or not, in any package: a native one costs every machine a rebuild, and any one is a version three people now share.
 
 - **Mobile**: Expo SDK 57, RN 0.86, TypeScript, Expo Router, Zustand, TanStack Query, NativeWind v4, FlashList v2, Reanimated v4, `expo-sqlite`
 - **API**: Express 5, TypeScript, zod, `@supabase/supabase-js`, `@aws-sdk/client-s3`
@@ -131,14 +119,17 @@ docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 ## Commands
 
 ```bash
-pnpm install
-pnpm check:machine                # scripts/doctor.mjs: node, pnpm, python, java, Android SDK, Xcode vs the pins
+pnpm install                      # also installs the git hook that runs the docs gate
+pnpm check:machine                # scripts/doctor.mjs: toolchain pins, git hook, .env keys, worker venv
 pnpm --filter mobile android      # build and install the development build; `ios` on the Mac
 pnpm --filter mobile start        # Metro, serving JS to the installed development build
 pnpm --filter api dev
 pnpm lint && pnpm typecheck && pnpm test
+cd worker && uv venv --python 3.12 && uv pip install -r requirements.txt   # once, and after requirements.txt changes
 cd worker && .venv/bin/python -m app.main
 ```
+
+On Windows everything above runs inside WSL2, as Handbook §9 sets up. Android builds are arm64 only, so test on a physical Android phone; an x86 emulator cannot install them (`apps/mobile/CLAUDE.md`).
 
 Development and the demo run on one Netcup server set up by `scripts/provision.sh`. The demo stack, against the stable Supabase project, goes up on it one month before the demo. Until 2026-10-15 development runs on an interim server, and `docs/ARCHITECTURE.md` §7 says which. Handbook §13, D-76, D-78.
 
@@ -146,7 +137,7 @@ Development and the demo run on one Netcup server set up by `scripts/provision.s
 
 ## Model traps in this stack
 
-Training data is older than these. Check real docs before building on an API you have not personally used.
+Training data is older than these. Before using an API from an Expo package, FlashList, NativeWind or Reanimated, read its page in the docs for the pinned version. If you cannot reach the docs, say so; never write that API from memory.
 
 - **Expo SDK 57**: docs at https://docs.expo.dev/versions/v57.0.0/. Read the package page before using any Expo API.
 - **FlashList v2**: no `estimatedItemSize` (removed), no `MasonryFlashList` (now a `masonry` prop), `FlashListRef<T>` for refs. New Architecture only.
@@ -162,11 +153,12 @@ Training data is older than these. Check real docs before building on an API you
 ## How to work with this team
 
 - **Correctness and efficiency come first.** Do not simplify for readability, do not drop error handling or an edge case to shorten a diff, and do not offer a "simpler version" as an alternative unless it is also correct. If something is genuinely complex, write it correctly and explain it in the response instead of flattening the code. (D-68)
-- **Plan before code** on anything non-trivial. Describe the approach and what you would touch, then wait.
+- **Plan before code**, then wait for a yes, whenever a change touches more than one file, a schema or migration, a dependency, a numbered invariant or a human-read surface. That is almost everything; a typo fix is not.
 - **Push back.** If a request is a bad idea, contradicts an entry in the decision log, or is scope creep against a locked spec, say so before doing it. Do not agree by default, and do not invent a justification for something you were told to do. This applies to us as much as to you: we forget our own decisions.
 - **The spec is locked.** New features go to spec §6.2 as designed-and-deferred, not into the build.
 - If a decision here looks wrong, say which `D-nn` you think should be reopened and why. Do not quietly build the other thing.
-- Slice work starts with `/slice S-XX`, and the first thing it produces is a read-back: what the slice builds, how, what it inherits from the slices it depends on and owes the ones that depend on it, every edge case, and **what the docs get wrong about it**. Nothing is written until that has been answered. The point is to find the gaps for one slice while it is cheap.
+- Slice work starts with `/slice S-XX`, or in another agent tool with the handoff template at the end of `docs/WorkSlices.md`, and the first thing it produces is a read-back: what the slice builds, how, what it inherits from the slices it depends on and owes the ones that depend on it, every edge case, and **what the docs get wrong about it**. Nothing is written until that has been answered. The point is to find the gaps for one slice while it is cheap.
 - **The docs are a draft, not a contract.** They are written by the same agents that read them, and every review of them has found something wrong. When two sections disagree, or one describes something that cannot work, say so and propose the wording. Do not bend the build to match a document, and do not invent a reading that makes a contradiction go away. The invariants below and the entries in `docs/DecisionLog.md` are different in kind: those are decisions, not descriptions, so raise them and let the team rule rather than quietly building the other thing.
 - **`docs/ARCHITECTURE.md` belongs to Ukasha.** Change it only to record a decision Ukasha made or what merged code does, in the same PR. If code and that file disagree, stop and ask; never edit the file to match the code. Ask about anything undecided instead of guessing. (D-75)
-- Conventional commits (`feat:`, `fix:`, `chore:`). Trunk-based, short-lived branches, one reviewer per PR. Small commits even when a lot was generated at once. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits. PR titles and descriptions carry no tool attribution either, such as a "Generated with Claude Code" line.
+- **Project facts go in `docs/`, never only in an agent's memory.** The other two developers' agents cannot see your memory, so a fact kept there makes their agent build something different from yours.
+- Conventional commits (`feat:`, `fix:`, `chore:`). A slice's PR titles start with its id (`S-12: schema`), and its issue closes when the last one merges; that closed issue, not a merged PR, is what "the dependency is done" means. Every PR description names which of the four human-read surfaces it touches, or says none. Trunk-based, short-lived branches, one reviewer per PR. Small commits even when a lot was generated at once. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits. PR titles and descriptions carry no tool attribution either, such as a "Generated with Claude Code" line.
