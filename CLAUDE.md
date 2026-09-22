@@ -57,8 +57,7 @@ special character. `doc 7` alone is refused, because §7 is a section in three o
 
 **If the scripts are broken**, every section is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md`
 then `sed -n 'a,bp'` gets you there. Do not trust `grep -n '^#'` to list headings:
-`docs/EngineeringHandbook.md:542` is a shell comment inside a fenced block that it reads as
-one. On Windows that fallback needs Git Bash or WSL2; `grep` and `sed` are not in PowerShell.
+it also matches a `#` comment inside a fenced code block, which is not one. On Windows that fallback needs Git Bash or WSL2; `grep` and `sed` are not in PowerShell.
 
 Never `@`-import a doc into this file.
 
