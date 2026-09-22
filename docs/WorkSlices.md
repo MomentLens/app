@@ -52,12 +52,12 @@ Nobody works alone here. The point is that all three machines and the deployed s
 |---|---|---|
 | P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, HB §11 |
 | P0-2 | Server provisioned by `scripts/provision.sh`, nginx, TLS, both systemd units running something trivial | HB §13.3.2, HB §13.3.3, HB §13.3.4, D-39 |
-| P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13, D-67 |
+| P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13.3.5, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14.0 Phase 0 |
 | P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it on the x86-64 server | HB §14.0 Phase 0 |
 | P0-6 | Figma tokens into `apps/mobile/tailwind.config.js` | HB §15 |
 | P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
-| P0-8 | Sentry on the app and the API (the Education plan, `docs/ARCHITECTURE.md` §7) | HB §11 |
+| P0-8 | Sentry on the app and the API, on the Education plan | HB §11 |
 | P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, HB §13.1 |
 
 ---
@@ -78,7 +78,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §5, arch:sub_event | U | S-02 |
+| S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, arch:sub_event | U | S-02 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03 |
 | S-06 | Attendees: search, filter, role change, block, remove | §4.4, §2.5.7 Manage | B | S-05 |
 | S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage | B | S-06 |
@@ -141,7 +141,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Delete and the Admin's Remove | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, HB §4, arch:photo_flag | B | S-21 |
 | S-23 | Find My Photos, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29 | C | S-20, S-13 |
 | S-24 | Review Queue: blur regions (Keep / Remove), flagged photos (Keep / Remove), removed photos (Restore) | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22 |
-| S-25 | `reprocess` job: retroactive DNP, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21 |
+| S-25 | `reprocess` job: retroactive DNP, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
 
 **S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6).
@@ -206,7 +206,7 @@ spec §7 is stretch goals. The spec is locked; new features go to spec §6.2 (D-
 
 **Decisions and `docs/ARCHITECTURE.md`** get the same audit by hand when a phase starts, not in the gate, because the log is appended to constantly and a gate there would fire on every new entry. A decision or an architecture section no slice reaches is a rule nobody will be shown. The ones that reach no brief on purpose are cut scope, deferred work, superseded entries, and the four Photographer rules, whose content spec §4.10 restates for the six slices that cite it.
 
-**The one to watch.** spec §5, edge cases and exception handling, belongs to a dozen slices, so it is not one unit of work. S-04, S-10 and S-12 cite it for the rows an implementer would otherwise get wrong. That is not full coverage. **Read spec §5 before building any error path, whatever your slice cites, and treat a row in it as a requirement.** Root `CLAUDE.md` routes to it.
+**The one to watch.** spec §5, edge cases and exception handling, belongs to a dozen slices, so it is not one unit of work. S-10 and S-12 cite it for the rows an implementer would otherwise get wrong. S-04 does not: its two rows, a sub-event running late and two overlapping, are in spec §4.3, which it cites. That is not full coverage. **Read spec §5 before building any error path, whatever your slice cites, and treat a row in it as a requirement.** Root `CLAUDE.md` routes to it.
 
 ---
 
@@ -275,7 +275,7 @@ brief costs, so you can see the price before you pay it.
 
 Measured over all 41 slices with `cl100k_base`, counting the tool-call framing as well as the
 text: a Bash call costs 90 to 112 tokens of envelope before any output (D-80). The briefs have
-grown since, as slices gained citations.
+changed since, and no brief holds a menu now; `doc toc slices` prints what each one costs today.
 
 | Loading all 41 slices | Tokens | Tool calls |
 |---|---|---|

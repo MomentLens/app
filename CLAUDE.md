@@ -42,7 +42,8 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 Ids are `spec §4.11.4`, `hb §13.3`, `arch §3`, `D-57`, `S-21`. A bare `§7` is a section in
 three of the five docs; the tool refuses it and names the three rather than guessing. Citing a
 large parent gets its children as summaries with their token costs, so you take the one you
-need; a slice brief does the same, so two slices need one follow-up command.
+need; a slice brief does the same, and `doc toc slices` marks any slice that needs a follow-up
+command with `+`.
 
 A slice brief opens with its phase's own instructions. Those apply to every slice in the phase
 and override the spec sections printed below them.
