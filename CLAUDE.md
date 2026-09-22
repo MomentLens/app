@@ -27,6 +27,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Deployment | Handbook §13 + `docs/ARCHITECTURE.md` §7 |
 | Any error path: failed upload, lost connectivity, revoked access, a missed face match | Spec §5 |
 | Editing anything in `docs/` | Handbook §18.7 |
+| Running a slice's stages and subagents | `.claude/skills/slice/SKILL.md` + Handbook §18.8 |
 
 **Read sections, never whole docs, and address them by id.** The spec alone is 21K tokens.
 

@@ -27,6 +27,28 @@ title: "S-XX: <slice name>"
 The docs are a draft, not a contract. Fix what this list turned up, here and in the slices
 this one depends on, before starting. If it turned up nothing, look again.
 
+## Slice card
+
+<!-- Written by the agent after the read-back is answered, and edited only when a person changes a decision.
+     Every later stage (/slice S-XX schema, build, done) loads this and nothing else from the read-back.
+     Ids and paths only, never copied doc text. Under about 900 tokens. -->
+
+**Goal:** one sentence.
+**Decided at the read-back:**
+- <question> → <answer> (who, date). Doc fixes: #<pr>
+**Builds against:** <schema names and paths in packages/shared-types, endpoints and columns from the Depends on slices>
+**Produces:** <schemas, endpoints, tables and columns, jobs, R2 keys, screens that later slices read>
+**Build order and files:**
+1. `apps/api`: <paths>
+2. `apps/mobile`: <paths>
+**Negative tests:**
+- <endpoint>: another user, another event, wrong role; Do Not Publish subject vs another viewer where it returns faces or images
+**Invariants touched:** <numbers> · **Human-read surfaces:** <names, or none> · **Physical phone needed:** <yes/no>
+**Edge cases:**
+- <case> → <rule id>
+**Read only these ids while building:** <spec §…, arch §…, D-…>
+**Open:** <anything still undecided. The build stops here until it is answered>
+
 ## Definition of done
 
 - [ ] zod schema merged in `packages/shared-types` before any UI or handler
