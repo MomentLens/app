@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "621198080268",
+    "project_id": "momentlens-f2575",
+    "storage_bucket": "momentlens-f2575.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:621198080268:android:68cea0392b760f3fc4f129",
+        "android_client_info": {
+          "package_name": "me.momentlens.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDRE2v20ynWhHz2E12fnY6fAk8-16qrkco"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
