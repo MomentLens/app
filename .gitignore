@@ -42,3 +42,6 @@ worker/**/__pycache__/
 
 # Claude Code (personal, per-machine settings)
 .claude/settings.local.json
+
+# Per-slice agent logs and scratch (Handbook §18.8)
+.slices/
