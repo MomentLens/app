@@ -42,8 +42,8 @@ If the user attaches a design image, use it for layout only. The spec section de
 
 **If `doc.mjs` is unavailable**, read the sections the slice row cites directly: every one is
 numbered, so `grep -n '^#### 4.11.4' docs/Idea.md` then `sed -n 'a,bp'`. Do not read a whole
-doc, and do not trust `grep -n '^#'` to find headings; `docs/EngineeringHandbook.md:542` is a
-shell comment inside a fenced block. On Windows this needs Git Bash or WSL2.
+doc, and do not trust `grep -n '^#'` to find headings; it also matches a `#` comment inside a
+fenced code block. On Windows this needs Git Bash or WSL2.
 
 ## 2. Read the slice back before anything else
 
