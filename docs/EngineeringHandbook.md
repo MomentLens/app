@@ -290,10 +290,10 @@ There is no role branch left to unit-test here. The pre-flight checks are worth 
 6. **Xcode Command Line Tools**: `xcode-select --install`.
 7. **CocoaPods**, usually handled by Expo's prebuild, but `sudo gem install cocoapods` if needed directly.
 8. **Android Studio** for the SDK and an emulator.
-9. **Python 3.12+**: `brew install python@3.12`, then a venv per the worker's `requirements.txt`.
+9. **Python 3.12 through uv**, the version in `worker/.python-version`: `brew install uv`, `uv python install 3.12`, then from `worker/` run `uv venv --python 3.12 && uv pip install -r requirements.txt`. `pnpm check:machine` looks for Python through uv, so a Python installed any other way reads as missing.
 10. **EAS CLI**: `npm install -g eas-cli`, then `eas login`.
 11. **VS Code** with ESLint, Prettier, Tailwind CSS IntelliSense, Python, and Expo Tools.
-12. **Check the machine** with `pnpm check:machine` (not `pnpm doctor`, which is pnpm's own command). It compares Node, pnpm, Python, Java, the Android SDK and Xcode against the repo pins.
+12. **Check the machine** with `pnpm check:machine` (not `pnpm doctor`, which is pnpm's own command). It compares Node, pnpm, Python, Java, the Android SDK and Xcode against the repo pins, and checks the git hook, the worker's venv, and both env files: `apps/mobile/.env` must set `EXPO_PUBLIC_API_URL` on every machine, while the root `.env` keys matter only if you run the API or worker locally. `.env.example` says which key goes in which file. Get the `.env` values from a teammate over a private channel or from the Supabase and R2 dashboards; never paste them into a commit, an issue or an agent chat that is shared.
 
 **One thing that changed.** Your M1 is ARM64 and the server is x86-64 (D-78), so local and production no longer share an architecture. InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both, which keeps that gap small. If a wheel behaves differently on the server, debug it there, not on your Mac. The M1 is still the fastest machine the team has measured for face processing, which is one reason the worker is yours.
 
@@ -305,10 +305,11 @@ There is no role branch left to unit-test here. The pre-flight checks are worth 
 
 Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differences:
 
-- Use **WSL2** for the backend (Express and FastAPI) and general Node tooling. It avoids a long tail of path-handling and native-module-compilation quirks. Run Metro from WSL2 where possible; Android Studio and the emulator run on Windows itself.
-- Install Node, pnpm, and Python **inside WSL2**, not the Windows-native versions, so the toolchain stays consistent.
+- Use **WSL2** (Ubuntu 24.04, the server's release) for the backend (Express and FastAPI), general Node tooling and the agent. It avoids a long tail of path-handling and native-module-compilation quirks. Clone the repo into the WSL2 filesystem (`~/`), not `/mnt/c`, where file watching and installs are slow; `pnpm check:machine` warns when it sees `/mnt/`.
+- Install Node, pnpm, uv and Python **inside WSL2**, not the Windows-native versions, so the toolchain stays consistent.
+- **Test Android on a physical phone.** Builds are arm64-v8a only (`apps/mobile/CLAUDE.md`), and the Android emulator on an x86 Windows machine runs x86_64 images, so it cannot install them. A phone over USB or Wi-Fi debugging is also what §10 recommends for the camera and GPS. **Open:** where `expo run:android` runs on these machines, WSL2 or Windows, and how `adb` reaches the phone from there. P0-9 closed, so whoever did it should write the steps here.
 - **The iOS Simulator does not exist on Windows.** Apple ships it only with Xcode. This is not workaround-able. Practically:
-  - You can write and test 100% of the Android side locally.
+  - You can write and test 100% of the Android side locally, on a physical phone.
   - For iOS, **EAS Build compiles iOS binaries in the cloud with no local Mac**. You cannot run the Simulator, but you can build a real iOS app and install it on a physical iPhone via the Custom Dev Client, entirely from Windows. EAS Build's free tier covers a limited number of builds per month, which is enough if you are not rebuilding natively every day (§10 explains why you won't be).
   - For the rare Simulator-only moment, borrow Ukasha's machine.
 - **Architecture on the Python worker.** The server is x86-64 like your machine (D-78), so a wheel that installs in WSL2 should install on the server too. The M1 is now the machine that differs. If something fails only on the server, SSH in and debug it there.
@@ -727,3 +728,16 @@ If a PR is large because an agent generated a lot at once, split it along featur
 One use of these tools is badly underrated here: **adversarial review of code that already works**. Paste your RLS policy and ask what could leak. Paste your queue state machine and ask what happens on a force-kill between two specific states. Ask what breaks if two clients bump `variant_version` concurrently.
 
 That finds the class of bug this project is most exposed to, which is the kind that throws no error and passes every test written from the wrong angle. Generating one more feature does not.
+
+### 18.7 Writing the docs so an agent can use them
+
+Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by id and resolves every citation. These conventions keep that working and keep agents from citing something that is not there. `pnpm docs:check` enforces the ones marked gated.
+
+- **One paragraph per line.** No hard wraps in prose, so `grep` and `doc grep` find a whole sentence. Tables and code blocks keep their own line structure.
+- **A numbered heading's depth is its number's depth plus one**: `## 5`, `### 5.2`, `#### 5.2.1`. A section a slice might cite gets a number. The one exception is Handbook `## 16.5`, a sibling of §16 rather than its child. `docs/ARCHITECTURE.md`'s per-table headings are unnumbered by design and cited as `arch:<table>`.
+- **Every cross-document citation carries its prefix**: `spec §4.11`, `hb §7`, `arch §3`. A bare `§7` inherits a prefix written within the previous 60 characters, and otherwise resolves to its own document, then the spec, which can land in the wrong document without an error.
+- **Decisions are `### D-nn: Title`.** Never renumber one. Retire one only by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading; those are the two forms `doc` masks, so any other wording leaves the entry expandable into a brief. Change an entry by appending an "Amended (see D-nn)" line (gated: a `D-nn` heading the parser cannot read fails).
+- **Slice rows are machine-read.** A Phase 0 row has three cells and every other row five. Never put a `|` inside a cell. The "Depends on" cell holds slice ids and nothing else, because the brief prints exactly those rows. A warning note is its own paragraph, opening with the slice id in bold (gated: a note naming no slice fails).
+- **Cite a section id, never a line number.** `EngineeringHandbook.md:542` went stale in one PR. Ids survive edits and the gate checks them (gated: a dangling citation fails).
+- **Renaming a heading changes its id.** Before renaming one, `doc why` it, or grep for `arch:<slug>` if it is a table heading, and update what cites it.
+- **Say the date on anything that will stop being true**, such as a server that goes away on 2026-10-15, so the next reader can tell a stale line from a current one.
