@@ -21,6 +21,7 @@ Decided in D-73.
 - **The API** queries with the secret key and makes every authorization decision in its service layer. Every endpoint has a negative authorization test: another user, another event, the wrong role.
 - **The worker** connects with `DATABASE_URL` and scopes its own queries to the event.
 - **RLS** is on for every table. The only policies are `SELECT` on `media` and `event`. A direct query from the app on any other table returns empty rows, not an error.
+- Those two policies exist for Realtime and nothing else. The app still reads `media` and `event` through the API, because the API applies what a policy cannot: soft deletes, pagination and the viewer-scoped face rules.
 - Those two policies check membership through a `security definer` function. `membership` has no policy of its own, so a plain subquery inside a policy would see no rows and deny everyone.
 - pgmq queues are not exposed through the Data API.
 
@@ -30,13 +31,14 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 
 | Data | Rule |
 |---|---|
-| `media` | Active members of the event, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (§4.10, D-55). Update and delete by the uploader and the event's Admin. **Also an RLS policy.** Soft-deleted rows stay visible to it so Realtime delivers the deletion, and the app hides them |
+| `media` | Active members of the event, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (§4.10, D-55). Update and delete by the uploader and the event's Admin. **Also an RLS policy.** Soft-deleted rows stay visible to it so Realtime delivers the deletion; the API's queries exclude them and the app drops a row when an update sets `deleted_at`. A row without `uploaded_at` is shown to nobody (D-82) |
 | `event` | Active members. **Also an RLS policy**, so opening and closing the album reaches every phone live |
 | `membership` | A user sees their own rows; the Admin sees every row for their events (Handbook §5) |
 | `face`, `dnp_subject` | Only through the viewer-scoped rule (root invariant 4). A Do Not Publish subject learns they are in a photo; no other viewer learns who is |
 | `face_reference` | The owner, and only their photos. Embeddings never leave the database and the worker (Handbook §5) |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
 | `profile.avatar_key` | People who share an event with the user, unless the user's subject has Do Not Publish active. Then nobody else, the Admin included (D-35) |
+| `profile.full_name` | Active members of an event the user belongs to, and that event's Admin while the user's join request is pending. Do Not Publish does not hide it (D-35). A Photographer sees no other member's name, since the name list is the guest list (D-08) |
 | `health_check` | The API only, for `GET /health`. RLS is on with no policy, so the publishable key reads no rows, and both the keep-alive and `apps/api/tests/integration/rls.test.ts` check that |
 
 ---
@@ -57,13 +59,14 @@ One row per auth user, keyed by `user_id`.
 The identity that reference photos and Do Not Publish attach to, split from the account in the first migration (D-63).
 - `user_id`, nullable. Null only for the deferred Proxy Blur
 - `dnp_activated_at`, nullable. Set once and never cleared (D-31)
-- Created when a user adds their first reference or profile photo. Activation needs at least one curated `face_reference` row (D-56)
+- Created when a user adds their first reference or profile photo. Activation needs at least one curated `face_reference` row, and while Do Not Publish is active the API refuses to delete the last one (D-56, D-87)
 
 ### `face_reference`
-- `subject_id`, `source` (`profile`, `reference`, `auto_added`), `is_curated` (D-54), `embedding vector(512)`
-- `photo_key` for `profile` and `reference` rows. `face_id` for `auto_added` rows, pointing at the event face the crop came from (D-25)
+- `subject_id`, `source` (`profile`, `reference`, `auto_added`), `embedding vector(512)`
+- `is_curated`, a generated column, true for `profile` and `reference` rows. Generated so it can never disagree with `source` (D-54, D-87)
+- `photo_key` for `profile` and `reference` rows. `face_id` for `auto_added` rows, pointing at the event face the crop came from; the row copies that face's stored embedding (D-25, D-66)
 - At most 5 `reference` rows per subject (§4.2). A new profile photo does not replace the `profile` reference once Do Not Publish is active (§4.2)
-- Written by the worker (`reference_process`, `manual_blur`)
+- Written by the worker (`reference_process`, `manual_blur`). A photo in which the worker finds no face gets no row. What it does with more than one face is **Open** for S-20
 
 ### `event`
 - `name`, `type`, `description`, `cover_key`
@@ -74,7 +77,7 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 
 ### `venue`
 - `event_id`, `name`, `lat`, `lng`, `qr_secret`
-- One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3)
+- One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3). The payload carries the venue and its secret; a scan verifies the sub-event at this venue that was In Progress at the scan time (D-85)
 
 ### `sub_event`
 - `event_id`, `name`, `description`, `starts_at`, `ends_at`, `venue_id`
@@ -100,6 +103,7 @@ The spec's `VenueVerification`, renamed to the naming convention.
 - `event_id`, `sub_event_id`, `uploader_user_id`, `uploader_role_at_upload` (display only, D-13), `captured_at`
 - `content_hash`, SHA-256, unique per event (D-53)
 - `upload_key`, `upload_thumb_key`, written by the API at pre-flight (D-70)
+- `uploaded_at`, set by the completion call only while it is null, in the same transaction as the enqueue (D-82)
 - `public_key`, `public_thumb_key`, `variant_version` (integer), `width`, `height`, written by the worker (D-22, D-60, D-69, D-70)
 - `processed_at`, written last by the worker (D-55); `deleted_at` (§4.21)
 - At most 2,000 per event (§4.17). Local Only photos never create a row (§4.12)
@@ -109,7 +113,7 @@ One row per detected face, written only by the worker.
 - `media_id`, `bbox`, `embedding vector(512)`
 - `matched_subject_id` (nullable), `match_source` (`auto`, `manual`), `similarity` (D-74)
 - `cluster_id`, the Unknown identity for an unmatched face (§4.11)
-- `reprocess` re-blurs from the stored `bbox` and never detects again (D-30, D-66)
+- `reprocess` re-blurs from the stored `bbox` and never detects again (D-30, D-66). It leaves a `manual` match in place; only a revert clears one (D-83)
 
 ### `dnp_subject`
 A Do Not Publish subject found in a photo, with that subject's personalized files. Written only by the worker.
@@ -153,6 +157,9 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 
 - For a photo with no Do Not Publish face, `public_key` and `public_thumb_key` hold the upload keys (§4.11). If the client's thumbnail is missing, the worker writes one at the public thumbnail key.
 - Cover, profile and reference keys carry a fresh `upload_id`, so a replacement lands at a new key and no cache keeps the old image.
+- Every file reaches R2 by a presigned PUT, covers, profile photos and reference photos included (root invariant 5).
+- Media files are served by the one image-serving endpoint (D-57). With each presigned URL it returns a cache key, built from the object key it signed plus `variant_version`, and whether the file is the requester's own variant, which drives the self-visible marker. It takes a batch of media ids (D-86).
+- Covers and profile photos are presigned by the endpoint that returns the event or the profile, after that endpoint's own check (§1). A reference photo is presigned only for its owner.
 
 ---
 
@@ -161,13 +168,17 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 Spec §4.8, Handbook §7.
 
 1. **Client.** EXIF strip keeping timestamp and orientation, HEIC to JPEG, resize only past 4096px, 300px WebP thumbnail, SHA-256 over the upload bytes with `expo-crypto`. Identical for every role (D-58).
-2. **Pre-flight, JSON only.** Hash, sub-event ID, capture-time GPS. The API rejects an exact duplicate silently, then checks verification: a `venue_verification` row OR `admin_verified_at IS NOT NULL` OR `role = 'photographer'` (D-15). Both lookups are indexed.
+2. **Pre-flight, JSON only.** Hash, sub-event ID, capture-time GPS, and any Venue QR scan the device holds. The API checks, in order (D-82):
+   - the caller is an `active` member, the event is not deleted, and `album_open` is true (D-12). S-12 builds the album check switched off and S-31 turns it on
+   - the hash. The caller's own row with this hash and no `uploaded_at` is a crashed upload: pre-flight re-signs its existing keys and stops there. Any other match is an exact duplicate, rejected silently (D-53)
+   - for a new row only: the event holds fewer than 2,000 media rows that are not soft-deleted (§4.17), and verification passes, meaning a `venue_verification` row OR `admin_verified_at IS NOT NULL` OR `role = 'photographer'` (D-15)
+   All of these are indexed lookups.
 3. **Keys and URLs.** The API builds both upload keys, inserts the media row with them, and presigns two PUT URLs (D-70).
 4. **Upload.** The client PUTs the photo and the thumbnail to R2, one photo at a time per session, then calls completion.
-5. **Enqueue.** Completion enqueues exactly one pgmq job: `thumbnail_dims` until S-21, `face_process` after (D-72).
+5. **Enqueue.** Completion sets `uploaded_at` where it is null and, in the same transaction, enqueues exactly one pgmq job: `thumbnail_dims` until S-21, `face_process` after (D-72). A repeated completion call changes no row and enqueues nothing (D-82).
 6. **Publish.** The worker sets `processed_at` last. The row passes the `media` policy and Realtime delivers it to every member (D-55).
 
-Until verification passes, photos wait in the device's SQLite queue. The queue is per device (§4.1).
+Until verification passes or while the album is closed, photos wait in the device's SQLite queue. The queue is per device and per account (§4.1).
 
 ---
 
@@ -179,8 +190,8 @@ Until verification passes, photos wait in the device's SQLite queue. The queue i
 | `thumbnail_dims` | Upload completion, from S-18a until S-21 (D-72) | No ML. Writes `width` and `height`, points the public keys at the upload keys, bumps `variant_version`, sets `processed_at` last |
 | `face_process` | Upload completion, from S-21 | Detects faces once and stores each box and embedding. Matches every face against subjects with references who are active members of the event, and clusters the unmatched ones (D-74). If a matched subject has Do Not Publish active, writes N+1 blurred files, N+1 blurred thumbnails and the `dnp_subject` rows. Writes dimensions, bumps `variant_version`, sets `processed_at` last |
 | `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Stores or deletes the `face_reference` embedding, then enqueues `reprocess` for that subject |
-| `reprocess` | Do Not Publish activated; a subject's references changed; a blur request reverted | Re-matches stored embeddings and never detects (D-66). Regenerates files and thumbnails for the photos whose output changed, bumps `variant_version` |
-| `manual_blur` | Tap-to-blur (S-24) | Scores the tapped face against the requester's curated references (D-54). Marks the face as theirs (`match_source = manual`), adds the crop as an auto-added reference, regenerates files and thumbnails, sets `blur_request.state` to `applied` or `queued` (D-23, D-24) |
+| `reprocess` | Do Not Publish activated; a subject's references changed; a blur request reverted; a subject with references became an active member of the event (D-84) | Re-matches stored embeddings and never detects (D-66). Leaves `manual` matches in place (D-83). Regenerates files and thumbnails for the photos whose output changed, bumps `variant_version` |
+| `manual_blur` | Tap-to-blur (S-24) | Refuses, writing nothing, a face already matched to a different subject with Do Not Publish active (D-83). Otherwise scores the tapped face against the requester's curated references (D-54), marks it as theirs (`match_source = manual`), adds the crop as an auto-added reference, regenerates files and thumbnails, and sets `blur_request.state` to `applied` or `queued` (D-23, D-24) |
 
 - **Blur.** Box expanded 30 to 40%, elliptical mask, downsample then upsample with a box blur on top (D-65). Thumbnails are cut from the blurred output.
 - **Model.** InsightFace through ONNX Runtime, loaded once at startup (D-40). `buffalo_l` or `buffalo_s`: **Open** until measured.
