@@ -345,7 +345,7 @@ Linting, tests, the threshold calibration and CI, each in its own subsection so 
 
 **Linting and formatting:** ESLint and Prettier for TypeScript, Ruff for Python. Ruff replaces flake8, black, and isort with one much faster tool.
 
-**Pre-commit hooks:** Husky and `lint-staged`, so issues are caught before a commit lands rather than in CI ten minutes later.
+**Pre-commit hooks:** Husky and `lint-staged`, so issues are caught before a commit lands rather than in CI ten minutes later. `lint-staged` runs Prettier on the staged code files, `.tsx` included. When a markdown file or a doc script is staged, `.husky/pre-commit` copies the staged docs into `.slices/precommit/` and runs the docs gate there, so it checks what the commit holds rather than the working tree.
 
 ### 11.2 Unit and end-to-end tests
 
