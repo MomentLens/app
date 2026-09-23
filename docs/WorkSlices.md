@@ -9,7 +9,7 @@ Create one GitHub issue per slice from the **Work slice** issue template, titled
 
 ## Why a slice is not a screen
 
-A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It does not give you the zod schema, the route, the rule deciding who can approve, the query hook and what it invalidates, the empty and error states, or what happens when two Admins approve the same person at once. An agent handed only the image invents all of that, differently for each of the three of you.
+A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It does not give you the zod schema, the route, the rule deciding who can approve, the query hook and what it invalidates, the empty and error states, or what happens when the Admin approves the same person from two phones at once. An agent handed only the image invents all of that, differently for each of the three of you.
 
 **A slice is all six layers of one feature:** schema, endpoint, the authorization rule, query hook, screen, and the unglamorous states. Whoever owns the slice owns all six.
 
@@ -70,7 +70,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 |---|---|---|---|---|
 | S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73, arch:subject, arch:profile, HB §5.3 | C | P0-4, P0-6, P0-9 |
 | S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17, D-88, arch:event, arch:venue, arch:sub_event | B | S-01 |
-| S-03 | Guest Link join: both invite rows created with the event, token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17, arch:invite, arch:membership | U | S-02 |
+| S-03 | Guest Link join: both invite rows created with the event, the `momentlens://invite` link, token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17, arch:invite, arch:membership, D-101, D-102 | U | S-02 |
 
 **S-01 writes the first feature migration, and D-63 says what has to be in it.** The `subject` table with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. The row itself is created lazily, when the user adds a first reference or profile photo (arch:subject), so onboarding never needs one. S-01 also writes the one function that presigns `profile.avatar_key`, which returns no URL for a user whose subject has Do Not Publish active (D-35); every later endpoint that returns a person calls it. Its dependencies are P0-4, which closed only once P0-1 to P0-3 worked end to end, the tokens (P0-6) and the development build (P0-9). P0-5's rerun (issue #7) blocks S-18, not this.
 
@@ -84,12 +84,12 @@ Nobody works alone here. The point is that all three machines and the deployed s
 |---|---|---|---|---|
 | S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §4.17, arch:sub_event | U | S-02, S-08 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03 |
-| S-06 | Attendees: search, filter, role change, block, remove | §4.4, §2.5.7 Manage, D-35 | B | S-05 |
+| S-06 | Attendees: search, filter, role change, block, remove | §4.4, §2.5.7 Manage, D-35, D-102 | B | S-05 |
 | S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership | B | S-06 |
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17 | B | S-02, S-08 |
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5.1, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
 
-**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing.
+**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing. Deleting and editing follow D-100: delete only a sub-event with no photos and never the last one, and an edit moves nothing. Other phones see a Delay on their next fetch of the event, so there is no Realtime to build.
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 

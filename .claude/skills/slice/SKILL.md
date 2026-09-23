@@ -63,7 +63,7 @@ Produce these seven, in this order:
    - each role: Admin, Guest, Photographer, a pending member, a blocked member, a non-member
    - a Do Not Publish subject against every other viewer
    - offline, a retry, and the app killed between any two steps
-   - two devices or two Admins acting at once
+   - two devices acting at once, one account or two people (an event has one Admin, D-102)
    - zero, one, the cap, and one past the cap (spec §4.17)
    - time: a sub-event starting, ending, running late, overlapping (spec §4.3)
    - a Realtime update arriving mid-action

@@ -135,7 +135,8 @@ There is no Videographer role, because there is no video. There is no Moderator 
 13. Admin actions, always available:
     ├── Open / close the album (manual, the only mechanism)
     ├── Remove / restore any photo (soft delete, §4.21)
-    ├── Promote / demote / remove any user's role
+    ├── Change any user's role between Guest and Photographer, or remove
+    │   them (there is one Admin, D-102)
     ├── Force Verify any user from the Attendee list (covers every
     │   sub-event at once)
     ├── Delay a sub-event by any amount of time
@@ -442,7 +443,7 @@ A lightweight substitute for a full history: event cards on the global Events li
 
 ### 4.1 Authentication & onboarding
 - Email address and password registration via Supabase Auth. No OTP, no biometric.
-- Deep link handling: an invite URL auto-opens the app **if the app is already installed**. There is no deferred deep link and no install-then-resume path. Firebase Dynamic Links shut down in 2025, the replacements are third-party services, and this app will not be on either store, so the feature could never be tested and is not claimed. A user without the app installs the build first, then opens the link or pastes the shortcode (§9 covers how this works on demo day).
+- Deep link handling: an invite link, `momentlens://invite/{token}`, auto-opens the app **if the app is already installed** and the chat app passes the link to the system. Some chat apps show that scheme as plain text; the shortcode below covers them (D-101). There is no deferred deep link and no install-then-resume path. Firebase Dynamic Links shut down in 2025, the replacements are third-party services, and this app will not be on either store, so the feature could never be tested and is not claimed. A user without the app installs the build first, then opens the link or pastes the shortcode (§9 covers how this works on demo day).
 - Short invite code entry (6-character alphanumeric) as a manual alternative. Guest and Photographer codes are distinct values.
 - "Join with Invite Link" flow: a user with a code but no account is guided through registration and then dropped directly into the event.
 - Login: email and password. Password reset via a recovery link, handled natively by Supabase Auth.
@@ -472,6 +473,7 @@ A lightweight substitute for a full history: event cards on the global Events li
 - Two role-specific invite links per event (Guest, Photographer), each a URL plus its own 6-character shortcode. No QR image. Both are revocable and regenerable.
 - One Venue Check-In QR per venue. Sub-events at the same venue share it (§4.5).
 - Admin can delay a sub-event by any amount of time.
+- Admin can delete a sub-event only while it has no photos, and never the event's last one. Editing a sub-event's name, venue or times moves no photo and no verification. Other phones see an edit or a Delay the next time they fetch the event, on foreground or reconnect (D-100).
 - Delete event (soft delete, §4.21), archive event.
 
 **Sub-event status, computed from timestamps:**
@@ -490,7 +492,8 @@ A sub-event ends at its scheduled end (D-88). Sub-events are planned across seve
 - **Guest Link** and **Photographer Link**, each a distinct token carrying its own role assignment, so joining via a given link grants that role immediately with no separate role-change step.
 - Manual role change remains available on the Attendees screen as a fallback, for someone who joined via the wrong link.
 - Approval Modes: Auto-Approve All, or Approve New Users (manual review).
-- Pending queue, bulk approve/reject, per-user block, revoke access at any time.
+- Pending queue, bulk approve/reject, per-user block, revoke access at any time. Remove from Event and Block differ: a removed person can join again through a live invite, and a blocked one cannot (D-102).
+- Every event has exactly one Admin, its creator (D-102).
 - Attendee list: searchable, filterable by role and verification status.
 - **There is no role-based media visibility rule.** All uploaded photos are visible to all event members regardless of the uploader's role, so a role change has no retroactive effect on any photo (D-13). `uploader_role_at_upload` drives the Uploader filter and nothing else: no access control, no routing.
 
@@ -733,7 +736,7 @@ These are the only two channels. Schedule Changes and Upload Activity notificati
 There is no `PlanTier` concept in v1. Subscriptions are entirely Future Work (§6.2). In their place, fixed constants are hard-coded into the app and API, with no user-facing limit UI, no upgrade flow, and no per-event selection:
 
 - Maximum event duration: **14 days**, from the first sub-event's start to the last sub-event's end (D-88). This is a *duration* cap, not to be confused with the unrelated 14-day event soft-delete window in §4.21
-- Maximum guest count per event: **150**
+- Maximum guest count per event: **150** active Guests. The Admin and Photographers do not count (D-102)
 - Maximum upload count per event: **2,000**
 - Maximum sub-events per event: **15** (§4.3)
 - Maximum reference photos per user: **5**, not counting the profile photo (§4.2)
@@ -801,7 +804,8 @@ One table per area, so a slice cites the part it needs.
 
 | Scenario | System behavior |
 |---|---|
-| Invite link expired or revoked | Clean error screen: "This link has expired or been revoked. Contact the event organizer." |
+| Invite link expired or revoked | Clean error screen: "This link has expired or been revoked. Contact the event organizer." An invite is dead once revoked or once its event is deleted or archived; there is no time limit. |
+| A removed person opens a live invite | They join again, pending or active by the event's approval mode. A blocked person gets the Join Error screen instead (D-102). |
 
 ### 5.2 Location verification
 
