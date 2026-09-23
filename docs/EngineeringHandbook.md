@@ -220,11 +220,11 @@ There is no `PlanTier` table. The hard-coded constants in spec §4.17 are plain 
 
 ### 5.2 The image-serving endpoint
 
-**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It first drops every media id the requester may not see under the media rule in `docs/ARCHITECTURE.md` §1. For the rest it answers "which file does this requester get for this photo": the subject's own variant if a `dnp_subject` row on that media points at the requester's subject, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3).
+**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It first drops every media id the requester may not see under the media rule in `docs/ARCHITECTURE.md` §1. For the rest it answers "which file does this requester get for this photo": the subject's own variant if a `dnp_subject` row on that media points at the requester's subject, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3). It is built in two steps: S-13 in Phase 3 with the visibility check and the public file only, then S-21 in Phase 5 adds the subject's file and the own-variant flag (D-93).
 
 ### 5.3 API conventions
 
-Every endpoint follows these, so the app has one way to read an answer. They exist before S-01 writes its first schema.
+Every endpoint follows these, so the app has one way to read an answer. They exist before S-01 writes its first schema (D-94).
 
 - **Paths** are plural nouns under the resource that owns them: `GET /events/{eventId}/media`, `POST /events/{eventId}/media/preflight`, `POST /media/{mediaId}/complete`. Ids are uuids in the path, never in a query string.
 - **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
@@ -524,6 +524,8 @@ The informational schedule with the §4.3 status computation, both role-specific
 ### 14.3 Phase 3 — capture & upload
 The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with the verification check temporarily disabled in the pre-flight endpoint**, so every upload goes through. Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
 
+**The image-serving endpoint starts here** (D-93, S-13): the visibility check, the public file and the cache key, with its negative test written first. The album needs it to show anything, and a second serving path is exactly what root invariant 3 forbids.
+
 **The worker skeleton and the `thumbnail_dims` job land in this phase too** (D-72, slice S-18a), right after the upload endpoints. The album filters on `processed_at` and only the worker sets it. Without them the album built here shows nothing until Phase 5, and the tempting stopgap is setting `processed_at` in Express.
 
 ### 14.4 Phase 4 — location verification gating
@@ -537,7 +539,7 @@ Add the on-device GPS check, the server-side re-validation, the queue gate, the 
 
 **Retire it in the same PR that turns on `face_process`** (D-72). Once Do Not Publish users exist, `thumbnail_dims` is a publishing bug. It sets `processed_at` without blurring anything, and if it runs on the same upload as `face_process` it can publish the photo first or point the public keys back at the unblurred upload afterwards.
 
-Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, a blurred thumbnail for each (D-69), the serving endpoint with its authorization check, and the self-visible badge. Every file it writes applies the blur regions S-19 already stores (root invariant 6).
+Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, a blurred thumbnail for each (D-69), the subject's branch of the serving endpoint Phase 3 built (D-93), and the self-visible badge. Every file it writes applies the blur regions S-19 already stores (root invariant 6).
 
 **Write the serving endpoint's negative test before the endpoint** (§11.3). It is the most valuable test in the project and it is twenty lines.
 
@@ -556,7 +558,7 @@ Then run the calibration exercise in §11.4.
 Build rung 3 first, in roughly half a day, before rungs 1 and 2. It is a useful feature in its own right, it is the escape hatch when automatic matching misses something in the demo, and building it after you need it is building it under pressure. Spec §4.11.4.4 specifies it (D-83): any Guest or the Admin draws a rectangle, it blurs every file of the photo, and it is stored so no regeneration drops it.
 
 ### 14.6 Phase 6 — the rest
-Notifications (Approval Alerts and Album Lifecycle only). Multi-select download, which routes through the same serving endpoint Phase 5 already built, because there is no separate download path and no compositing step (D-57). Theme and settings. The rest of the formalized screens in spec §2.5.8: Access Removed, Consent re-gate and Supabase Unavailable. Join Confirmation, Pending Approval and Join Error arrive with the join flow in Phase 1 (S-03), and Forced Logout with auth (S-01). The album toggle with its Close Album confirm dialog (spec §4.9), which is small and prevents the most likely real failure of the Photographer role, and which switches on the album-open check pre-flight has carried since Phase 3 (D-82). The hard-coded limits are not here: each is enforced by the slice where it can be crossed (spec §4.17).
+Notifications (Approval Alerts and Album Lifecycle only). Multi-select download, which routes through the same serving endpoint Phase 3 built and Phase 5 extended, because there is no separate download path and no compositing step (D-57). Theme and settings. The rest of the formalized screens in spec §2.5.8: Access Removed, Consent re-gate and Supabase Unavailable. Join Confirmation, Pending Approval and Join Error arrive with the join flow in Phase 1 (S-03), and Forced Logout with auth (S-01). The album toggle with its Close Album confirm dialog (spec §4.9), which is small and prevents the most likely real failure of the Photographer role, and which switches on the album-open check pre-flight has carried since Phase 3 (D-82). The hard-coded limits are not here: each is enforced by the slice where it can be crossed (spec §4.17).
 
 ### 14.7 Phase 7 — buffer. Reserve it and defend it
 Testing pass, performance pass (§16), UI polish, and demo rehearsal on real devices in the actual room. Reserve four weeks near your defense date and defend that reservation. It always gets tempting to fill with one more feature, and it is always a mistake. Build the seeded demo dataset here (spec §9), and load it through the real pre-flight, upload and completion path so `face_process` blurs it; a seed script that inserts media rows with `processed_at` already set publishes unblurred photos (root invariant 1). Rehearse the nine-beat script, and only then, if the core is genuinely solid, consider a stretch goal from spec §7.
