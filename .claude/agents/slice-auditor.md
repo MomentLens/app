@@ -15,7 +15,7 @@ The prompt gives you a slice id. Start with `node scripts/doc.mjs slice <id>` an
 
 Do all of this, in order:
 
-1. Look up every table, column, endpoint, job and R2 key the slice touches in `docs/ARCHITECTURE.md`. Compare each with how the spec and handbook sections in the brief describe it.
+1. Look up every table, column, endpoint, job and R2 key the slice touches in `docs/ARCHITECTURE.md`. Compare each with how the spec and handbook sections in the brief describe it. Anything the API must do in one transaction has to go through a SQL function called with `rpc`, because supabase-js holds no transaction (D-95); flag any that the docs describe as two calls.
 2. Compare every number in the brief (limits, sizes, radii, windows, thresholds) across every place it appears.
 3. For every `D-nn` the brief cites, run `node scripts/doc.mjs why D-nn` and check for an "Amended" line or a later entry that changes it.
 4. Check every rule in the brief against the numbered invariants in root `CLAUDE.md`.
