@@ -89,7 +89,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17 | B | S-02, S-08 |
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5.1, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
 
-**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing. Deleting and editing follow D-100: delete only a sub-event with no photos and never the last one, and an edit moves nothing. Other phones see a Delay on their next fetch of the event, so there is no Realtime to build. The status function lives in `packages/shared-types`, one pure function the capture button and the API's scan-time check both call, with its unit tests in `apps/api`'s Jest suite (D-105).
+**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing. Deleting and editing follow D-100: delete only a sub-event with no photos and never the last one, and an edit moves nothing. Other phones see a Delay on their next fetch of the event, so there is no Realtime to build. The status function lives in `packages/shared-types`, one pure function the capture button and the API's scan-time check both call, with its unit tests in `apps/api`'s Jest suite.
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
@@ -119,11 +119,11 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 **S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue.
 
-**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration and the `start_upload` and `complete_upload` SQL functions (D-95), and adds `@aws-sdk/s3-request-presigner`, approved in D-105. It depends on S-03 and S-04 for membership and sub-events, not on S-11, which calls it. Its album-open check ships switched off, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
+**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration and the `start_upload` and `complete_upload` SQL functions (D-95), and adds `@aws-sdk/s3-request-presigner`, the dependency the team approved for it. It depends on S-03 and S-04 for membership and sub-events, not on S-11, which calls it. Its album-open check ships switched off, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
 
 **S-13 writes the `media` SELECT policy** that Realtime needs, the first one after `health_check`. It checks membership through a `security definer` function (arch §1, D-73). A human reads it before it merges.
 
-**S-13 also builds the image-serving endpoint, without the subject's file** (D-93). It takes a batch of media ids, leaves out any the requester may not see under arch §1's media rule, presigns the public file or public thumbnail from its column, and returns the cache key (D-86). Write its negative test first (HB §11.3), and get it a human read: it is the serving check (D-68). S-21 adds the subject's own file and the own-variant flag to this endpoint; nothing else serves an image.
+**S-13 also builds the image-serving endpoint, without the subject's file** (D-93). It takes a batch of media ids, leaves out any the requester may not see under arch §1's media rule, presigns the public file or public thumbnail from its column, and returns the cache key (D-86). Write its negative test first (HB §11.3), and get it a human read: it is the serving check. S-21 adds the subject's own file and the own-variant flag to this endpoint; nothing else serves an image.
 
 ---
 
@@ -158,7 +158,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6). The rectangle is stored as fractions of the upright stored image, the frame the worker's face boxes use (D-99). Its real entry point is S-22's action bar; until S-22 lands, reach the drawing screen through a development-only route, and S-22 deletes that route.
 
-**S-21 is the riskiest slice in the project.** It adds the subject branch to S-13's image-serving endpoint, the most sensitive authorization check in the system (HB §5.2, D-93). Write its negative test before the endpoint (HB §11.3). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72). When it merges, wipe the dev project's photos and reseed them through the real pipeline: photos `thumbnail_dims` processed have no `face` rows, so `reprocess` can never blur them (root invariant 10, D-105). Until S-26 records thresholds, the worker blurs every face and matches nobody (D-104).
+**S-21 is the riskiest slice in the project.** It adds the subject branch to S-13's image-serving endpoint, the most sensitive authorization check in the system (HB §5.2, D-93). Write its negative test before the endpoint (HB §11.3). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72). When it merges, wipe the dev project's photos and reseed them through the real pipeline: photos `thumbnail_dims` processed have no `face` rows, so `reprocess` can never blur them (root invariant 10). Until S-26 records thresholds, the worker blurs every face and matches nobody (D-104).
 
 **S-22's marker is a correctness requirement, not polish** (D-26). Without it a missed match is undetectable by the only person who could report it.
 
@@ -183,7 +183,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-31 writes the `event` SELECT policy** for the Realtime event that flips the album banner, the same way S-13 wrote the one on `media` (arch §1). A human reads it before it merges.
 
-**S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later. "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV; the push toggles are `profile.notify_approval` and `profile.notify_album`, which S-27's sender checks (D-105).
+**S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later. "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV; the push toggles are `profile.notify_approval` and `profile.notify_album`, which S-27's sender checks.
 
 ---
 
