@@ -85,13 +85,17 @@ const resolve = (token) => {
 // A mistyped id can be any length; echoing 300 characters of it back is noise.
 const show = (t) => (t.length > 60 ? t.slice(0, 60) + '…' : t);
 
-const near = (t) =>
-  !t
-    ? []
-    : Object.values(C)
-        .filter((c) => c.slug.includes(num(t)) || c.title.toLowerCase().includes(num(t)))
-        .slice(0, 5)
-        .map((c) => `  ${c.display || c.slug}  ${c.title}`);
+// A mistyped id gets the ids that start with it: `D-8` lists D-80 to D-89. Matching on slug
+// text listed D-19, D-23, D-25, D-47 and D-52, all retired, whose slugs end "superseded-by-d-8x".
+const near = (t) => {
+  if (!t) return [];
+  const pool = /^(D|S|P0)-\d+[a-z]?$/i.test(t)
+    ? Object.values(C).filter((c) => c.key?.toLowerCase().startsWith(t.toLowerCase()))
+    : Object.values(C).filter(
+        (c) => c.slug.includes(num(t)) || c.title.toLowerCase().includes(num(t)),
+      );
+  return pool.slice(0, 5).map((c) => `  ${c.display || c.slug}  ${c.title}`);
+};
 
 const files = new Map();
 const read = (path, a, b) => {
@@ -163,9 +167,9 @@ const phaseProse = (phase) =>
         .filter((l) => l.trim() && !/^(#|\||---)/.test(l.trim()))
         .join('\n');
 
-// A menu of one child is not a choice: the reader fetches that child every time. arch §1 is
-// one child, the "who may see what" table, and 80 more tokens would have hidden it from the
-// three slices that cite it.
+// A menu of one child is not a choice: the reader fetches that child every time. arch §1 has
+// one child, the "who may see what" table, and sits just under the threshold; a menu there
+// would hide the table from every slice that cites it.
 const menued = (c) => c.children.length > 1 && c.tokens > MENU_OVER;
 
 // What a chunk costs to read through this tool: a menued parent charges only its preamble.
@@ -217,14 +221,13 @@ const render = (slice) => {
   }
   put(`one hop out: ${next.map((s) => C[s].display || s).join(' ')}`);
   // The checklist every slice is measured against is not in any brief and is too long to
-  // put in all 41. Name it, now that a chunk without a section number can be addressed.
+  // put in every one. Name it, now that a chunk without a section number can be addressed.
   put('done means: doc slices:definition-of-done');
-  const cost = tokens(lines.join('\n'));
-  return {
-    lines: [`=== slice ${slice.key} · ${expand.length} sections · ~${cost} tok ===`, '', ...lines],
-    cost,
-    menus,
-  };
+  // The header is part of what the reader pays for, and leaving it out put every brief 17
+  // tokens over its own figure. `~N` is one word whatever N is, so counting with 0 is exact.
+  const head = (n) => `=== slice ${slice.key} · ${expand.length} sections · ~${n} tok ===`;
+  const cost = tokens([head(0), '', ...lines].join('\n'));
+  return { lines: [head(cost), '', ...lines], cost, menus };
 };
 
 const verbs = {};
