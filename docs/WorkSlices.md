@@ -34,7 +34,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 - [ ] Unit test for any pure logic in it (Handbook §11.2)
 - [ ] Dark mode uses tokens, no hardcoded hex
 - [ ] Reviewed by one other person (Handbook §12)
-- [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, with Ukasha reviewing that change (D-75)
+- [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, written by the done stage as its own commit, with Ukasha reviewing that change (D-75, D-107)
 
 ## Ownership
 

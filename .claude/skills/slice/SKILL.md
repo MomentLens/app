@@ -98,10 +98,10 @@ One package per session, in the card's build order: `/slice S-12 build api`, `/c
 3. Fix what it reports and run it again. After two failed rounds on the same failure, stop and ask the user; a third attempt means context is missing (Handbook §18.2).
 4. When the verifier is clean, commit this package's work in small conventional commits.
 
-Stay inside the package. Never edit `packages/shared-types`, `docs/` or another package, and never add a dependency; if the card needs one of those, stop and ask. When the card is silent, wrong, or conflicts with a numbered invariant, ask the user rather than choosing a reading, and fix the card in the issue before building on the answer.
+Stay inside the package. Never edit `packages/shared-types`, `docs/` (the done stage writes any `ARCHITECTURE.md` change) or another package, and never add a dependency; if the card needs one of those, stop and ask. When the card is silent, wrong, or conflicts with a numbered invariant, ask the user rather than choosing a reading, and fix the card in the issue before building on the answer.
 
 If the card says the slice touches the camera, GPS or the upload queue, ask the user to run it on a physical phone and report back. The session for the last package opens the PR titled `<id>: <name>`, naming the human-read surfaces the verifier listed.
 
 ## 5. Done
 
-Run `slice-verifier` once more against the whole branch. Then go through the Definition of done in `docs/WorkSlices.md` item by item. For each one say met or not met, with the evidence: the test name and file, the command and its result, or the reason it does not apply. If `docs/ARCHITECTURE.md` needs an update, say which section and what changes; Ukasha reviews it (D-75). Do not describe a slice as done while an item is unmet. The PR description names which of the four human-read surfaces the slice touches, or says it touches none.
+Run `slice-verifier` once more against the whole branch. Then go through the Definition of done in `docs/WorkSlices.md` item by item. For each one say met or not met, with the evidence: the test name and file, the command and its result, or the reason it does not apply. If `docs/ARCHITECTURE.md` needs an update, write it now as its own commit on the slice branch, citing the D-entry or the merged code, and name it in the PR so Ukasha approves it there (D-75, D-107). This is the only stage that edits `docs/`. Do not describe a slice as done while an item is unmet. The PR description names which of the four human-read surfaces the slice touches, or says it touches none.
