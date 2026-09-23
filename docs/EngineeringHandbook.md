@@ -239,7 +239,7 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 **Use ONNX-exported models**, which InsightFace ships, rather than the full PyTorch runtime. Meaningfully faster CPU inference and a much smaller install, both of which matter on a CPU-only server.
 
-**Model choice.** Start with `buffalo_l` for accuracy. If the server is struggling, `buffalo_s` is materially faster with a modest accuracy cost. Decide with a measurement, not a guess.
+**Model.** `buffalo_l`, with the detection and recognition modules only (D-92). Rerun D-78's benchmark on the server the day it is provisioned.
 
 ---
 

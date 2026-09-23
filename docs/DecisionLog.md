@@ -112,6 +112,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Rejected reasoning worth recording, because it was argued at length.** The flag model removes the worst demo failure, which is GPS failing indoors and nothing uploading at all. The counter-argument that won: the demo is in a known classroom on campus with a rehearsal a week prior and a generous verification radius, so the risk is controlled.
 **Cost.** If GPS and QR both fail and the Admin is unavailable, a guest's photos are stuck indefinitely. The spec makes this an explicit, non-lossy state rather than an error.
 **Reopen if.** The rehearsal shows GPS is unreliable in the demo room and widening the radius does not fix it.
+**Confirmed (2026-09-23).** Ukasha confirmed GPS is reliable in the demo room, so the reopen condition has not occurred.
 
 ### D-15 — Verification granularity is per sub-event, with a blunt admin override
 **Decision.** A `VenueVerification` row is scoped to one user and one sub-event. Force Verify sets `admin_verified_at` on the membership row, and the pre-flight check is `(per-sub-event row) OR (admin_verified_at IS NOT NULL) OR (role = 'photographer')`.
@@ -660,13 +661,18 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Rejecting with a 400 at upload, which needs face detection in Express, against root invariant 5 and the rule that the worker never serves live requests (Handbook §2). Taking the largest face, which is a guess.
 **Cost.** The rejection arrives a few seconds after the upload rather than with it, so the app polls the reference until the worker has decided.
 
+### D-92: The worker runs `buffalo_l`
+**Decision.** The worker uses InsightFace's `buffalo_l` model pack, with the detection and recognition modules only, the configuration D-78 benchmarked. `buffalo_s` is not a fallback.
+**Why.** Blur and Find My Photos both rest on recognition accuracy, and a missed match is the costly failure (spec §4.11.4.5). `buffalo_l` is the more accurate pack, and D-78's timings were measured on it, so the latency the team knows is the latency of the model it ships.
+**Rejected.** `buffalo_s`, faster with lower accuracy, which trades away the one property a missed blur costs.
+**Cost.** A larger model and slower recognition on large group photos: D-78 measured about 200ms per face at two threads on the free-tier instance.
+**Reopen if.** The benchmark on the Netcup server misses D-78's bar.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
 
 - **Similarity thresholds.** Not measured; the plan and the table are `docs/ARCHITECTURE.md` §6. Shipping an example number is how the blur silently fails in a demo.
-- **`buffalo_l` versus `buffalo_s`.** Decide with a measurement, on the Netcup server, since D-78 makes it the demo runtime.
-- **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
 - **Whether the standby actually works.** D-79 defines it. It is not real until `scripts/provision.sh` has run against a real VM on one of the three credits. Half a day in Phase 7.
 - **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
