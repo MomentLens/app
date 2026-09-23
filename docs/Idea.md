@@ -794,19 +794,50 @@ Consolidated here because four scattered numbers in four sections is how a three
 ## 5. Edge cases & exception handling
 <!-- abstract: What the app does when things go wrong: failed uploads, lost connectivity, duplicate joins, revoked access, missed face matches and the states each one leaves behind. -->
 
+One table per area, so a slice cites the part it needs.
+
+### 5.1 Joining and access
+
 | Scenario | System behavior |
 |---|---|
 | Invite link expired or revoked | Clean error screen: "This link has expired or been revoked. Contact the event organizer." |
+
+### 5.2 Location verification
+
+| Scenario | System behavior |
+|---|---|
 | User not verified for the active sub-event | Upload does not proceed. Photos wait in the local queue. Banner offers "Scan Venue QR" and "Ask the organizer to verify you." |
 | Guest scans the Venue QR, offline | Scan recorded locally; travels with the next pre-flight on reconnect, then the queue flushes. |
 | Admin taps Force Verify, or the user verifies on another device | `admin_verified_at` or the verification row is set on the server. The device learns of it the next time it fetches the event, on foreground or reconnect, and every queued photo it covers unlocks (§4.5). |
 | User never gets verified at all | Photos remain in the local queue indefinitely and are visible in My Media with a clock badge. They are not lost, and they are not uploaded. The user can delete them locally. |
+
+### 5.3 Sub-event timing
+
+| Scenario | System behavior |
+|---|---|
 | A sub-event runs past its scheduled end | It completes at its scheduled end and the capture FAB hides, unless the Admin delays it (§4.3). Photos taken with the phone's own camera can still be added to it through "+ Add Media". |
 | No sub-event is In Progress, inside the event's span | The capture FAB is hidden. Gallery imports into any sub-event section still work (§2.5.4). |
 | Sub-events overlap because the Admin scheduled them that way | Capture tags to the most recently started one. |
+
+### 5.4 Uploads and the queue
+
+| Scenario | System behavior |
+|---|---|
 | Exact duplicate detected (identical SHA-256 of the uploaded bytes) | Silently rejected before any file transfer. No prompt. |
 | A photo is deleted by its uploader or removed by the Admin | It leaves every album at once. The Admin can restore it from the Review Queue for 30 days (§4.21). |
 | Upload succeeded but the worker has not processed it yet | The row exists with `processed_at` null. Visible only to the uploader in My Media with a spinner badge, never in the shared album (§4.9). |
+| Photographer uploads at 2am from home | Proceeds. Photographers are exempt from the location gate, and are otherwise handled by the same single upload pipeline as everyone else (§4.8). |
+| A file larger than 4096px on the longest edge is added via "+ Add Media" | Resized to 4096px client-side before upload. This never fires on a phone photo (§4.8). |
+| Photographer uploads after their sub-event ends, while the event is still open | Normal case, and the intended workflow. The photographer shoots the walima, uploads that night, and notifies the Admin out of band. The Admin closes the album once satisfied. Album state is per event, not per sub-event, so a completed sub-event never blocks an upload. |
+| Photographer uploads after the Admin closed the album | Blocked, same as any role. The Close Album confirm dialog (§4.9) names any Photographer who has uploaded nothing yet, specifically to prevent this. |
+| Any user tries to upload while the album is closed | Upload disabled with a clear banner. Applies to Admin too, who is prompted to open the album first. Pre-flight rejects it as well, so a modified app gets nowhere (§4.8.2). |
+| The album closes while photos are queued | They stay in the local queue and upload if the Admin reopens the album. |
+| App force-killed mid-upload | The local SQLite queue resumes the remaining items on next launch. A photo that had passed pre-flight resumes on its existing row instead of being rejected as its own duplicate (§4.8.2). No attempt at guaranteed background completion. |
+
+### 5.5 Do Not Publish and blur
+
+| Scenario | System behavior |
+|---|---|
 | A user with no accepted reference tries to enable Do Not Publish, including one whose reference photo is still processing or was rejected | Blocked. The confirm button stays disabled and the screen links to Add Reference Photos (§4.2). |
 | A Do Not Publish user tries to delete their last accepted reference | Refused, with the reason. Deleting it would leave the flag protecting nobody (§4.2). |
 | A reference photo shows no face, or several | Rejected within seconds of the upload, with the reason. For several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." (§4.2) |
@@ -817,14 +848,12 @@ Consolidated here because four scattered numbers in four sections is how a three
 | A photo with a blur region is reprocessed | The region is applied again. No regeneration drops it (root invariant 6). |
 | Photo uploaded before a Do Not Publish flag is activated | Existing photos are reprocessed asynchronously to blur that face. |
 | A Do Not Publish user joins an event that already has photos | Joining triggers reprocessing for that user in that event, so earlier photos blur the same way (§4.11.4.5). |
-| Photographer uploads at 2am from home | Proceeds. Photographers are exempt from the location gate, and are otherwise handled by the same single upload pipeline as everyone else (§4.8). |
-| A file larger than 4096px on the longest edge is added via "+ Add Media" | Resized to 4096px client-side before upload. This never fires on a phone photo (§4.8). |
-| Photographer uploads after their sub-event ends, while the event is still open | Normal case, and the intended workflow. The photographer shoots the walima, uploads that night, and notifies the Admin out of band. The Admin closes the album once satisfied. Album state is per event, not per sub-event, so a completed sub-event never blocks an upload. |
-| Photographer uploads after the Admin closed the album | Blocked, same as any role. The Close Album confirm dialog (§4.9) names any Photographer who has uploaded nothing yet, specifically to prevent this. |
+
+### 5.6 The event and the service
+
+| Scenario | System behavior |
+|---|---|
 | Admin deletes event mid-event | Attendees notified, 14-day soft delete, download still available. |
-| Any user tries to upload while the album is closed | Upload disabled with a clear banner. Applies to Admin too, who is prompted to open the album first. Pre-flight rejects it as well, so a modified app gets nowhere (§4.8.2). |
-| The album closes while photos are queued | They stay in the local queue and upload if the Admin reopens the album. |
-| App force-killed mid-upload | The local SQLite queue resumes the remaining items on next launch. A photo that had passed pre-flight resumes on its existing row instead of being rejected as its own duplicate (§4.8.2). No attempt at guaranteed background completion. |
 | Supabase free-tier project auto-pauses after inactivity | Mitigated via a scheduled keep-alive ping. Surfaces a clear "temporarily unavailable" state with a retry action if it happens anyway. |
 
 ---

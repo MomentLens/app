@@ -68,7 +68,7 @@ Produce these seven, in this order:
    - time: a sub-event starting, ending, running late, overlapping (spec §4.3)
    - a Realtime update arriving mid-action
 
-   For each case, say what the docs say to do, citing the id, or say **"the docs do not say"**. Never fill a gap with a guess here; naming the gap is the work. Read spec §5 for every error path, whether or not the brief carries it.
+   For each case, say what the docs say to do, citing the id, or say **"the docs do not say"**. Never fill a gap with a guess here; naming the gap is the work. Read the spec §5 subsections for this slice's area, whether or not the brief carries them; `doc spec §5` lists all six.
 5. **What the docs get wrong.** Hunt, do not wait to notice. Do each of these and report what you found:
    - Look up every table, column, endpoint, job and R2 key the slice touches in `docs/ARCHITECTURE.md`, and compare it with how the spec and handbook sections in the brief describe it.
    - Compare every number in the brief (limits, sizes, radii, windows, thresholds) across every place it appears.

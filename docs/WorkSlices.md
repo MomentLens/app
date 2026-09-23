@@ -106,9 +106,9 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20, D-90 | B | S-04, S-08, S-10 |
-| S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5 | C | S-04, S-08 |
+| S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5.2, spec §5.4 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
-| S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification, arch:media | U | S-11 |
+| S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5.4, D-73, arch:venue_verification, arch:media | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, arch §5 | U | S-12 |
 | S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime | §4.9, §2.5.2, §4.10, D-22, D-35, D-55, D-60, D-86, HB §4, HB §16, arch §1 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
@@ -214,7 +214,7 @@ Every numbered section of `docs/Idea.md` is either cited by a slice above, liste
 
 **Decisions and `docs/ARCHITECTURE.md`** get the same audit by hand when a phase starts, not in the gate, because the log is appended to constantly and a gate there would fire on every new entry. A decision or an architecture section no slice reaches is a rule nobody will be shown. The ones that reach no brief on purpose are cut scope, deferred work, superseded entries, and the four Photographer rules, whose content spec §4.10 restates for the six slices that cite it.
 
-**The one to watch.** spec §5, edge cases and exception handling, belongs to a dozen slices, so it is not one unit of work. S-10 and S-12 cite it for the rows an implementer would otherwise get wrong. S-04 does not: its two rows, a sub-event running late and two overlapping, are in spec §4.3, which it cites. That is not full coverage. **Read spec §5 before building any error path, whatever your slice cites, and treat a row in it as a requirement.** Root `CLAUDE.md` routes to it.
+**The one to watch.** spec §5, edge cases and exception handling, belongs to a dozen slices, so it is not one unit of work. It is split by area, spec §5.1 to §5.6, so a slice cites the part it builds: S-10 cites §5.2 and §5.4, and S-12 cites §5.4. S-04 does not cite §5.3: its two rows, a sub-event running late and two overlapping, are in spec §4.3, which it cites. That is not full coverage. **Read the spec §5 subsections for your area before building any error path, whatever your slice cites, and treat a row in them as a requirement.** Root `CLAUDE.md` routes to it.
 
 ---
 

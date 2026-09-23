@@ -19,7 +19,7 @@ Do all of this, in order:
 2. Compare every number in the brief (limits, sizes, radii, windows, thresholds) across every place it appears.
 3. For every `D-nn` the brief cites, run `node scripts/doc.mjs why D-nn` and check for an "Amended" line or a later entry that changes it.
 4. Check every rule in the brief against the numbered invariants in root `CLAUDE.md`.
-5. For each edge-case category, find at least one case or say why it cannot apply: each role (Admin, Guest, Photographer, pending, blocked, non-member); a Do Not Publish subject against other viewers; offline, retry, and a crash between any two steps; two devices or two Admins at once; zero, one, the cap and one past it; sub-event time boundaries; a Realtime update mid-action. Read spec §5 for every error path.
+5. For each edge-case category, find at least one case or say why it cannot apply: each role (Admin, Guest, Photographer, pending, blocked, non-member); a Do Not Publish subject against other viewers; offline, retry, and a crash between any two steps; two devices or two Admins at once; zero, one, the cap and one past it; sub-event time boundaries; a Realtime update mid-action. Read the spec §5 subsections for the slice's area; `node scripts/doc.mjs spec §5` lists all six.
 
 Never resolve a contradiction by choosing a reading. Never fill a gap with a guess. A decision in `docs/DecisionLog.md` or a numbered invariant is not a doc bug; if one looks wrong, report it under decisions.
 
