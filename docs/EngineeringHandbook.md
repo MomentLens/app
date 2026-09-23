@@ -209,7 +209,7 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 
 The rules easiest to get wrong:
 
-- **`media`**: an **active** member of the event, only **once `processed_at` is set**, or at any time the uploader (D-55). A Photographer sees only their own uploads (spec §4.10). Update and delete by the uploader and the event's Admin. `uploader_role_at_upload` is display metadata that drives the Uploader filter and nothing else: never in an authorization check, never in a routing branch (D-13).
+- **`media`**: an **active** member of the event, only **once `processed_at` is set**, or at any time the uploader (D-55). A Photographer sees only their own uploads (spec §4.10). A row without `uploaded_at` is shown to nobody (D-82). Update and delete by the uploader and the event's Admin. `uploader_role_at_upload` is display metadata that drives the Uploader filter and nothing else: never in an authorization check, never in a routing branch (D-13).
 - **`event`**: **active** members only.
 - **`membership`**: a user reads their own rows; the Admin reads every row for their events.
 - **`face_reference`**: the owner sees their own reference photos. Embeddings never leave the database and the worker.
@@ -238,7 +238,7 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 - **`processed_at` is written last, after every variant is in R2.** It is what makes the row album-visible (D-55). Write it early and you publish an unblurred photo for the length of the rest of the job.
 - **Bump `variant_version` on every write, including the first** (D-60). The object key carries it. A stable key means clients serve the pre-blur image from their own cache after a retroactive blur.
-- **N Do Not Publish subjects means N+1 files and N+1 thumbnails, never 2^N.** No viewer ever needs two subjects unblurred at once, so there is no combination to enumerate. A photo with no Do Not Publish faces produces no extra files at all.
+- **N Do Not Publish subjects means N+1 files and N+1 thumbnails, never 2^N.** No viewer ever needs two subjects unblurred at once, so there is no combination to enumerate. A photo with no Do Not Publish face and no blur region produces no extra files at all.
 
 **Blur implementation** is specified in spec §4.11.4.3 (D-65): the box expanded 30 to 40 percent with an elliptical mask, then downsample, upsample and a box blur. Thumbnails are cut from the blurred output.
 
@@ -268,7 +268,7 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 | EXIF strip | Yes. Timestamp and orientation survive; everything else, including GPS, is stripped. |
 | HEIC to JPEG | Yes |
 | Client resize | **None**, unless the longest edge exceeds 4096px, in which case resize to 4096px. Never fires on a phone photo. |
-| Thumbnail | 300px WebP, for the grid. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face (D-69) |
+| Thumbnail | 300px WebP, for the grid. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face and no blur region (D-69, D-83) |
 | Hash | SHA-256 over the **exact byte stream about to be uploaded**, after EXIF strip and HEIC conversion |
 | Location gate | Server-side in pre-flight. Photographers pass automatically. |
 
@@ -306,7 +306,7 @@ There is no role branch left to unit-test here. The pre-flight checks are worth 
 Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differences:
 
 - Use **WSL2** (Ubuntu 24.04, the server's release) for the backend (Express and FastAPI), general Node tooling and the agent. It avoids a long tail of path-handling and native-module-compilation quirks. Clone the repo into the WSL2 filesystem (`~/`), not `/mnt/c`, where file watching and installs are slow; `pnpm check:machine` warns when it sees `/mnt/`.
-- Install Node, pnpm, uv and Python **inside WSL2**, not the Windows-native versions, so the toolchain stays consistent.
+- Install Node, pnpm, uv and Python **inside WSL2**, not the Windows-native versions, so the toolchain stays consistent. Ubuntu has no Homebrew, so two of §8's steps change: install fnm with `curl -fsSL https://fnm.vercel.app/install | bash` and uv with `curl -LsSf https://astral.sh/uv/install.sh | sh`, open a new shell, then carry on from `fnm install` and `uv python install 3.12`.
 - **Test Android on a physical phone over USB**, running the development build. Builds are arm64-v8a only (`apps/mobile/CLAUDE.md`), and the Android emulator on an x86 Windows machine runs x86_64 images, so it cannot install them. A phone is also what §10 recommends for the camera and GPS. Never Expo Go: since P0-9 the app needs native modules Expo Go does not ship, among them MMKV, the invite-link URL scheme and background upload. B and C run it on their own 64-bit Android phones, the arm64-v8a devices the build targets. **Open, to settle later:** whether the build is compiled on the Windows side or by EAS in the cloud, and how `adb` reaches the phone when Metro runs in WSL2.
 - **The iOS Simulator does not exist on Windows.** Apple ships it only with Xcode. This is not workaround-able. Practically:
   - You can write and test 100% of the Android side locally, on a physical phone.
@@ -360,7 +360,7 @@ Testing proportionate to your timeline.
 
 Some integration tests, and one of them is the most valuable test in the project.
 
-**Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, and that a direct request for B's variant key returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
+**Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, that no response to A contains B's variant key, and that an unsigned GET of that key on the bucket returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
 
 Then the negative API tests (D-73): a Photographer cannot read another user's media, one user cannot read another's `face_reference` rows, and no endpoint returns a Do Not Publish subject's identity to anyone else. The two RLS policies, `SELECT` on `media` and `event`, get a Realtime test: a non-member receives nothing, and a member receives no unprocessed row they did not upload.
 
@@ -374,7 +374,7 @@ Two honesty notes that belong with the numbers rather than in the viva prep, bec
 
 ### 11.5 CI and error reporting
 
-**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for app, API, and worker, plus the authorization test above. Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
+**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest, with S-18a. Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
 
 ---
 
@@ -498,7 +498,7 @@ Also in Phase 0, and it is not optional: **spike InsightFace on the server.** Pr
 Auth (sign up, log in via Supabase Auth), create an event with bare-minimum fields, join via a Guest Link, see it in a list. No QR, no camera, no AI, no offline handling, no polish. This proves the full stack end to end on the real feature set rather than a toy.
 
 ### 14.2 Phase 2 — event structure
-The informational schedule with the §4.3 status computation, both role-specific invite links, attendee management, Force Verify. Still mostly CRUD, and that is the point: this is where the service-layer authorization checks and their negative tests become routine before the hard parts arrive (D-73).
+The informational schedule with the §4.3 status computation, both role-specific invite links, attendee management. Force Verify waits for Phase 4, where the gate it overrides arrives (S-17). Still mostly CRUD, and that is the point: this is where the service-layer authorization checks and their negative tests become routine before the hard parts arrive (D-73).
 
 ### 14.3 Phase 3 — capture & upload
 The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with the verification check temporarily disabled in the pre-flight endpoint**, so every upload goes through. Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
@@ -520,7 +520,7 @@ Then face detection and embedding. Then the blur pipeline: the public blurred fi
 
 **Write the serving endpoint's negative test before the endpoint** (§11.3). It is the most valuable test in the project and it is twenty lines.
 
-**Do not skip the `reprocess` job.** It is easy to leave for later because nothing visibly depends on it during a happy-path test, and then three things break at once. It is what makes Do Not Publish retroactive over already-published photos (spec §4.11), what carries a change in someone's reference photos to every photo, and what matches a user who joins an event late against the photos already there (D-84). It also has to apply every stored blur region, or a region disappears on its next run (root invariant 6). Build it in the same pass as the blur pipeline, not in Phase 6.
+**Do not skip the `reprocess` job.** It is easy to leave for later because nothing visibly depends on it during a happy-path test, and then three things break at once. It is what makes Do Not Publish retroactive over already-published photos (spec §4.11), what carries a change in someone's reference photos to every photo, and what matches a user who joins an event late against the photos already there (D-84). It also has to apply every stored blur region, or a region disappears on its next run (root invariant 6). Build it straight after the blur pipeline, as S-25 in Phase 5, not in Phase 6.
 
 **Verify the viewer-scoped filter with an actual test, not by inspection.** Spec §4.11 hides Do Not Publish faces from every viewer except the subject. The wrong implementation, a global exclusion, passes every test written from the other viewers' perspective and fails only for the subject, where it returns nothing. Write the positive case explicitly: a Do Not Publish user runs Find My Photos and gets their photos back.
 
@@ -535,7 +535,7 @@ Then run the calibration exercise in §11.4.
 Build rung 3 first, in roughly half a day, before rungs 1 and 2. It is a useful feature in its own right, it is the escape hatch when automatic matching misses something in the demo, and building it after you need it is building it under pressure. Spec §4.11.4.4 specifies it (D-83): any Guest or the Admin draws a rectangle, it blurs every file of the photo, and it is stored so no regeneration drops it.
 
 ### 14.6 Phase 6 — the rest
-Notifications (Approval Alerts and Album Lifecycle only). Multi-select download, which routes through the same serving endpoint Phase 5 already built, because there is no separate download path and no compositing step (D-57). Theme and settings. The formalized screens from spec §2.5: Join Confirmation, Pending Approval, Join Error, Forced Logout, Consent re-gate, Supabase Unavailable. The album toggle with its Close Album confirm dialog (spec §4.9), which is small and prevents the most likely real failure of the Photographer role, and which switches on the album-open check pre-flight has carried since Phase 3 (D-82). The hard-coded limits are not here: each is enforced by the slice where it can be crossed (spec §4.17).
+Notifications (Approval Alerts and Album Lifecycle only). Multi-select download, which routes through the same serving endpoint Phase 5 already built, because there is no separate download path and no compositing step (D-57). Theme and settings. The rest of the formalized screens in spec §2.5.8: Access Removed, Consent re-gate and Supabase Unavailable. Join Confirmation, Pending Approval and Join Error arrive with the join flow in Phase 1 (S-03), and Forced Logout with auth (S-01). The album toggle with its Close Album confirm dialog (spec §4.9), which is small and prevents the most likely real failure of the Photographer role, and which switches on the album-open check pre-flight has carried since Phase 3 (D-82). The hard-coded limits are not here: each is enforced by the slice where it can be crossed (spec §4.17).
 
 ### 14.7 Phase 7 — buffer. Reserve it and defend it
 Testing pass, performance pass (§16), UI polish, and demo rehearsal on real devices in the actual room. Reserve four weeks near your defense date and defend that reservation. It always gets tempting to fill with one more feature, and it is always a mistake. Build the seeded demo dataset here (spec §9), and load it through the real pre-flight, upload and completion path so `face_process` blurs it; a seed script that inserts media rows with `processed_at` already set publishes unblurred photos (root invariant 1). Rehearse the nine-beat script, and only then, if the core is genuinely solid, consider a stretch goal from spec §7.
@@ -545,7 +545,7 @@ Testing pass, performance pass (§16), UI polish, and demo rehearsal on real dev
 **Four Phase 7 items that are not polish and will be skipped if they are not named:**
 - **Judge devices** (D-61). The build installed on team-owned Android phones, accounts signed in, at least a week ahead. This is not testable on demo morning.
 - **The offline fallback** (D-62). A recorded walkthrough of the full script on a USB stick and on a laptop in the room. The seeded dataset lives in Supabase, so a network failure takes it too.
-- **The standby rehearsal** (D-79), per the criteria above.
+- **The standby rehearsal** (D-79), with the three things §13.3.5 says must exist before it.
 - **The demo stack** (D-76, D-78). API and worker on the server against the stable project, up at the start of this phase.
 
 Roughly: Phases 0 through 4 in the first semester, 5 through 7 in the second. A loose target, not a commitment.
@@ -736,7 +736,7 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 - **One paragraph per line.** No hard wraps in prose, so `grep` and `doc grep` find a whole sentence. Tables and code blocks keep their own line structure.
 - **A numbered heading's depth is its number's depth plus one**: `## 5`, `### 5.2`, `#### 5.2.1`. A section a slice might cite gets a number. The one exception is Handbook `## 16.5`, a sibling of §16 rather than its child. `docs/ARCHITECTURE.md`'s per-table headings are unnumbered by design and cited as `arch:<table>`.
 - **Every cross-document citation carries its prefix**: `spec §4.11`, `hb §7`, `arch §3`. A bare `§7` inherits a prefix written within the previous 60 characters, and otherwise resolves to its own document, then the spec, which can land in the wrong document without an error.
-- **Decisions are `### D-nn: Title`.** Never renumber one. Retire one only by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading; those are the two forms `doc` masks, so any other wording leaves the entry expandable into a brief. Change an entry by appending an "Amended (see D-nn)" line (gated: a `D-nn` heading the parser cannot read fails).
+- **Decisions are `### D-nn: Title`.** Older entries use an em dash where the colon goes; both parse, and neither gets rewritten. Never renumber one. Retire one only by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading; those are the two forms `doc` masks, so any other wording leaves the entry expandable into a brief. Change an entry by appending an "Amended (see D-nn)" line (gated: a `D-nn` heading the parser cannot read fails).
 - **Slice rows are machine-read.** A Phase 0 row has three cells and every other row five. Never put a `|` inside a cell. The "Depends on" cell holds slice ids and nothing else, because the brief prints exactly those rows. A warning note is its own paragraph, opening with the slice id in bold (gated: a note naming no slice fails).
 - **Cite a section id, never a line number.** `EngineeringHandbook.md:542` went stale in one PR. Ids survive edits and the gate checks them (gated: a dangling citation fails).
 - **Renaming a heading changes its id.** Before renaming one, `doc why` it, or grep for `arch:<slug>` if it is a table heading, and update what cites it.
