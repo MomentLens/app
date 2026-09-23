@@ -66,6 +66,7 @@ Thumbnails and downloads use this same endpoint and the same check. There is no 
 - **`face`, `dnp_subject`**: only through the viewer-scoped rule (root invariant 4). The subject learns they are in a photo; nobody else learns who is.
 - **`face_reference`**: the owner, and only their photos. Embeddings never leave the database and the worker.
 - **`venue.qr_secret`**: the event's Admin only (D-17).
+- **`profile.avatar_key`**: never presigned for a user whose subject has Do Not Publish active, for anyone, the Admin included. The app shows a name-initial placeholder instead (D-35). One function presigns avatars, and every endpoint that returns a person calls it.
 - **`profile.full_name`**: members of a shared event, Do Not Publish or not (D-35). A Photographer sees no other member's name, because the name list is the guest list (D-08).
 
 `uploader_role_at_upload` is display metadata. It drives the Uploader filter chip and nothing else. Never in an authorization check, never in a routing branch.
