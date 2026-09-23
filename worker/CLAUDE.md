@@ -16,7 +16,7 @@ The worker connects to Postgres directly with `DATABASE_URL`, so RLS does not ap
 
 **One worker process per machine** (`docs/ARCHITECTURE.md` §5). Leave CPU for Express, Postgres connections and nginx. Do not run two.
 
-Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
+Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch runtime (D-92).
 
 ---
 
@@ -49,10 +49,10 @@ Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 - **Store the bounding box with every embedding.** `reprocess` re-blurs without re-detecting, so the box has to exist already (D-30, D-66).
 - **Every similarity comparison in the system happens here, and the result is stored** (D-74). Embeddings are `vector(512)` columns. Each `face` row gets its matched subject, similarity and Unknown cluster. The API only reads those results, so thresholds live in exactly one codebase.
 - **Do not re-detect on blurred output.** An earlier design did this to exclude Do Not Publish users from the Recognized Faces list. It doubled inference cost to avoid what is a read-time filter, and the premise was wrong: detectors do find heavily blurred head-shaped regions.
-- **Matching is biased toward blurring when uncertain.** A missed match is the expensive failure; a false positive is visible and fixable.
+- **Matching is biased toward blurring when uncertain.** A missed match is the expensive failure; a false positive only blurs someone who did not ask, and that person stays blurred in the photo (spec §4.11.4.5).
 - **Every file you write applies the photo's stored blur regions** (root invariant 6), blurred at D-65's strength over exactly the rectangle drawn. There are no auto-added references and no tap-to-blur (D-83).
 - Matching is scoped to subjects who are **active members of this event**, never global.
-- **Thresholds come from `docs/ARCHITECTURE.md` §6.** If they are not measured yet, say so. Do not invent one and do not use the placeholders from the spec.
+- **Thresholds come from `docs/ARCHITECTURE.md` §6.** If they are not measured yet, say so. Do not invent one. The spec carries no numbers.
 
 ---
 

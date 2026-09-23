@@ -368,7 +368,7 @@ Also worth an integration test, because it fails silently in the other direction
 
 ### 11.4 Calibrating the similarity thresholds
 
-**One calibration task that is not a test but belongs here.** The similarity thresholds in spec §4.11 are placeholders. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
+**One calibration task that is not a test but belongs here.** The spec gives no similarity thresholds, and `docs/ARCHITECTURE.md` §6 records them as not measured. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
 
 Two honesty notes that belong with the numbers rather than in the viva prep, because this is where they will be forgotten. Thirty photos of three people is a small and unrepresentative sample, so the thresholds are overfitted to your demo set; say that yourself rather than being asked.
 
