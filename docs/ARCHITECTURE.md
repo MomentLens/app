@@ -197,7 +197,7 @@ Until verification passes or while the album is closed, photos wait in the devic
 
 - **Blur.** Box expanded 30 to 40%, elliptical mask, downsample then upsample with a box blur on top (D-65). A blur region is blurred with the same strength over exactly the rectangle drawn. Thumbnails are cut from the blurred output.
 - **Regions survive every regeneration.** `face_process`, `reprocess` and `blur_region` all apply the photo's stored regions. None of them regenerates from the bare upload alone (root invariant 6).
-- **Model.** InsightFace through ONNX Runtime, loaded once at startup (D-40). `buffalo_l` or `buffalo_s`: **Open** until measured.
+- **Model.** InsightFace through ONNX Runtime, loaded once at startup (D-40). `buffalo_l`, detection and recognition modules only (D-92).
 - **Processes.** One worker process per machine (Handbook §6).
 - **Scheduled work.** None in demo scope. Retention deletion (§4.21) appears in no demo beat (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes the objects and rows.
 
