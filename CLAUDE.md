@@ -20,7 +20,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 |---|---|
 | Upload pipeline | Spec §4.8 + Handbook §7 + `docs/ARCHITECTURE.md` §4 |
 | Blur, face detection, Do Not Publish | Spec §4.11 + Handbook §6 + `docs/ARCHITECTURE.md` §5 |
-| Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §2 + D-69 + D-86 + `docs/ARCHITECTURE.md` §3 |
+| Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §5.2 + D-69 + D-86 + `docs/ARCHITECTURE.md` §1 and §3 |
 | Album, grid, filters | Spec §4.9 + Handbook §16 |
 | RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5.1 |
 | Navigation or screens | Spec §2.5 + Handbook §16.5 |
@@ -47,7 +47,7 @@ A slice brief opens with its phase's own instructions. Those apply to every slic
 
 Use the command rather than reading by hand. It carries the phase paragraph, the warning paragraph and the superseded flags that hand retrieval drops in silence.
 
-**If the scripts are broken**, every section is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md` then `sed -n 'a,bp'` gets you there. Do not trust `grep -n '^#'` to list headings: it also matches a `#` comment inside a fenced code block, which is not one. On Windows that fallback needs Git Bash or WSL2; `grep` and `sed` are not in PowerShell.
+If `scripts/doc.mjs` fails, section 1 of `.claude/skills/slice/SKILL.md` gives the grep fallback.
 
 Never `@`-import a doc into this file.
 
@@ -110,6 +110,9 @@ supabase/migrations/
 e2e/             Maestro flows
 docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 .claude/skills/  /slice, which starts a work slice
+.claude/agents/  slice-auditor and slice-verifier, the subagents /slice calls
+scripts/         doc.mjs (the docs by id), doctor.mjs (check:machine), provision.sh, deploy.sh
+AGENTS.md        points agent tools that read AGENTS.md at these same files
 .env.example     every variable, no values, committed
 ```
 
@@ -130,24 +133,15 @@ cd worker && uv venv --python 3.12 && uv pip install -r requirements.txt   # onc
 cd worker && .venv/bin/python -m app.main
 ```
 
-On Windows everything above runs inside WSL2, as Handbook §9 sets up. Android builds are arm64 only, so test on a physical Android phone; an x86 emulator cannot install them (`apps/mobile/CLAUDE.md`).
-
-Development and the demo run on one Netcup server set up by `scripts/provision.sh`. The demo stack, against the stable Supabase project, goes up on it one month before the demo. Until 2026-10-15 development runs on an interim server, and `docs/ARCHITECTURE.md` §7 says which. Handbook §13, D-76, D-78.
+On Windows everything above runs inside WSL2, as Handbook §9 sets up.
 
 ---
 
 ## Model traps in this stack
 
-Training data is older than these. Before using an API from an Expo package, FlashList, NativeWind or Reanimated, read its page in the docs for the pinned version. If you cannot reach the docs, say so; never write that API from memory.
+Training data is older than this stack. Before using an API from an Expo package, FlashList, NativeWind or Reanimated, read its page in the docs for the pinned version. If you cannot reach the docs, say so; never write that API from memory. `apps/mobile/CLAUDE.md` lists the mobile stack's traps.
 
-- **Expo SDK 57**: docs at https://docs.expo.dev/versions/v57.0.0/. Read the package page before using any Expo API.
-- **FlashList v2**: no `estimatedItemSize` (removed), no `MasonryFlashList` (now a `masonry` prop), `FlashListRef<T>` for refs. New Architecture only.
-- **RN 0.86**: New Architecture is mandatory. There is no legacy bridge.
-- **No Node APIs in the app.** `crypto.createHash` does not exist in React Native; hash bytes with `expo-crypto`'s `digest()`.
-- **NativeWind v4** uses `tailwind.config.js`. v5 is a release candidate with a different config model; ignore its docs.
-- `expo-file-system` changed its API in SDK 54.
-- No `AsyncStorage` patterns.
-- **Never invent a similarity threshold.** The numbers in the spec are placeholders. Use `docs/ARCHITECTURE.md`, or say the measurement has not been done yet.
+**Never invent a similarity threshold.** The spec carries no threshold numbers. Use `docs/ARCHITECTURE.md` §6, or say the measurement has not been done yet.
 
 ---
 
