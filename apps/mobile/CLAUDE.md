@@ -51,7 +51,7 @@ Three more traps from training data. **RN 0.86 runs the New Architecture only**;
 
 One pipeline for every role. There is no role branch; do not reintroduce one.
 
-1. Strip EXIF, keeping only timestamp and orientation
+1. Rotate the pixels to match the EXIF orientation tag, then strip EXIF, keeping only the timestamp (D-99). A blur region the app draws is stored as fractions of that upright image
 2. HEIC, and anything else that is not JPEG, → JPEG
 3. Resize **only** if the longest edge exceeds 4096px
 4. WebP thumbnail, 300px on its long edge. It shows the unblurred photo, so it goes to R2 and nowhere else (root invariant 13)

@@ -286,7 +286,7 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 
 | Step | Every role |
 |---|---|
-| EXIF strip | Yes. Timestamp and orientation survive; everything else, including GPS, is stripped. |
+| EXIF strip | Yes. The orientation is applied to the pixels first, then only the timestamp survives; the tag and everything else, including GPS, are stripped (D-99). |
 | HEIC to JPEG | Yes, and any other format that is not JPEG (D-105) |
 | Client resize | **None**, unless the longest edge exceeds 4096px, in which case resize to 4096px. Never fires on a phone photo. |
 | Thumbnail | WebP, 300px on the long edge, for the grid. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face and no blur region (D-69, D-83) |
