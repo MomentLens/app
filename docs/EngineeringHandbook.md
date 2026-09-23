@@ -761,7 +761,7 @@ The procedure is `.claude/skills/slice/SKILL.md`; the two subagents are in `.cla
 | A schema author | Nothing; the schema is small and the developer reviews it in the same session | Not built |
 | A reviewer | Nothing a teammate's review and `/code-review` do not already cover | Not built |
 
-A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` is set, so both agents run the same model on every machine.
+A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` is set. That does not make the two agents run the same model on every machine. `slice-auditor` inherits whatever model the developer's session runs. `slice-verifier`'s `sonnet` is the session's own Sonnet when the session runs one, and the default Sonnet otherwise. Both agents drop Edit and Write but keep Bash, which can still write; their prompts forbid it and nothing enforces it.
 
 **Where context bloats, and what stops it.**
 
