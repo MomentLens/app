@@ -62,7 +62,7 @@ Thumbnails and downloads use this same endpoint and the same check. There is no 
 
 `docs/ARCHITECTURE.md` §1 has the full table. The rules easiest to get wrong:
 
-- **`media`**: active members, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (spec §4.10). Update and delete by the uploader and the event's Admin.
+- **`media`**: active members, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (spec §4.10). A row without `uploaded_at` is shown to nobody (D-82). Update and delete by the uploader and the event's Admin.
 - **`face`, `dnp_subject`**: only through the viewer-scoped rule (root invariant 4). The subject learns they are in a photo; nobody else learns who is.
 - **`face_reference`**: the owner, and only their photos. Embeddings never leave the database and the worker.
 - **`venue.qr_secret`**: the event's Admin only (D-17).
