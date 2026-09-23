@@ -17,6 +17,8 @@ A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It 
 
 **The first PR of any slice is the zod schema alone, merged before anyone writes UI or handlers.**
 
+**The slice that first writes to a table owns its migration**, and its row cites that table's `arch:` heading. The two RLS policies belong to the slices that first need Realtime on them, and each gets a human read (D-68).
+
 Once the contract is in `packages/shared-types`, the screen and the endpoint can be built at the same time against types that can be mocked, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
 
 ## Definition of done
@@ -66,11 +68,13 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73, arch:subject, arch:profile | C | P0 |
-| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17 | B | S-01 |
+| S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73, arch:subject, arch:profile | C | P0-4, P0-6, P0-9 |
+| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17, D-88, arch:event, arch:venue, arch:sub_event | B | S-01 |
 | S-03 | Guest Link join: both invite rows created with the event, token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17, arch:invite, arch:membership | U | S-02 |
 
-**S-01 writes the first feature migration, and D-63 says what has to be in it.** The `subject` table with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. The row itself is created lazily, when the user adds a first reference or profile photo (arch:subject), so onboarding never needs one. S-01 also writes the one function that presigns `profile.avatar_key`, which returns no URL for a user whose subject has Do Not Publish active (D-35); every later endpoint that returns a person calls it.
+**S-01 writes the first feature migration, and D-63 says what has to be in it.** The `subject` table with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. The row itself is created lazily, when the user adds a first reference or profile photo (arch:subject), so onboarding never needs one. S-01 also writes the one function that presigns `profile.avatar_key`, which returns no URL for a user whose subject has Do Not Publish active (D-35); every later endpoint that returns a person calls it. Its dependencies are P0-4, which closed only once P0-1 to P0-3 worked end to end, the tokens (P0-6) and the development build (P0-9). P0-5's rerun (issue #7) blocks S-18, not this.
+
+**S-02 writes the `event`, `venue` and `sub_event` migrations**, because the wizard creates all three (spec §2.1.2). The event has no dates of its own; its span comes from its sub-events (D-88). S-04 adds editing, status and Delay on top.
 
 ---
 
@@ -78,10 +82,10 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, arch:sub_event | U | S-02 |
+| S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §4.17, arch:sub_event | U | S-02, S-08 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03 |
 | S-06 | Attendees: search, filter, role change, block, remove | §4.4, §2.5.7 Manage, D-35 | B | S-05 |
-| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35 | B | S-06 |
+| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership | B | S-06 |
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17 | B | S-02, S-08 |
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5.1, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
 
@@ -101,17 +105,23 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20, D-90 | B | S-08 |
+| S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20, D-90 | B | S-04, S-08, S-10 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
-| S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification | U | S-11 |
+| S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification, arch:media | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, arch §5 | U | S-12 |
-| S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime | §4.9, §2.5.2, §4.10, D-22, D-35, D-55, D-60, D-86, HB §4, HB §16 | B | S-12, S-18a |
+| S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime | §4.9, §2.5.2, §4.10, D-22, D-35, D-55, D-60, D-86, HB §4, HB §16, arch §1 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69).
 
-**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). Its album-open check ships switched off, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
+**S-10's queue belongs to an account.** Each queued item uploads only under the session of the account that queued it, and My Media shows each account only its own (apps/mobile/CLAUDE.md). The team hands phones around at the demo.
+
+**S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue.
+
+**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration. Its album-open check ships switched off, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
+
+**S-13 writes the `media` SELECT policy** that Realtime needs, the first one after `health_check`. It checks membership through a `security definer` function (arch §1, D-73). A human reads it before it merges.
 
 ---
 
@@ -119,7 +129,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification` | §4.5, §4.14, §4.10, D-14, D-36, D-89, arch:venue_verification | U | S-12 |
+| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification`, and switching on pre-flight's verification check | §4.5, §4.14, §4.10, D-14, D-36, D-89, arch:venue_verification | U | S-12 |
 | S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, Scan tab, **offline scan record** with its scan time | §4.5, §4.14, §2.5.1, D-17, D-85, arch:venue, arch:venue_verification | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3, arch:venue_verification | B | S-15, S-06 |
 
@@ -136,15 +146,15 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, HB §14.5 Phase 5, D-40, arch §5 | U | S-18a, P0-5 |
 | S-19 | **Blur regions**: drawing a rectangle on a photo (Guests and the Admin), the endpoints and `manual_blur_region`, removal by the drawer or the Admin. Build this before S-20 | §4.11.4.4, D-83, HB §14.5, arch:manual_blur_region | B | S-13 |
 | S-19a | `blur_region` job: regenerate a photo's files and thumbnails with every stored blur region, at new versioned keys | §4.11.4.4, D-83, D-60, D-69, arch §5, arch:manual_blur_region | U | S-18a, S-19 |
-| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5, one face each, rejected otherwise), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, D-91, arch §5, arch §6, arch:face_reference | U | S-18 |
+| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5, one face each, rejected otherwise), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, D-91, arch §5, arch §6, arch:face_reference, arch:face | U | S-18 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, every stored blur region applied, versioned keys on the rows, **image-serving endpoint** with its cache key and own-variant flag, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-83, D-86, D-27, D-30, arch §1, arch §3, arch §5, arch §6, arch:subject, arch:dnp_subject | U | S-20, S-19a |
-| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Delete and the Admin's Remove | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, HB §4, arch:photo_flag | B | S-21 |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Blur a region (opening S-19's screen), Delete and the Admin's Remove | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, HB §4, arch:photo_flag | B | S-21 |
 | S-23 | Find My Photos, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29, D-35 | C | S-20, S-13 |
 | S-24 | Review Queue: blur regions (Keep / Remove), flagged photos (Keep / Remove), removed photos (Restore) | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22 |
 | S-25 | `reprocess` job: retroactive DNP, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11.4, arch §6 | U | S-20 |
 
-**S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6).
+**S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6). Its real entry point is S-22's action bar; until S-22 lands, reach the drawing screen through a development-only route, and S-22 deletes that route.
 
 **S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5.2). Write its negative test before the endpoint (HB §11.3). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72).
 
@@ -162,12 +172,14 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10 | C | S-07, S-31 |
-| S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21 |
+| S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token | C | S-07, S-31 |
+| S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
 | S-29 | Settings, theme, and the **Do Not Publish activation flow**. Reference photo management is S-20's | §4.19, §2.5.9, D-35, D-56, D-87 | B | S-01, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
-| S-31 | Formalized screens, consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82 | B | S-08, S-13, S-12 |
+| S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent | B | S-08, S-13, S-12 |
 | S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-07a |
+
+**S-31 writes the `event` SELECT policy** for the Realtime event that flips the album banner, the same way S-13 wrote the one on `media` (arch §1). A human reads it before it merges.
 
 **S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later.
 
@@ -175,7 +187,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 # Phase 7 — nobody owns slices
 
-Testing pass, performance pass, seeded demo dataset, standby rehearsal (D-79), demo script rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The demo stack goes up on the server at the start of it (D-76, D-78). The seed goes through the real upload path so `face_process` blurs it; a script that inserts rows with `processed_at` set publishes unblurred photos (root invariant 1).
+Testing pass, performance pass, seeded demo dataset, standby rehearsal (D-79), demo script (spec §9) rehearsal on real devices in the actual room. Four weeks, defended (HB §14). The demo stack goes up on the server at the start of it (D-76, D-78). The seed goes through the real upload path so `face_process` blurs it; a script that inserts rows with `processed_at` set publishes unblurred photos (root invariant 1).
 
 ---
 
@@ -196,8 +208,7 @@ Every numbered section of `docs/Idea.md` is either cited by a slice above, liste
 | spec §2.3.4 | Guest journey, post-event. Same. |
 | spec §8 | Known limitations. For the report, not the build. |
 
-**Deferred on purpose.** spec §6.1 is permanently out of scope, spec §6.2 is post-FYP, and
-spec §7 is stretch goals. The spec is locked; new features go to spec §6.2 (D-44).
+**Deferred on purpose.** spec §6.1 is permanently out of scope, spec §6.2 is post-FYP, and spec §7 is stretch goals. The spec is locked; new features go to spec §6.2 (D-44).
 
 **Built from the handbook instead.** spec §4.20 is deployment and hosting, now a summary. The P0 rows build it from HB §13 and `docs/ARCHITECTURE.md` §7, which carry the detail.
 
@@ -265,8 +276,7 @@ reported as met or not met with its evidence.
 
 # How to load a slice, and what it costs
 
-**Use `node scripts/doc.mjs slice <id>`.** `doc toc slices` lists every slice with what its
-brief costs, so you can see the price before you pay it.
+**Use `node scripts/doc.mjs slice <id>`.** `doc toc slices` lists every slice with what its brief costs, so you can see the price before you pay it.
 
 Measured over all 41 slices with `cl100k_base`, counting the tool-call framing as well as the text: a Bash call costs 90 to 112 tokens of envelope before any output (D-80). The briefs have changed since, and no brief holds a menu now; `doc toc slices` prints what each one costs today.
 
@@ -283,8 +293,7 @@ Measured over all 41 slices with `cl100k_base`, counting the tool-call framing a
 2. **What hand retrieval drops without telling you**: the phase paragraph above the table, which overrides the spec sections below it on purpose; the warning paragraph under the table; and the refusal to expand a superseded decision.
 3. **The hand baseline assumes you already know every section number.** The recipe someone actually falls back to costs 180,000 tokens and 313 calls, twice the command.
 
-**The menu rule.** When `doc toc slices` marks a slice `+`, a section it cites is too large to
-print, so the brief lists the parts with their sizes and you read one. That is cheaper than printing the parent unless you need nearly all of it. If you find yourself fetching most of the parts, the citation in the table is too wide; narrow it there instead. That is what S-16 and S-17 got wrong and now get right.
+**The menu rule.** When `doc toc slices` marks a slice `+`, a section it cites is too large to print, so the brief lists the parts with their sizes and you read one. That is cheaper than printing the parent unless you need nearly all of it. If you find yourself fetching most of the parts, the citation in the table is too wide; narrow it there instead. That is what S-16 and S-17 got wrong and now get right.
 
 ---
 
@@ -292,7 +301,7 @@ print, so the brief lists the parts with their sizes and you read one. That is c
 
 **Three people will build the same component three times.** Date formatting, upload progress, avatar, empty state, section header. Agree in week one that shared components live in `apps/mobile/src/components/ui/` and that adding one is a five-line PR anyone can review in a minute. Cheaper than deduplicating in month six.
 
-**Someone will be blocked and not say so.** The dependency column exists so this is visible. If a slice's dependency is not merged, pick a different slice, do not build against an imagined interface.
+**Someone will be blocked and not say so.** The dependency column exists so this is visible. If a slice's dependency issue is still open, pick a different slice, do not build against an imagined interface.
 
 **An agent will add something nobody asked for.** Small PRs are the defense. D-68 dropped the rule that someone must be able to explain every line, so PR size is what keeps a review meaningful. A slice that produces a 900-line PR was scoped too big; split it along feature boundaries and re-review (HB §18).
 
