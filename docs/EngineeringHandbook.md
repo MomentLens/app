@@ -220,7 +220,7 @@ There is no `PlanTier` table. The hard-coded constants in spec §4.17 are plain 
 
 ### 5.2 The image-serving endpoint
 
-**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It answers "which file does this requester get for this photo": the subject's own variant if the requesting user is a Do Not Publish subject on that media row, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3).
+**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It first drops every media id the requester may not see under the media rule in `docs/ARCHITECTURE.md` §1. For the rest it answers "which file does this requester get for this photo": the subject's own variant if a `dnp_subject` row on that media points at the requester's subject, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3).
 
 ---
 

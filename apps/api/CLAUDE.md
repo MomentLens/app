@@ -34,7 +34,9 @@ The most sensitive authorization check in the system. A human reads it before it
 
 ```
 GET image or thumbnail for media X, requested by user U
-  → is U a Do Not Publish subject on X?
+  → may U see X? (the media row of docs/ARCHITECTURE.md §1)
+      no  → leave X out of the response
+  → is there a dnp_subject row for X whose subject's user_id is U?
       yes → presign U's variant key (or variant thumbnail key), read from the row
       no  → presign the public key (or public thumbnail key), read from the row
   → return, per media id: the URL, a cache key (the signed object key plus
@@ -43,8 +45,10 @@ GET image or thumbnail for media X, requested by user U
 
 It takes a batch of media ids, so a grid page costs one request. The own-variant flag is what draws the self-visible marker; the app never learns who the subjects are.
 
-Four ways to get this wrong, all of which look reasonable:
+Six ways to get this wrong, all of which look reasonable:
 
+- Skipping the first step. The subject check says which file, not whether U may have one: a non-member, or a Photographer asking for someone else's photo, must get nothing.
+- Comparing `dnp_subject.subject_id` with the user's id. It points at `subject`, whose `user_id` is its own column (D-63). That compare never matches, so a subject never gets their own variant or the self-visible marker, and no test written from another viewer's side notices.
 - Deriving "is this the subject" from anything the client sent. It comes from the database row and the authenticated `req.user`, nothing else.
 - Returning a bucket URL instead of a presigned one.
 - **Constructing a derived key here.** The worker writes the variant and blurred-thumbnail keys onto the rows. Read the column. The API builds only upload keys, in its one key function (root invariant 12).
