@@ -1,19 +1,19 @@
 ---
 name: slice
 description: Start a MomentLens work slice (S-XX or P0-X) from docs/WorkSlices.md, reading only the doc sections that slice cites.
-argument-hint: S-XX [schema|build|done]
+argument-hint: S-XX [schema|build <package>|done]
 disable-model-invocation: true
 ---
 
 Run slice work for: $ARGUMENTS
 
-The first word is the slice id. A second word picks the stage; with none, the stage is the read-back.
+The first word is the slice id. A second word picks the stage; with none, the stage is the read-back. The build stage takes a third word, the package: `api`, `mobile` or `worker`.
 
 | Stage | Command | Runs sections | Ends at |
 |---|---|---|---|
 | Read-back | `/slice S-12` | 1, 2 | the slice card written to the issue |
 | Schema | `/slice S-12 schema` | 3 | the schema PR merged |
-| Build | `/slice S-12 build` | 4 | the slice PR opened |
+| Build | `/slice S-12 build api`, then `build mobile` | 4 | that package committed; the last one opens the PR |
 | Done | `/slice S-12 done` | 5 | every Definition of done item reported |
 
 **Each stage starts in a fresh session** (`/clear`). The only thing carried from one stage to the next is the slice card in the slice's GitHub issue, which a person approved. Never carry a stage's conversation into the next one (Handbook §18.8).
@@ -50,7 +50,7 @@ If the user attaches a design image, use it for layout only. The spec section de
 
 **Write nothing until this is done and the user has answered it.** Not a schema, not a file, not a test. This step exists to find what the docs get wrong about *this* slice while it is still cheap.
 
-**Delegate the hunt.** Start two subagents at once: `slice-auditor` with the slice id, which does items 4 and 5 below in its own context and returns findings, gaps, what it checked and the decisions needed; and the built-in `Explore` agent, asked what already exists in the code for each interface in the "Depends on" column, answering with paths and exported names only. Write items 1 to 3 while they run. Use their reports for items 3 to 7, and check any finding you pass on against the ids it cites.
+**Delegate the hunt when the brief is large.** The brief's header gives its size. Over about 1,500 tokens, start two subagents at once: `slice-auditor` with the slice id, which does items 4 and 5 below in its own context and returns findings, gaps, what it checked and the decisions needed; and the built-in `Explore` agent, asked what already exists in the code for each interface in the "Depends on" column, answering with paths and exported names only. Write items 1 to 3 while they run, use their reports for items 3 to 7, and check any finding you pass on against the ids it cites. Under about 1,500 tokens, do items 4 and 5 yourself: a small brief names few enough ids that the lookups cost less than a subagent does (Handbook §18.8).
 
 This is an audit, not a summary. Do not open by praising the docs or restating the brief. Short sentences, complete lists: every item below is required, and "none" is only an answer if you say what you checked to reach it.
 
@@ -91,16 +91,16 @@ Load the card: `gh issue view <n> --json body`. Read `packages/shared-types`. Wr
 
 ## 4. Build
 
-Load the card, and confirm the schema PR has merged. Then, for each package in the card's build order, one at a time, since they share a working tree:
+One package per session, in the card's build order: `/slice S-12 build api`, `/clear`, then `/slice S-12 build mobile`. Load the card and confirm the schema PR has merged. Read that package's `CLAUDE.md`, the schema files the card names, by path, and the files you will change. Fetch a doc section only if the card lists its id.
 
-1. Run `slice-implementer` with the slice id, the package and the full card. It writes each negative test first, watches it fail, then builds.
-2. Run `slice-verifier` with the slice id, the packages touched so far, and the card's invariant numbers and negative tests.
-3. If the verifier reports a failure, pass the failing excerpt to a new `slice-implementer` call. After two failed rounds on the same failure, stop and ask the user; a third attempt means context is missing (Handbook §18.2).
-4. When the verifier is clean, commit that package's work in small conventional commits.
+1. Write each negative test the card lists for this package before the code it tests, run it, and watch it fail. Then write the code and watch it pass.
+2. Run `slice-verifier` with the slice id, the package, and the card's invariant numbers and negative tests. It runs the checks, keeps the full logs out of this session, and returns only failures.
+3. Fix what it reports and run it again. After two failed rounds on the same failure, stop and ask the user; a third attempt means context is missing (Handbook §18.2).
+4. When the verifier is clean, commit this package's work in small conventional commits.
 
-A `BLOCKED` item from any subagent goes to the user as a question. Never answer it yourself. A card that turns out wrong goes back to the user too; fix the card in the issue before building on the fix.
+Stay inside the package. Never edit `packages/shared-types`, `docs/` or another package, and never add a dependency; if the card needs one of those, stop and ask. When the card is silent, wrong, or conflicts with a numbered invariant, ask the user rather than choosing a reading, and fix the card in the issue before building on the answer.
 
-If the card says the slice touches the camera, GPS or the upload queue, ask the user to run it on a physical phone and report back before the PR. Then open the PR titled `<id>: <name>`, naming the human-read surfaces the verifier listed.
+If the card says the slice touches the camera, GPS or the upload queue, ask the user to run it on a physical phone and report back. The session for the last package opens the PR titled `<id>: <name>`, naming the human-read surfaces the verifier listed.
 
 ## 5. Done
 

@@ -38,7 +38,7 @@ this one depends on, before starting. If it turned up nothing, look again.
 - <question> → <answer> (who, date). Doc fixes: #<pr>
 **Builds against:** <schema names and paths in packages/shared-types, endpoints and columns from the Depends on slices>
 **Produces:** <schemas, endpoints, tables and columns, jobs, R2 keys, screens that later slices read>
-**Build order and files:**
+**Build order and files, one build session per package:**
 1. `apps/api`: <paths>
 2. `apps/mobile`: <paths>
 **Negative tests:**
