@@ -105,7 +105,7 @@ Pinned. Do not upgrade to fix a problem; fix the problem. **Never add a dependen
 apps/mobile/     Expo app        → see apps/mobile/CLAUDE.md
 apps/api/        Express         → see apps/api/CLAUDE.md
 worker/          Python worker   → see worker/CLAUDE.md
-packages/shared-types/           zod schemas, the app↔API contract (TS only)
+packages/shared-types/           zod schemas, the app↔API contract, and the sub-event status function (TS only)
 supabase/migrations/
 e2e/             Maestro flows
 docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
