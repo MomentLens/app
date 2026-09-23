@@ -1,5 +1,5 @@
 # Lint, typecheck, test and build on every PR and every push to main (Handbook §11).
-# The worker gets its own job once worker/ has a requirements.txt and tests.
+# The worker gets its own job, Ruff and pytest, in S-18a (docs/WorkSlices.md).
 name: CI
 
 on:
