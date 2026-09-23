@@ -34,9 +34,9 @@ v11 applies the resolution log. Two constraints drove most of it. No real event 
 
 - Do Not Publish cannot be activated without a reference to match on (§4.2, D-56).
 - No media row is album-visible until processing completes (§4.9, D-55).
-- Tap-to-blur is available only to users with Do Not Publish active (§4.11, D-52).
+- Tap-to-blur was limited to users with Do Not Publish active (D-52). D-83 later removed it in favour of a blur region anyone can draw (§4.11).
 - The dedup hash covers the exact bytes uploaded, not a re-encoded thumbnail (§4.8, D-53).
-- References are split into curated and auto-added, and only curated ones feed the manual-blur abuse check (§4.11, D-54).
+- References were split into curated and auto-added (D-54). With tap-to-blur gone there are no auto-added ones (D-83).
 - Retroactive reprocessing never re-runs face detection (§4.11, D-66).
 - Blur geometry and strength are specified (§4.11, D-65).
 
@@ -79,16 +79,16 @@ There is no Videographer role, because there is no video. There is no Moderator 
 6. Event Setup Wizard:
    Step 1 — Basic info: name, type, cover photo, description
 
-   Step 2 — Date & venue
-   ├── Start / end date & time (sanity-capped at a fixed maximum, §4.17;
-   │   no tier selection, no upgrade flow)
+   Step 2 — Venue
    ├── Venue name, GPS (search or map pin)
    └── Verification radius (default 200m, adjustable 50m to 2km)
 
    Step 3 — Sub-events
-   ├── Add up to 15 sub-events: name, date/time, venue (inherit or custom),
-   │   description
-   └── Auto-ordered by date/time
+   ├── At least one and up to 15: name, start and end, venue (inherit or
+   │   custom), description
+   ├── The event runs from the first start to the last end, capped at a
+   │   fixed maximum (§4.17); no tier selection, no upgrade flow
+   └── Auto-ordered by start time
 
    Step 4 — Review & confirm
 
@@ -139,8 +139,8 @@ There is no Videographer role, because there is no video. There is no Moderator 
     ├── Force Verify any user from the Attendee list (covers every
     │   sub-event at once)
     ├── Delay a sub-event by any amount of time
-    └── Review Queue: flagged photos, and low-confidence blur requests
-        (§4.11)
+    └── Review Queue: flagged photos, blur regions and removed photos
+        (§2.5.7)
 
 14. Sub-event status updates itself from timestamps (§4.3).
 ```
@@ -227,7 +227,8 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
 8. Location verification acts as a gate on uploading, never on capturing.
    While the app is open, it periodically reads GPS and compares it against
    the active sub-event's cached coordinates and radius, on-device. A match
-   flips the local queue to ready and the queue starts flushing (§4.5).
+   flips the local queue to ready, keeps that one reading for the server,
+   and the queue starts flushing (§4.5).
 
 9. If GPS fails or is unreliable, the Guest can scan the Venue Check-In QR
    printed at the venue. This works offline; the scan is recorded locally
@@ -330,7 +331,7 @@ Home and Album are one screen, not two, and not per-sub-event folders. Every sub
 #### 2.5.4 Camera FAB & viewfinder
 
 - FAB (camera icon, bottom-right) renders on My Media for Guest and Admin. Photographers see it too; the pipeline is identical, they simply rarely use it.
-- **The FAB is hidden when no sub-event is currently In Progress.** There is no capture path that can produce an ambiguous-sub-event photo. With the extended status rule in §4.3, a sub-event stays In Progress until the next one begins, so this window is genuinely "outside the event," not "between two sessions that ran late."
+- **The FAB is hidden when no sub-event is currently In Progress.** There is no capture path that can produce an ambiguous-sub-event photo. A sub-event ends at its scheduled end (§4.3), so the FAB is also hidden between sub-events, and the Admin delays one that runs late. Photos taken meanwhile with the phone's own camera can still be added through "+ Add Media".
 - Tapping the FAB opens the Viewfinder as a full-screen modal, hiding the tab bar, and drops straight into the currently live sub-event's capture context. No sub-event picker at capture time.
 - Viewfinder components: live preview at the camera's native aspect ratio with no forced crop, front/back flip icon (bottom-right), Public / Local Only toggle (top, changeable mid-session), large shutter button, running thumbnail strip of the current session, capture counter. No lens zoom control (§7) and no gallery picker; gallery access is exclusively the "+ Add Media" button per sub-event section in My Media. Exit (X) dismisses the modal and lands on My Media, with new captures appearing at the top of the relevant section immediately via optimistic UI.
 
@@ -345,8 +346,8 @@ Full-screen swipeable pager. Tap toggles the metadata overlay (capture time, sub
 - **Recognized Faces strip**: named where matched to a registered user, "Unknown" where not, still individually clustered and tappable. Tapping a face returns to Home filtered to that person, reusing the active-filter-pill mechanism rather than pushing a new screen.
 - **Blur info icon (ⓘ)** next to any blurred face surfaces the §4.18 transparency notice: "This person has requested privacy."
 - **Self-visible marker.** When you view a photo you appear in with Do Not Publish active, a small lock badge renders on the image and the metadata overlay reads "Your face here is visible only to you." It is the only way to tell "personalized blur is working" from "the match failed and everyone can see me" (§4.11.4.2). It is a static badge, not a positioned box, so zoom cannot move it out of place.
-- **Tap-your-own-face-to-blur.** Available only to users with Do Not Publish active, and only on faces that are not blurred in their own view (§4.11.4.4). If your face appears with no self-visible marker, tapping it opens a confirm sheet: "Blur my face in this photo." Users without Do Not Publish never see this affordance, because they have nothing to correct.
-- Action bar: Download / Share / Flag / Delete, present or absent per role and photo ownership. Share opens the phone's share sheet with the same file Download saves (§4.15); it is not a sharing link. Suppressed for Photographers on their own photos except Delete.
+- **Blur a region.** Any Guest or the Admin can draw a rectangle over part of the photo, usually a face the detector missed. It blurs for every viewer at once, in every file of the photo. The person who drew it and the Admin can remove it (§4.11.4.4, D-83). A Photographer never sees this.
+- Action bar: Download / Share / Flag / Blur a region / Delete, present or absent per role and photo ownership; the Admin sees Remove on anyone's photo. Delete and Remove are soft deletes the Admin can undo for 30 days (§4.21). Share opens the phone's share sheet with the same file Download saves (§4.15); it is not a sharing link. Suppressed for Photographers on their own photos except Delete.
 
 #### 2.5.7 Manage (admin only)
 
@@ -354,9 +355,10 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 
 - **Live status card** (top): upload count, current sub-event and status, Open/Close Album toggle (mirrors the Home banner, same state, two entry points).
 - **Pending Approvals**, kept structurally separate from the Review Queue below. Different data, different actions, not one "moderation" bucket. Row per join requester (photo, name, role they're joining as, determined by which link they used), Approve/Reject per row, multi-select plus bulk action bar.
-- **Review Queue**, two sections in one screen:
+- **Review Queue**, three sections in one screen:
   - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Remove.
-  - *Blur requests* (low-confidence manual self-blur, §4.11). The face is **already blurred** while it sits here. Actions are Confirm / Revert, not Approve / Reject, because the privacy-preserving state is the default and the Admin's job is only to undo abuse.
+  - *Blur regions*, each already applied. The card shows the photo with the region outlined, who drew it and when. Actions: Keep / Remove region; removing restores what was there (D-83).
+  - *Removed photos*, deleted by their uploader or removed by the Admin, within the 30-day window (§4.21). Action: Restore.
 - **Attendees**: search, filter by role and verification status, row → detail sheet (Change Role, Force Verify, Remove from Event, Block).
 - **Invite**: Guest Link and Photographer Link cards (shortcode prominent, URL secondary, Copy, Share, Revoke & Regenerate), plus one Venue QR per venue (preview, "Download for printing," regenerate).
 - **Sub-events**: deep-links into the Schedule tab rather than duplicating it, since Admin's Delay affordance already lives there.
@@ -377,7 +379,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 
 Reachable from the Profile tab and, redundantly, from an avatar icon in the Event shell header. These are account-wide, not event-specific, so they aren't duplicated per event. Grouped list matching §4.19 exactly, with one deliberate exception in how Privacy renders.
 
-**Do Not Publish is not a toggle, and it has a precondition.** Without a curated reference (§4.2) the screen says what is missing, the confirm button stays disabled, and a link goes to reference photos. Otherwise the row shows its state ("Off"), because a plain switch implies a reversibility this action does not have. Tapping it opens a full explanation screen: the blur applies to every other viewer with no exceptions, it applies retroactively through reprocessing, and nobody can ever reverse it. A checkbox, "I understand this is permanent," gates the confirm button. Once active, the row becomes a static "Active" badge with no chevron and no tap target, because there is nothing left to toggle.
+**Do Not Publish is not a toggle, and it has a precondition.** Without an accepted reference (§4.2) the screen says what is missing, the confirm button stays disabled, and a link goes to reference photos. Otherwise the row shows its state ("Off"), because a plain switch implies a reversibility this action does not have. Tapping it opens a full explanation screen: the blur applies to every other viewer with no exceptions, it applies retroactively through reprocessing, and nobody can ever reverse it. A checkbox, "I understand this is permanent," gates the confirm button. Once active, the row becomes a static "Active" badge with no chevron and no tap target, because there is nothing left to toggle.
 
 #### 2.5.10 Notification deep-links
 
@@ -453,8 +455,8 @@ A lightweight substitute for a full history: event cards on the global Events li
 ### 4.2 User profile
 - Full name and profile photo. No bio field (§6.1).
 - Email address as the primary identifier.
-- **Reference photos are separate from the profile photo.** A user may upload up to 5 reference photos of themselves for a stronger multi-angle reference embedding, and may do so without ever setting a profile photo. If a profile photo exists, it is also used as a reference. Both count as **curated** references; §4.11 explains why curated and auto-added references are tracked separately. This distinction matters for Find My Photos, for blur accuracy, and for the manual-blur abuse check (§4.11).
-- **Do Not Publish needs a curated reference to match on.** A curated reference is a reference photo or profile photo in which the worker found a face. Activation is blocked until one exists, and while Do Not Publish is active the last one cannot be deleted. Without one the pipeline has nothing to match, and the Settings row would read "Active" while protecting nobody (D-56, D-87).
+- **Reference photos are separate from the profile photo.** A user may upload up to 5 reference photos of themselves for a stronger multi-angle reference embedding, and may do so without ever setting a profile photo. If a profile photo exists, it is also used as a reference. **Each must show exactly one face.** The worker checks within seconds of the upload and rejects a photo with none or several, and the app shows why, for several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." A profile photo that fails the check stays the avatar but is not used as a reference (D-91).
+- **Do Not Publish needs an accepted reference to match on**, a reference or profile photo the worker accepted. Activation is blocked until one exists, and while Do Not Publish is active the last one cannot be deleted. Without one the pipeline has nothing to match, and the Settings row would read "Active" while protecting nobody (D-56, D-87).
 - **Do Not Publish privacy flag.** Once enabled, this user's faces in uploaded photos are blurred for every other viewer, and their profile photo is replaced by a name-initial placeholder everywhere in the app, with **no exception for anyone, including the Admin**. Their *name* still appears where it is functionally required (Pending Approvals, Attendees list), because an Admin cannot approve a join request from an anonymous row. The image is what is hidden, not the identity.
 - Profile photo can be updated at any time. Updating it does not retroactively change an already-active Do Not Publish reference set; use the reference photos for that.
 - Account deletion is handled by contacting the team directly rather than a self-service flow. The full "My Data" dashboard is Future Work.
@@ -463,8 +465,8 @@ A lightweight substitute for a full history: event cards on the global Events li
 
 ### 4.3 Event management
 - Create event: name, type, cover photo, description.
-- Date range capped at a fixed maximum (§4.17). No per-event tier selection.
-- Up to 15 sub-events, auto-ordered by date/time.
+- The event runs from its first sub-event's start to its last sub-event's end, capped at a fixed maximum (§4.17). No per-event tier selection.
+- At least one and up to 15 sub-events, auto-ordered by start time.
 - Verification radius configurable from 50m to 2km, default 200m.
 - Album state (open / closed) is always a manual Admin action.
 - Two role-specific invite links per event (Guest, Photographer), each a URL plus its own 6-character shortcode. No QR image. Both are revocable and regenerable.
@@ -477,10 +479,10 @@ A lightweight substitute for a full history: event cards on the global Events li
 | Status | Rule |
 |---|---|
 | Upcoming | Now is before the sub-event's start time |
-| **In Progress** | Now is after its start time, **and** the next sub-event has not started, **and** the parent event has not ended |
-| Completed | The next sub-event has started, or the parent event has ended |
+| **In Progress** | Now is at or after its start time and before its end time |
+| Completed | Now is at or after its end time |
 
-The In Progress rule deliberately ignores the sub-event's own scheduled *end* time. Real events run late, and a sub-event auto-completing on schedule while people are still in the room would hide the capture FAB (§2.5) during the part of the night everyone is photographing. A sub-event now ends when the next one begins, not when the calendar said it should. If sub-event schedules overlap because the Admin set them that way, capture tags to the most recently started one.
+A sub-event ends at its scheduled end (D-88). Sub-events are planned across several days, and the host knows ahead of time when one will run late or move; the Delay action shifts one in under a minute. The event runs from its first sub-event's start to its last sub-event's end, so there can be stretches inside it when nothing is In Progress, and the capture FAB is hidden then (§2.5.4). If sub-event schedules overlap because the Admin set them that way, capture tags to the most recently started one.
 
 ---
 
@@ -501,7 +503,8 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - **Granularity: per sub-event.** A verification record is scoped to one user and one sub-event. Verifying at the mehndi does not verify you for the nikkah.
 - **The queue gate.** If a user is not verified for the sub-event a photo is tagged to, that photo sits in the local SQLite queue and does not upload.
 - **On-device GPS check.** While the app is open, it periodically reads GPS and compares it against the active sub-event's cached coordinates and radius **locally**, without needing the network. A match flips the local queue to ready. Wedding venue connectivity is unreliable enough that requiring a round-trip before a guest can even start queueing would fail most of the time.
-- **The server records, the client does not decide.** The client's local check is optimistic. Each queued photo carries the GPS reading taken at its capture time, and the pre-flight request (§4.8) submits that reading. The server re-validates it against the sub-event's stored coordinates and writes the `VenueVerification` row. A tampered client can bypass the local gate, but it cannot manufacture a server-side verification record.
+- **The server records, the client does not decide.** The client's local check is optimistic. When it passes, the device keeps that one reading with its time and sends it with the next pre-flight request (§4.8). The server checks it against the venue and the sub-event In Progress at that time, then writes the `VenueVerification` row. A tampered client can bypass the local gate, but it cannot manufacture a server-side verification record.
+- **Photos carry no location.** Verification belongs to the person, so a photo taken with location off, or added from the gallery, uploads once its sub-event is verified (D-89).
 - **Venue Check-In QR override.** If GPS is unreliable indoors, a Guest scans the QR printed at the venue. **This works offline**: the payload and the scan time are written to local SQLite and travel with the next pre-flight request. The payload names the venue, not a sub-event. The server checks the venue's secret and verifies the sub-event that was In Progress at that venue at the scan time, so a QR shared by the mehndi and the nikkah verifies only the one being held (D-85). Nothing is pre-cached; you cannot hold the secret of a QR you have not scanned.
 - **Admin override.** Force Verify on the Attendee list sets `admin_verified_at` on that user's membership row, and the pre-flight check (§4.8.2) accepts it for every sub-event in the event, past and future. This is deliberately blunt: the Admin should be able to say "this person is fine, stop asking" once, not per session.
 - **The device learns what the server decided.** The event response carries the user's verification state: `admin_verified_at` and the sub-events they hold a verification row for. The queue unlocks on either the local check or that state, and the app refetches it on foreground and on reconnect. Without this, a Force Verify, or a verification made on the user's other device, never reaches a queue the local check keeps shut.
@@ -520,6 +523,7 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - A custom in-app camera Viewfinder, not the OS native camera. Full-screen live preview.
 - **Native aspect ratio.** Capture is not cropped to any fixed ratio; the photo keeps whatever the device sensor produces, and the preview matches the capture bounds so what is framed is what is captured.
 - Public / Local Only toggle always visible, setting the mode for the next capture, changeable at any point mid-session.
+- **A Public capture is also saved to the phone's gallery**, as the camera took it; the copy that uploads is the stripped one (§4.8.1). A Local Only capture is not saved there (§4.12, D-90).
 - Tap to capture, repeatable. A single Viewfinder session can capture multiple photos in a row without leaving the screen, building a running thumbnail strip.
 - **No gallery picker in the Viewfinder.** Adding existing photos is done exclusively via "+ Add Media" per sub-event section in My Media (§2.5).
 - Exiting always lands on My Media for review.
@@ -543,7 +547,7 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - Compute a **SHA-256 hash of the exact byte stream about to be uploaded**, after EXIF stripping and HEIC conversion. Never the thumbnail: WebP encoders differ across platforms and versions, so that hash is not reproducible (D-53).
 
 #### 4.8.2 Stage 2 — pre-flight
-- A single small JSON round-trip: content hash, sub-event ID, the GPS reading captured with the photo, and any Venue QR scan the device holds. There is no album id; media belongs to an event through its sub-event (`docs/ARCHITECTURE.md` §2). No image bytes travel in it, the thumbnail included (D-69).
+- A single small JSON round-trip: content hash, sub-event ID, and any verification records the device holds, a GPS reading or a Venue QR scan, each with its time (§4.5). The photo carries no location of its own. There is no album id; media belongs to an event through its sub-event (`docs/ARCHITECTURE.md` §2). No image bytes travel in it, the thumbnail included (D-69).
 - **Membership and album state.** The caller must be an active member, the event must not be deleted, and the album must be open (§4.9). A closed album leaves the photo in the local queue, and the queue retries once the album opens (D-82).
 - **Exact duplicate** (identical SHA-256) is silently rejected, with no upload and no user-facing prompt. This is one indexed lookup, not a distance computation. There is no near-duplicate detection of any kind; anything that isn't byte-identical after processing uploads. **The one exception is the caller's own unfinished upload.** A row with this hash that the same user created and never completed gets fresh upload URLs for its existing keys, so a photo whose app was killed mid-upload resumes instead of vanishing (D-82).
 - **Cap and verification, for a new row.** The event must be under its 2,000-photo cap (§4.17). Then `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role = 'photographer')`. If verification fails, the upload is rejected and the photo waits in the local queue. A resumed upload already passed both.
@@ -602,9 +606,7 @@ SHA-256 over the exact byte stream the client uploads (§4.8). An exact match is
 #### 4.11.2 Face detection & embedding, the shared foundation
 - **One detection pass per photo, on the uploaded file.** A face embedding is extracted for every detected face in every uploaded photo at processing time, regardless of whether that person is a registered user, a Do Not Publish user, or a complete stranger to the app. This is identity-agnostic; the network converts a detected face into a comparable vector without knowing who it is looking at. Everything downstream is a cheap similarity search against this already-computed data, not a re-run of detection.
 - **The worker records each photo's pixel width and height on the media row** during this pass. It is already opening the file, and the columns are what a masonry grid would need without a backfill against R2 (D-22). Blur correctness does not depend on them.
-- **Reference sets are split in two, and the split is load-bearing.** A user may upload up to 5 reference photos of themselves, and their profile photo is used as a further reference if it exists, for six in total (§4.2, `docs/ARCHITECTURE.md` §2). Those are **curated** references. A face crop added automatically by the correction flow below is an **auto-added** reference.
-  - Matching and Find My Photos use curated plus auto-added.
-  - **The manual-blur abuse check uses curated only.** Otherwise a user tapping a sibling's or cousin's face drifts their own reference set toward that person, and the drifted set is what the abuse check runs against (D-54).
+- **References.** A user may upload up to 5 reference photos of themselves, and their profile photo is used as a further reference if it exists, for six in total (§4.2, `docs/ARCHITECTURE.md` §2). Each must show exactly one face (D-91). Matching and Find My Photos use every accepted reference. No reference is ever added automatically (D-83).
 - **Detection is not re-run on the blurred output.** The Recognized Faces list comes from the single detection pass, with a viewer-scoped filter applied at read time (below). Detectors find heavily blurred heads, so a second pass would not have excluded anyone (D-29).
 
 #### 4.11.3 Face recognition: named & unknown clustering
@@ -622,7 +624,7 @@ This is the app's centerpiece feature and it is core scope, not a stretch goal.
 
 ##### 4.11.4.1 Activation and the files generated per photo
 
-**Activation requires a curated reference** (§4.2, D-56, D-87).
+**Activation requires an accepted reference** (§4.2, D-56, D-87).
 
 **What is generated per photo.** For a photo containing N Do Not Publish subjects, the worker writes N+1 files:
 
@@ -648,29 +650,13 @@ When a Do Not Publish subject views a photo they appear in, a small lock badge r
 
 ##### 4.11.4.4 Correcting a missed match
 
-**Correcting a missed match.**
+**Automatic matching blurs a close match and nothing else.** A face that matches a Do Not Publish subject at or above the match threshold is blurred for everyone else. Below it, nothing is blurred automatically and nothing goes to the Admin: at a wedding of relatives a loose match is usually a cousin, and a queue of them would flag almost everyone against someone (D-83).
 
-**Tap-to-blur is available only to users with Do Not Publish active.** The correction path exists because an automatic match missed a Do Not Publish subject, so a user without it has nothing to correct. Gating it there also collapses the abuse surface: an attacker would first have to permanently and irreversibly blur their own face across every event they will ever join. And because activation requires a curated reference, the comparison below always has something to compare against.
+**A missed face is fixed with a blur region.** Any Guest or the Admin can draw a rectangle over part of a photo in the album, most often a face the detector never found or matched too loosely. It applies at once for every viewer, in the public file, every subject's file and all their thumbnails, and it is stored, so every later regeneration keeps it (root invariant 6). A Do Not Publish subject finds such a face with Find My Photos, by looking for photos of themselves without the self-visible marker (§4.11.4.2).
 
-**It never claims a face that is already someone else's blur.** The affordance appears only on faces unblurred in the requester's view, and the worker refuses a face already matched to another Do Not Publish subject. Claiming one would regenerate the requester's own variant with that face clear, showing them a face Do Not Publish hides from everyone (D-83).
+**Removing one restores what was there.** The person who drew a region can remove it, and the Admin can remove any, from the photo or from the Review Queue (§2.5.7). The privacy-preserving state is the default and removal is the fallback (D-24).
 
-If a Do Not Publish user sees their own face with no self-visible marker, the automatic match failed. They tap the face and confirm "Blur my face in this photo." Then:
-
-| Similarity of the tapped face to the requester's **curated** reference set | Behavior |
-|---|---|
-| Above a loose threshold, well below the production match threshold. Measure both on real data before Phase 5 ends; do not ship an example number. | Blur applies immediately. No review, no Admin involvement. |
-| Below that threshold | **Blur still applies immediately**, and the request is queued to the Admin's Review Queue with Confirm / Revert actions. |
-
-Two things this design is doing deliberately:
-
-- **The blur is never pending.** A face waiting on Admin approval stays exposed for as long as the Admin is busy, which at a wedding is the whole night. Blur first; the Admin reverts abuse afterwards, and the retained upload makes revert free (D-24).
-- **The embedding check does the work the Admin would otherwise do.** A genuine miss lands in the middle similarity band, while someone blurring the bride scores near zero against their own references. One cosine comparison separates them, so the Admin's queue stays small. How small is unknown until the thresholds are measured; do not promise a number (D-23).
-
-**Two uncertainty paths, two opposite policies, and this is deliberate.** *System-initiated* uncertainty (the automatic match at upload time was borderline) always resolves toward blurring and is never routed to a human, because there is no human who could adjudicate it and no user waiting on an answer. *User-initiated* uncertainty (someone tapped a face and the similarity check scored low) does reach the Admin, because a person is asserting something about themselves and there is a real abuse case to catch. Do not read these as contradictory rules; they are different events with different failure costs.
-
-**The Admin judges a queued request from personal knowledge.** Do Not Publish hides the requester's profile photo from the Admin too (§4.2), and the disputed face is already blurred, so there is no in-app reference to compare. A legitimate requester who scored near zero contacts the Admin out of band. Accepted, because the path is rare and the blur is already applied while it waits (D-47).
-
-**The confirmed crop becomes a new auto-added reference.** A tapped face is a correctly labeled face from a real event photo in real lighting, a better reference than a profile selfie. It joins the requester's set as **auto-added**, carrying the face's stored embedding, so the match that failed once is less likely to fail again. It never becomes curated and never feeds the abuse check. `reprocess` leaves the manual match in place; only a Revert clears it (D-83).
+**What this gives up.** Nothing checks who is being hidden: any Guest can blur the bride out of a photo until its drawer or the Admin removes the region. That is accepted, because a missed blur is the costly failure and the Admin sees every region in one list. A per-user cap is designed and deferred (§6.2, D-64).
 
 ##### 4.11.4.5 Retroactive reprocessing
 
@@ -680,7 +666,7 @@ Enabling Do Not Publish after photos are already published triggers asynchronous
 **Other properties:**
 - Every uploaded photo is checked against the reference sets of **users who are active members of this event**, not globally. The system cannot protect anyone who has not installed the app and uploaded a reference (§8).
 - **Joining an event triggers the same job.** A user with references who becomes an active member is matched against the photos already in the event. Otherwise a Do Not Publish user who joins late stays unblurred in every earlier photo, and Find My Photos misses them all (D-84).
-- Matching is biased toward blurring when uncertain, since a missed match is the costly failure. This bias will produce false positives, particularly among relatives who resemble each other. A person blurred in error is a visible, fixable state; a person missed in error is found only by the subject (§8).
+- Matching is biased toward blurring when uncertain: the match threshold is set low, since a missed match is the costly failure. This bias will produce false positives, particularly among relatives who resemble each other. A person missed in error is fixed with a blur region once someone notices; a person blurred in error stays blurred (§8).
 - **Do Not Publish itself is permanently irreversible**, for anyone, self-service or Admin-assisted. A single per-photo manual blur correction is a different object and *is* revertible by the Admin if judged fraudulent. Do not conflate the two in the UI copy.
 - **What the system guarantees: no viewer ever receives a file in which a Do Not Publish face other than their own is unblurred.** A subject's own variant can be byte-identical to the uploaded file, when they are the only subject in the photo (D-27).
 
@@ -704,7 +690,7 @@ Renamed from "Private mode," which saved to the camera roll, the most publicly s
 - 300px WebP thumbnails via `expo-image`, center-cropped to square for grid uniformity across mixed-aspect sources. They are served through the same endpoint as full images and follow the same personalization and versioning rules (D-69).
 - **There is one image per photo.** The file that was uploaded is the file that is served, zoomed, downloaded and blurred from (D-58).
 - **Every image request goes through the serving endpoint in §4.11**, which checks whether the requester is a Do Not Publish subject in that photo and mints a presigned R2 URL for the correct file. Do not wire an image component or a download button directly to a bucket URL; personalization silently stops working for exactly the people it exists for, and nothing throws an error when it does.
-- **Blur variant object keys carry a version, and the version lives on the media row.** Retroactive Do Not Publish and a manual blur both regenerate the public file. With a stable key, every client that already loaded the photo keeps serving the pre-blur image out of its `expo-image` disk cache, and no test written against a fresh client notices (D-60). Key shapes are in `docs/ARCHITECTURE.md` §3. `variant_version` is bumped on every regeneration and the Realtime row update carries it, so a client with the photo on screen asks for it again.
+- **Blur variant object keys carry a version, and the version lives on the media row.** Retroactive Do Not Publish and a blur region both regenerate the public file. With a stable key, every client that already loaded the photo keeps serving the pre-blur image out of its `expo-image` disk cache, and no test written against a fresh client notices (D-60). Key shapes are in `docs/ARCHITECTURE.md` §3. `variant_version` is bumped on every regeneration and the Realtime row update carries it, so a client with the photo on screen asks for it again.
 - Presigned URLs live one hour. `expo-image` caches under the key the serving endpoint returns with each URL, which is built from the object key it signed plus `variant_version`, so a rotating URL does not defeat the cache and two accounts on one phone never share a cached file. Logging out clears the image cache (D-86).
 - `uploader_role_at_upload` is display and filter metadata only (§4.4).
 - No video playback surface. There is no video anywhere in the app.
@@ -713,7 +699,7 @@ Renamed from "Private mode," which saved to the camera roll, the most publicly s
 
 ### 4.14 Offline mode
 - Cached on first load: the schedule, sub-event and venue details including coordinates and radius, and the thumbnail grid.
-- Capture and the local upload queue work fully offline. Queued items each carry their own GPS reading, taken at capture time, and run their full pre-flight and upload sequence once reconnected.
+- Capture and the local upload queue work fully offline. Queued items run their full pre-flight and upload sequence once reconnected, taking along the GPS reading or QR scan the device recorded for verification (§4.5).
 - **Offline QR scanning works.** The scanned payload is written to local SQLite and travels with the next pre-flight request. No venue secret is pre-cached, because caching the secret of an unscanned QR would let any client self-verify from anywhere.
 - Local GPS verification works offline, since the comparison is against cached coordinates on-device. It flips the queue to ready; the actual upload still needs connectivity for pre-flight and the presigned URL. Local verification removes the wait, not the network requirement.
 - Schedule changes always pull fresh from the server on reconnect. Nothing to merge, since there is no local schedule editing on Guest devices.
@@ -747,11 +733,11 @@ These are the only two channels. Schedule Changes and Upload Activity notificati
 
 There is no `PlanTier` concept in v1. Subscriptions are entirely Future Work (§6.2). In their place, fixed constants are hard-coded into the app and API, with no user-facing limit UI, no upgrade flow, and no per-event selection:
 
-- Maximum event duration: **14 days** (this is a *duration* cap, not to be confused with the unrelated 14-day event soft-delete window in §4.21)
+- Maximum event duration: **14 days**, from the first sub-event's start to the last sub-event's end (D-88). This is a *duration* cap, not to be confused with the unrelated 14-day event soft-delete window in §4.21
 - Maximum guest count per event: **150**
 - Maximum upload count per event: **2,000**
 
-These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration when an event is created or edited, guests when a join is approved, uploads at pre-flight (§4.8.2).
+These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests when a join is approved, uploads at pre-flight (§4.8.2).
 
 ---
 
@@ -761,18 +747,18 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
   - **Face detection and processing**, stated accurately: every face in every uploaded photo is detected and converted into an embedding, including faces belonging to people who are not app users, in order to support Find My Photos and Do Not Publish blurring.
   - The permanent, non-reversible nature of Do Not Publish.
 - Consent version tracking: if the Privacy Policy materially changes, all active sessions are paused on next launch until the new version is accepted.
-- **Accurate metadata statement.** GPS, camera model, and device serial are stripped from the image file before it leaves the device. A separate GPS reading travels with the pre-flight request for location verification only, is validated against the sub-event's coordinates, and is stored nowhere. Never claim that GPS does not reach the network (D-36).
+- **Accurate metadata statement.** GPS, camera model, and device serial are stripped from the image file before it leaves the device. One GPS reading per sub-event, taken when the device's check passes, travels to the server for verification only, is checked against the venue, and is stored nowhere. Photos carry none (D-89). Never claim that GPS does not reach the network (D-36).
 - Blur transparency: a user viewing a blurred face can tap a small info icon explaining why ("This person has requested privacy"), which reduces confusion about whether the image is simply failing to load.
 - The full "My Data" dashboard remains Future Work.
 
 ---
 
 ### 4.19 Settings & preferences
-- **Account:** update profile photo, manage reference photos (up to 5, and never the last curated one while Do Not Publish is active, §4.2), request account deletion (contacts support; no automated workflow yet), change password, log out.
+- **Account:** update profile photo, manage reference photos (up to 5, and never the last accepted one while Do Not Publish is active, §4.2), request account deletion (contacts support; no automated workflow yet), change password, log out.
 - **Appearance:** theme (Light / Dark / System Default).
 - **Notifications:** push toggles for **Approval Alerts** and **Album Lifecycle**. These are the only two channels that exist (§4.16); earlier versions of this document listed four toggles for two features.
 - **Upload:** "Upload over Mobile Data" toggle (default on; phone JPEGs run 1 to 3MB and upload without resizing, §4.8); default Viewfinder mode (start Public vs. start Local Only).
-- **Privacy:** Do Not Publish activation, rendered as described in §2.5.9, one-way, and blocked without a curated reference (§4.2).
+- **Privacy:** Do Not Publish activation, rendered as described in §2.5.9, one-way, and blocked without an accepted reference (§4.2).
 - **Storage:** clear local image cache; storage usage breakdown (app size vs. cache vs. Local Only files).
 - **About & Legal:** Terms of Service, Privacy Policy, Open Source Licenses, app version and build number.
 
@@ -815,19 +801,20 @@ Consolidated here because four scattered numbers in four sections is how a three
 | Guest scans the Venue QR, offline | Scan recorded locally; travels with the next pre-flight on reconnect, then the queue flushes. |
 | Admin taps Force Verify, or the user verifies on another device | `admin_verified_at` or the verification row is set on the server. The device learns of it the next time it fetches the event, on foreground or reconnect, and every queued photo it covers unlocks (§4.5). |
 | User never gets verified at all | Photos remain in the local queue indefinitely and are visible in My Media with a clock badge. They are not lost, and they are not uploaded. The user can delete them locally. |
-| A sub-event runs past its scheduled end | It stays In Progress until the next sub-event starts (§4.3). Capture stays available. |
+| A sub-event runs past its scheduled end | It completes at its scheduled end and the capture FAB hides, unless the Admin delays it (§4.3). Photos taken with the phone's own camera can still be added to it through "+ Add Media". |
+| No sub-event is In Progress, inside the event's span | The capture FAB is hidden. Gallery imports into any sub-event section still work (§2.5.4). |
 | Sub-events overlap because the Admin scheduled them that way | Capture tags to the most recently started one. |
 | Exact duplicate detected (identical SHA-256 of the uploaded bytes) | Silently rejected before any file transfer. No prompt. |
+| A photo is deleted by its uploader or removed by the Admin | It leaves every album at once. The Admin can restore it from the Review Queue for 30 days (§4.21). |
 | Upload succeeded but the worker has not processed it yet | The row exists with `processed_at` null. Visible only to the uploader in My Media with a spinner badge, never in the shared album (§4.9). |
-| A user with no curated reference tries to enable Do Not Publish, including one whose reference photo is still processing or has no face in it | Blocked. The confirm button stays disabled and the screen links to Add Reference Photos (§4.2). |
-| A Do Not Publish user tries to delete their last curated reference | Refused, with the reason. Deleting it would leave the flag protecting nobody (§4.2). |
-| A user without Do Not Publish taps a face in a photo | Nothing happens. The tap-to-blur affordance renders only for users with Do Not Publish active (§4.11). |
-| A Do Not Publish user taps a face that is already blurred for someone else | No affordance renders on it, and the worker refuses the request if one arrives anyway (§4.11.4.4). |
-| Do Not Publish match confidence is borderline at upload | Resolves automatically toward blurring. Never routed to a human. |
-| Do Not Publish match fails and the subject notices | Subject taps their own face; blur applies immediately. If similarity to their own **curated** reference set is low, the request also lands in the Admin's Review Queue for Confirm / Revert (§4.11). |
+| A user with no accepted reference tries to enable Do Not Publish, including one whose reference photo is still processing or was rejected | Blocked. The confirm button stays disabled and the screen links to Add Reference Photos (§4.2). |
+| A Do Not Publish user tries to delete their last accepted reference | Refused, with the reason. Deleting it would leave the flag protecting nobody (§4.2). |
+| A reference photo shows no face, or several | Rejected within seconds of the upload, with the reason. For several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." (§4.2) |
+| Do Not Publish match confidence is borderline at upload | At or above the match threshold, which is set low on purpose (§4.11.4.5), the face blurs. Below it nothing blurs automatically and nothing reaches a human; anyone can draw a blur region over it (§4.11.4.4). |
+| A Do Not Publish face is missed, by matching or by detection, and someone notices | They draw a blur region over it. It applies at once for everyone, and its drawer or the Admin can remove it (§4.11.4.4). |
 | Someone enables Do Not Publish after 100 photos are already in the album | The reprocess job compares stored embeddings against the new reference set, regenerates the public file and thumbnails for matched photos, writes their per-subject variant, and bumps `variant_version` so clients holding a cached copy re-resolve (§4.11, §4.13). Detection is never re-run. |
-| Someone abuses manual blur on another person | The similarity check catches it (near-zero score), so the request is queued; the Admin reverts it. The face stays blurred in the meantime. |
-| A legitimate request scores near zero anyway (bad angle, heavy occlusion) | The blur is applied and the request is queued. The Admin has no in-app reference to judge from (§4.11), so the requester contacts him out of band. Accepted, because the path is rare and fails toward privacy. |
+| Someone draws a blur region over another person to hide them | It applies. The Admin sees it in the Review Queue, with who drew it, and removes it (§4.11.4.4). |
+| A photo with a blur region is reprocessed | The region is applied again. No regeneration drops it (root invariant 6). |
 | Photo uploaded before a Do Not Publish flag is activated | Existing photos are reprocessed asynchronously to blur that face. |
 | A Do Not Publish user joins an event that already has photos | Joining triggers reprocessing for that user in that event, so earlier photos blur the same way (§4.11.4.5). |
 | Photographer uploads at 2am from home | Proceeds. Photographers are exempt from the location gate, and are otherwise handled by the same single upload pipeline as everyone else (§4.8). |
@@ -855,7 +842,7 @@ Reverting Do Not Publish. Face-recognition opt-out. i18n. User bio. Captioning. 
 - **Proxy Blur: Do Not Publish for someone who has no account.** A guest who never installed the app has no reference embedding, so there is nothing for the pipeline to match on and no remedy for her at all today (§8). The design: the woman hands the host one clear photo of herself, which is the consent act. The Admin goes to Manage → Attendees → "Add blur request for a non-user," enters a display name and that photo, and the system creates a **subject row with a reference embedding and a Do Not Publish flag but no linked auth user**. Existing photos reprocess and future photos are checked through the pipeline that already exists. She cannot view herself unblurred, because there is no account to authenticate as, and that is correct: she asked for invisibility, not access. **Admin-only**, because if any guest could file one, somebody would upload the bride's face and blur the entire album, and the Admin has a direct personal incentive to keep his own wedding album usable.
   - **The schema split happens now** even though the feature is deferred: `subject` is its own table with a nullable foreign key to the auth user (D-63).
   - **The contradiction it raises**, that the Admin gains power over somebody else's face, has its answer in D-63: every Admin power points toward privacy.
-- **Manual blur rate limiting.** Each tap-to-blur applies immediately, so nothing in v1 stops one user filing many requests and leaving the Admin a queue to revert one at a time. The similarity check catches each individually and stops none of them in aggregate. The design: cap at 10 requests per user per event, mark the requesting user each time the Admin reverts one, and disable the action for that user after two reverts. A counter column and one conditional. Deferred because the abuse requires a volume of adversarial users this project will never see, not because the fix is expensive.
+- **Blur region rate limiting.** Each blur region applies immediately, so nothing in v1 stops one user drawing many and leaving the Admin a list to remove one at a time. The design: cap at 10 regions per user per event, mark the user each time the Admin removes one of theirs, and disable drawing for that user after two removals. A counter column and one conditional. Deferred because the abuse requires a volume of adversarial users this project will never see, not because the fix is expensive (D-64, D-83).
 - **A web uploader for photographers**, which is what the realistic 800-frames-on-a-CF-card workflow actually needs. Lowest priority.
 - **The Moderator role** as distinct from Admin.
 - **In-app Notification Center**, drag-and-drop sub-event reordering, photo filters, the Shared Private Album with end-to-end encryption, re-authentication before Admin destructive actions, viewing own event history, adding or cancelling an unplanned sub-event, RSVP and its reminder system, near-duplicate comparison UI, exposure and closed-eye detection.
@@ -887,7 +874,7 @@ Every one of these will be asked about in the viva. Having a written answer is w
 
 **Downloads defeat every in-app privacy control.** Any Guest can download a photo and forward it, and v1 places no restriction on that beyond requiring event membership. The blur guarantee protects the app's own surface, not the world. The honest framing: the visibility window limits how long the album stays reachable, and it does nothing about copies already made.
 
-**False-positive blurs will happen.** Matching is biased toward blurring, and South Asian weddings feature many related people in similar attire under poor lighting. Some faces will be blurred that shouldn't be. The manual correction path handles the opposite error; the false-positive direction currently has no self-service fix.
+**False-positive blurs will happen.** Matching is biased toward blurring, and South Asian weddings feature many related people in similar attire under poor lighting. Some faces will be blurred that shouldn't be. A blur region fixes the opposite error; a false-positive match currently has no fix at all.
 
 **The similarity thresholds are measured on the team's own faces.** They are calibrated against roughly 30 photos of three people in varied lighting, which is a small and unrepresentative sample. Volunteer this rather than waiting to be asked: the numbers would need recalibration against a real guest population, and quoting a threshold the team has not measured is worse than describing the mechanism without one.
 
@@ -895,9 +882,9 @@ Every one of these will be asked about in the viva. Having a written answer is w
 
 **The Photographer link is a broad grant.** It bypasses location verification and uploads straight into the shared album from anywhere. Treat it as a credential, and revoke it after the event.
 
-**A missed match is only found by the subject noticing.** There is no automated audit. A Do Not Publish user checks whether the system caught them by using Find My Photos and looking for the self-visible lock marker on each result. That works, and it is the reason the recognition filter is viewer-scoped (§4.11), but it is manual and it depends on the person actually looking.
+**A missed match is only found by the subject noticing.** There is no automated audit. A Do Not Publish user checks whether the system caught them by using Find My Photos and looking for the self-visible lock marker on each result, then draws a blur region over any face it missed. That works, and it is the reason the recognition filter is viewer-scoped (§4.11), but it is manual and it depends on the person actually looking.
 
-**The Admin cannot verify identity on a low-confidence blur request** (§4.11.4.4, D-47). It degrades to out-of-band contact, and it fails toward privacy.
+**Any Guest can blur any part of any photo** until its drawer or the Admin removes the region. Nothing checks whose face is being hidden; the Admin catches abuse by looking at the Review Queue (D-83).
 
 **The upload queue is per-device.** Multi-device login is supported, but photos queued on one device are not visible on another.
 
@@ -915,7 +902,7 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 
 **Backend.** The API and worker run on the Netcup server the team developed against, on its stable hostname (§4.20). The demo stack against the stable project has been up for a month (D-76).
 
-**Pre-configured accounts.** Do Not Publish is enabled beforehand on **two** team accounts: one for beat 5, and one for beat 7, since tap-to-blur is only available to users who have it active (§4.11). Never ask a judge to enable it; the action is permanently irreversible for anyone.
+**Pre-configured accounts.** Do Not Publish is enabled beforehand on one team account, used in beats 5 and 6. Never ask a judge to enable it; the action is permanently irreversible for anyone.
 
 **Seeded dataset**, roughly 100 photos, loading in ten seconds.
 
@@ -928,8 +915,8 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 3. **Capture and upload.** A judge takes a photo. Location verifies silently; the photo appears in the shared album on every device within seconds once the worker finishes and the row becomes visible (§4.9). Then show the queue gate: deny location permission, clear it with a Venue QR scan.
 4. **Find My Photos.** A judge with reference photos set taps once and sees only the photos they appear in.
 5. **Do Not Publish.** Use the pre-configured team account. Walk them through the consent screen without confirming it, including the reference-photo precondition (§4.2), then hand phones around: the subject sees their own face clearly with the lock badge and "visible only to you," every other phone shows it blurred. This is the moment the project earns its grade.
-6. **Manual correction.** Use a **pre-seeded photo where the subject's reference set deliberately does not cover that angle**, so the miss is genuine and reproducible. Do not try to manufacture a miss live, and do not ship code that fakes one. The subject taps their face, blurs it, and it updates on the other phones.
-7. **Abuse caught.** The second Do Not Publish team account tries to blur the Admin's face, which nobody has blurred. The similarity check against that account's **curated** reference set scores near zero, the blur applies anyway, and the request lands in the Admin's Review Queue for Revert. Do not aim this at the first subject's face: it is already blurred for the second account, so there is no affordance to tap, and the worker would refuse it (D-83). Short beat, and it is one of the more defensible design decisions in the project, so do not leave it invisible.
+6. **A missed face.** Use a **pre-seeded photo where the detector genuinely misses the subject's face**, turned away or partly covered, so the miss is real and reproducible. Do not try to manufacture a miss live, and do not ship code that fakes one. The subject draws a blur region over it, and it updates on the other phones.
+7. **Admin restore.** A judge draws a blur region over the Admin's face in another photo. The Admin opens the Review Queue, sees who drew it, and removes it, and the face is back on every phone. Short beat, and it shows why a region anyone can draw is acceptable: nothing stays hidden without the Admin seeing it.
 8. **Photographer delivery.** A team member on the Photographer account uploads two photos from the gallery, with no location verification, through the same pipeline everyone else uses. They appear in the shared album alongside everything else. Show that the Photographer's own app cannot browse the album.
 9. **Close and export.** Admin closes the album, the confirm dialog reports whether every Photographer has uploaded, upload controls disable everywhere, and a judge multi-selects three photos and saves them to their camera roll.
 

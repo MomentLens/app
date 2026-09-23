@@ -26,9 +26,9 @@ Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 |---|---|---|
 | `thumbnail_dims` | Upload completion, from S-18a (Phase 3) until S-21 removes it (D-72) | No ML. Write `width`/`height`, point the public file and public thumbnail at the upload keys, generate a thumbnail at the public thumbnail key only if the client's is missing, bump version, then `processed_at` |
 | `face_process` | Upload completion, from S-21 | Detect once, store each face's box and embedding, match every face against subjects with references who are active members of this event, cluster the unmatched ones. If a matched subject has Do Not Publish active, write the public file, one variant per subject and a blurred thumbnail for each, at new versioned keys. Write dimensions. Then `processed_at` |
-| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Store or delete the `face_reference` embedding, then enqueue `reprocess` for that subject. A photo with no face gets no row. More than one face is **Open** for S-20 |
-| `reprocess` | Do Not Publish activated, a subject's references changed, a blur request reverted, or a subject with references joined the event (D-84) | **Match only.** Compare stored embeddings against the reference set, leave `match_source = manual` faces alone (D-83), regenerate files and thumbnails for photos whose output changed, bump version |
-| `manual_blur` | Tap-to-blur | Refuse, writing nothing, a face already matched to a different subject with Do Not Publish active (D-83). Otherwise score the tapped face against the requester's **curated** references, mark it as theirs (`match_source = manual`), add the crop as an auto-added reference carrying the face's stored embedding, regenerate files and thumbnails, set the request to `applied` or `queued` |
+| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Accept the photo with its embedding when it shows exactly one face, otherwise reject it as `no_face` or `multiple_faces` (D-91). Delete the embedding of a removed one. Then enqueue `reprocess` for that subject |
+| `reprocess` | Do Not Publish activated, a subject's references changed, or a subject with references joined the event (D-84) | **Match only.** Compare stored embeddings against the reference set, regenerate files and thumbnails for photos whose output changed with every stored blur region applied, bump version |
+| `blur_region` | A `manual_blur_region` row added or deleted | No ML. Regenerate that photo's public file, every subject's file and all their thumbnails with every stored region, at new versioned keys, bump version (D-83) |
 
 ---
 
@@ -37,7 +37,7 @@ Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 1. **`processed_at` is written last**, after every variant and thumbnail is in R2. It publishes the row. Written early, it publishes an unblurred photo.
 2. **Bump `variant_version` on every write, including the first**, and put it in every key you build. Shapes are in `docs/ARCHITECTURE.md` §3.
 3. **Write the keys onto the rows as you upload them.** The API reads those columns. The worker builds every derived key and never an upload key; the API builds those (D-70).
-4. **N subjects → N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. A photo with no Do Not Publish faces produces no extra files; its public keys point at the upload.
+4. **N subjects → N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. A photo with no Do Not Publish face and no blur region produces no extra files; its public keys point at the upload.
 5. **Never overwrite an object in place.** A regenerated file or thumbnail gets a new versioned key, or every client cache keeps the old one (D-60, D-69).
 6. **`thumbnail_dims` and `face_process` never run on the same upload.** Once Do Not Publish users exist, `thumbnail_dims` publishes a photo nobody blurred, or points the public keys back at the unblurred upload after `face_process` finished (D-72).
 
@@ -50,10 +50,7 @@ Use the ONNX-exported models InsightFace ships, not the PyTorch runtime.
 - **Every similarity comparison in the system happens here, and the result is stored** (D-74). Embeddings are `vector(512)` columns. Each `face` row gets its matched subject, similarity and Unknown cluster. The API only reads those results, so thresholds live in exactly one codebase.
 - **Do not re-detect on blurred output.** An earlier design did this to exclude Do Not Publish users from the Recognized Faces list. It doubled inference cost to avoid what is a read-time filter, and the premise was wrong: detectors do find heavily blurred head-shaped regions.
 - **Matching is biased toward blurring when uncertain.** A missed match is the expensive failure; a false positive is visible and fixable.
-- **Reference sets are split.** Matching uses curated + auto-added. The manual-blur abuse check uses **curated only** (root invariant 6).
-- **A reverted blur request deletes the auto-added reference it created.** Left in place, it keeps pulling the requester's matching toward someone else's face (D-54).
-- **A manual match survives `reprocess`.** It exists only because the automatic score fell below the threshold, so re-matching it would undo every correction. Only a revert clears one (D-83).
-- **Never let one subject claim another Do Not Publish subject's face.** The claimant's own variant would show that face clear, which breaks the one guarantee the feature makes (D-83).
+- **Every file you write applies the photo's stored blur regions** (root invariant 6), blurred at D-65's strength over exactly the rectangle drawn. There are no auto-added references and no tap-to-blur (D-83).
 - Matching is scoped to subjects who are **active members of this event**, never global.
 - **Thresholds come from `docs/ARCHITECTURE.md` §6.** If they are not measured yet, say so. Do not invent one and do not use the placeholders from the spec.
 

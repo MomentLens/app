@@ -84,7 +84,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage | B | S-06 |
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5.1, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
 
-**S-04 carries a trap.** The status rule depends on the *next* sub-event's start time, not the current one's end (D-19). It reads two rows, not one. This is the slice most worth unit-testing, and an agent will get it wrong from the name alone.
+**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing.
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
@@ -100,11 +100,11 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-09 | Viewfinder: native aspect, Public/Local Only toggle, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20 | B | S-08 |
+| S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20, D-90 | B | S-08 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
 | S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification | U | S-11 |
-| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job. No ML | HB §6, D-72, arch §5 | U | S-12 |
+| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, arch §5 | U | S-12 |
 | S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime | §4.9, §2.5.2, §4.10, D-22, D-55, D-60, D-86, HB §4, HB §16 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
 
@@ -118,11 +118,11 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification` | §4.5, §4.14, §4.10, D-14, D-36, arch:venue_verification | U | S-12 |
+| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification` | §4.5, §4.14, §4.10, D-14, D-36, D-89, arch:venue_verification | U | S-12 |
 | S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, Scan tab, **offline scan record** with its scan time | §4.5, §4.14, §2.5.1, D-17, D-85, arch:venue, arch:venue_verification | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3, arch:venue_verification | B | S-15, S-06 |
 
-**S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). The event response also carries the user's server-side verification state, so a Force Verify or a verification on another device unlocks this device's queue (spec §4.5). Which GPS reading a gallery import carries is still open in the decision log.
+**S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Photos carry no location: the device keeps one reading per sub-event when its check passes and sends it with the next pre-flight (D-89). The event response also carries the user's server-side verification state, so a Force Verify or a verification on another device unlocks this device's queue (spec §4.5).
 
 ---
 
@@ -133,16 +133,16 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, HB §14.5 Phase 5, D-40, arch §5 | U | S-18a, P0-5 |
-| S-19 | **Manual blur box** (fallback rung 3). Build this before S-20. **Unspecified**, see the note below | HB §14.5 | B | S-13 |
-| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, arch §5, arch §6, arch:face_reference | U | S-18 |
-| S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, versioned keys on the rows, **image-serving endpoint** with its cache key and own-variant flag, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-86, D-27, D-30, arch §3, arch §5, arch §6 | U | S-20 |
-| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom | §2.5.6, §4.11.4.2, D-77, D-60, HB §4 | B | S-21 |
+| S-19 | **Blur regions**: any Guest or the Admin draws a rectangle on a photo, `manual_blur_region`, the `blur_region` job, removal by the drawer or the Admin. Build this before S-20 | §4.11.4.4, D-83, HB §14.5, arch:manual_blur_region, arch §5 | B | S-13, S-18a |
+| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5, one face each, rejected otherwise), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, D-91, arch §5, arch §6, arch:face_reference | U | S-18 |
+| S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, every stored blur region applied, versioned keys on the rows, **image-serving endpoint** with its cache key and own-variant flag, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-83, D-86, D-27, D-30, arch §3, arch §5, arch §6 | U | S-20, S-19 |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Delete and the Admin's Remove | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, HB §4, arch:photo_flag | B | S-21 |
 | S-23 | Find My Photos, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29 | C | S-20, S-13 |
-| S-24 | Manual correction: tap own face, `manual_blur` job, Review Queue Confirm/Revert | §4.11.4.4, §2.5.7, D-74, D-24, D-25, D-47, D-52, D-83, arch §5, arch §6, arch:blur_request | U | S-22, S-23, S-25 |
-| S-25 | `reprocess` job: retroactive DNP, cross-photo blur, revert, late joiners, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21 |
+| S-24 | Review Queue: blur regions (Keep / Remove), flagged photos (Keep / Remove), removed photos (Restore) | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, arch:manual_blur_region, arch:photo_flag | U | S-19, S-22 |
+| S-25 | `reprocess` job: retroactive DNP, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, HB §6, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
 
-**S-19 first, before the ML work.** Half a day, cannot fail, and it is your escape hatch when automatic matching misses something live (HB §14.5). **It has no spec yet.** Nothing says who may draw a box, which files it blurs, or where the box is stored, and it must be stored, or the next `reprocess` regenerates from the upload and the face comes back. The decision log lists it as an open item; settle it before Phase 5 starts.
+**S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). Before S-21 there are no subject files, so its job regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6). **Open:** `blur_region` is worker code in a B-owned slice, and the team moved S-24 to U to keep worker jobs with the worker owner. Decide who writes the job.
 
 **S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5). Write its negative test before the endpoint (HB §11). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72).
 
@@ -150,9 +150,9 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-23 fails silently if built wrong.** A global exclusion passes every test written from another viewer's perspective and returns nothing for the subject (D-46). Write the positive test: a DNP user runs Find My Photos and gets their photos.
 
-**S-25 looks skippable and is not.** Four things break at once without it (HB §14.5 Phase 5). It regenerates thumbnails as well as full files; forgetting them throws nothing and shows the face in the grid only (D-69). It adds the enqueue to S-03's and S-07's join paths, so a Do Not Publish user who joins late is blurred in the photos already there (D-84). And it leaves manual matches alone, or the next run undoes every correction S-24 made (D-83).
+**S-25 looks skippable and is not.** Three things break at once without it (HB §14.5 Phase 5). It regenerates thumbnails as well as full files; forgetting them throws nothing and shows the face in the grid only (D-69). It adds the enqueue to S-03's and S-07's join paths, so a Do Not Publish user who joins late is blurred in the photos already there (D-84). And it applies every stored blur region to what it regenerates, or a region someone drew disappears on the next run (root invariant 6).
 
-**S-24's revert deletes the auto-added reference the request created.** Left in place, a fraudulent request keeps pulling the requester's matching toward someone else's face (D-54). And the worker refuses a tap on a face that is already another Do Not Publish subject's, because claiming it would show the requester that face unblurred (D-83).
+**S-24's Remove on a blur region** deletes the row and enqueues `blur_region`, which rebuilds the photo without it. Restoring a removed photo clears `deleted_at` and nothing else, because its files never changed.
 
 ---
 
@@ -165,6 +165,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-29 | Settings, theme, and the **Do Not Publish activation flow**. Reference photo management is S-20's | §4.19, §2.5.9, D-35, D-56, D-87 | B | S-01, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | Formalized screens, consent screens, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, arch §1, D-82 | B | S-08, S-13, S-12 |
+| S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-02 |
 
 **S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later.
 
@@ -211,9 +212,6 @@ spec §7 is stretch goals. The spec is locked; new features go to spec §6.2 (D-
 
 The spec describes these and no slice above owns them. Fold each into a slice or give it its own before its phase starts.
 
-- The photo Flag action and the flagged-photos half of the Review Queue (spec §2.5, Single photo view and Manage)
-- Photo soft delete by the uploader, and Admin remove and restore, including where the Admin finds a deleted photo to restore (§2.1.4 Phase D, §4.9, §4.21)
-- Delete and archive event, and the Album Lifecycle push each one sends (§4.3, §4.16, §4.21)
 - The Manage hub itself, its live status card (upload count, current sub-event, album state) and the Event Settings edit form (spec §2.1.4 Phase D, spec §2.5.7 Manage). S-06 and S-07 build rows inside it
 - The retention job that permanently deletes media from R2 and rows from Postgres, and the visibility-window warning that depends on it (§4.21, §4.16). No demo beat uses either (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes (`docs/ARCHITECTURE.md` §5)
 
@@ -307,4 +305,4 @@ S-17 got wrong and now get right.
 
 **An agent will add something nobody asked for.** Small PRs are the defense. D-68 dropped the rule that someone must be able to explain every line, so PR size is what keeps a review meaningful. A slice that produces a 900-line PR was scoped too big; split it along feature boundaries and re-review (HB §18).
 
-**Ukasha will become the bottleneck.** He owns the worker, the docs, and most of Phase 5 (including S-24's `manual_blur` job), and S-18a adds one more slice to his Phase 3. Watch the board. S-28 was already moved to C to keep worker jobs on U; if two slices are waiting on him for more than a few days, reassign a non-worker slice, because a team moving at one person's speed is the failure mode this whole file exists to prevent.
+**Ukasha will become the bottleneck.** He owns the worker, the docs, and most of Phase 5 (including S-25's `reprocess` job), and S-18a adds one more slice to his Phase 3. Watch the board. S-28 was already moved to C to keep worker jobs on U; if two slices are waiting on him for more than a few days, reassign a non-worker slice, because a team moving at one person's speed is the failure mode this whole file exists to prevent.
