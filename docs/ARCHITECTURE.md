@@ -205,7 +205,7 @@ Until verification passes or while the album is closed, photos wait in the devic
 
 ## 6. Similarity thresholds
 
-**Not measured.** Never use a number from any spec draft (Handbook §11).
+**Not measured.** Never use a number from any spec draft (Handbook §11.4).
 
 | Threshold | Used by | Value | Measured on | Date |
 |---|---|---|---|---|
@@ -214,7 +214,7 @@ Until verification passes or while the album is closed, photos wait in the devic
 
 **Open**, to settle with the measurements in S-26: whether Do Not Publish blurring uses a lower match threshold than recognition, since §4.11 biases blurring toward a match when uncertain.
 
-Plan (S-26): about 30 photos of the three team members in varied light, same-person and different-person cosine distributions. Record next to the numbers that three people is a small sample and the thresholds are fitted to the demo set (Handbook §11).
+Plan (S-26): about 30 photos of the three team members in varied light, same-person and different-person cosine distributions. Record next to the numbers that three people is a small sample and the thresholds are fitted to the demo set (Handbook §11.4).
 
 ---
 

@@ -112,7 +112,7 @@ momentlens/
 │       │   └── schemas/       # zod
 │       ├── tests/
 │       │   ├── unit/
-│       │   └── integration/   # the RLS + serving-endpoint negative tests (§11)
+│       │   └── integration/   # the RLS + serving-endpoint negative tests (§11.3)
 │       └── package.json
 │
 ├── worker/                   # Python AI worker. Outside apps/ on purpose: see below.
@@ -199,6 +199,10 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 
 **Auth middleware.** Every authenticated route verifies the Supabase JWT from the `Authorization` header using Supabase's server SDK. Do not hand-roll JWT verification. The middleware attaches the verified user to `req.user`; nothing downstream re-checks identity.
 
+**API contract.** Generate an OpenAPI spec from your zod schemas with `zod-to-openapi` so every endpoint's shape is documented and machine-checkable rather than tribal knowledge.
+
+### 5.1 Authorization and RLS
+
 **Authorization lives in the service layer (D-73).** The API queries Supabase with the secret key, so RLS never applies to it, and every rule below is a service-layer check with a negative authorization test: another user, another event, the wrong role. A missing check throws nothing and returns someone else's data, and that test is the only thing that catches it. `docs/ARCHITECTURE.md` §1 is the full table.
 
 **RLS is a backstop against the app, not against the API.** It is on for every table, and the only policies are `SELECT` on `media` and `event`, which Realtime needs. Those two check membership through a `security definer` function, because `membership` has no policy and a plain subquery inside a policy sees no rows. They exist for Realtime only: the app reads `media` and `event` through the API like everything else, because the API applies soft deletes, pagination and the viewer-scoped face rules that a policy cannot. Adding a policy to make a client query work is the mistake root `CLAUDE.md` names; add an endpoint.
@@ -211,11 +215,12 @@ The rules easiest to get wrong:
 - **`face_reference`**: the owner sees their own reference photos. Embeddings never leave the database and the worker.
 - **`face` and `dnp_subject`**: only through the viewer-scoped rule, root invariant 4. A Do Not Publish subject learns they are in a photo; no other viewer learns who is. An endpoint that returns faces for a photo omits the subject identity of a Do Not Publish face unless the requester is that subject, and the People filter leaves those subjects out the same way (spec §4.11.3). Implement it as a predicate parameterized by the requesting user, never by omitting the row at write time. The wrong version throws nothing and returns nothing to Find My Photos for exactly the users the feature exists for (D-46).
 - **`subject`**: the person a blur applies to, with a **nullable** foreign key to the auth user, from the first migration (D-63).
-- **The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It answers "which file does this requester get for this photo": the subject's own variant if the requesting user is a Do Not Publish subject on that media row, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11).
 
 There is no `PlanTier` table. The hard-coded constants in spec §4.17 are plain conditionals in the relevant service functions, not a database lookup.
 
-**API contract.** Generate an OpenAPI spec from your zod schemas with `zod-to-openapi` so every endpoint's shape is documented and machine-checkable rather than tribal knowledge.
+### 5.2 The image-serving endpoint
+
+**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It answers "which file does this requester get for this photo": the subject's own variant if the requesting user is a Do Not Publish subject on that media row, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3).
 
 ---
 
@@ -333,27 +338,40 @@ Everything else (screens, components, styling, business logic, API calls, state)
 
 ## 11. Coding, building, and testing strategy
 
+Linting, tests, the threshold calibration and CI, each in its own subsection so a slice cites only the one it needs.
+
+### 11.1 Linting, formatting and hooks
+
 **Linting and formatting:** ESLint and Prettier for TypeScript, Ruff for Python. Ruff replaces flake8, black, and isort with one much faster tool.
 
 **Pre-commit hooks:** Husky and `lint-staged`, so issues are caught before a commit lands rather than in CI ten minutes later.
 
-**Testing, proportionate to your timeline:**
+### 11.2 Unit and end-to-end tests
+
+Testing proportionate to your timeline.
 
 - **Unit tests, most of your test effort.** Pure logic, no UI, no network: Haversine distance for GPS verification, hard-coded limit checks, the pre-flight verification branch (§7), sub-event status computation from timestamps (spec §4.3: overlaps, the gaps between sub-events, and the event's span computed from its sub-events, D-88). Jest with the `jest-expo` preset for the app and plain Jest for the API, since `jest-expo` is an Expo preset with no place on an Express server; `pytest` for the worker.
   - There is no pHash Hamming distance test any more. Deduplication is a hash equality check.
   - There is no client-pipeline role branch to test any more either (D-58).
-- **Integration tests, some, and one of them is the most valuable test in the project.**
-
-  **Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, and that a direct request for B's variant key returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
-
-  Then the negative API tests (D-73): a Photographer cannot read another user's media, one user cannot read another's `face_reference` rows, and no endpoint returns a Do Not Publish subject's identity to anyone else. The two RLS policies, `SELECT` on `media` and `event`, get a Realtime test: a non-member receives nothing, and a member receives no unprocessed row they did not upload.
-
-  Also worth an integration test, because it fails silently in the other direction: does the album query exclude rows with `processed_at` null (D-55), and does a Do Not Publish user's Find My Photos return their own photos (spec §4.11, the viewer-scoped filter).
 - **E2E tests, few, and only for flows that would be genuinely bad to break.** Maestro against a handful of critical paths: sign up, join event, capture, see it in the album. Verify a Do Not Publish face is blurred for a second viewer. Verify photos sit in the local queue when location permission is denied and only upload after a QR scan. Do not try to E2E everything.
+
+### 11.3 Integration tests, and the one to write first
+
+Some integration tests, and one of them is the most valuable test in the project.
+
+**Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, and that a direct request for B's variant key returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
+
+Then the negative API tests (D-73): a Photographer cannot read another user's media, one user cannot read another's `face_reference` rows, and no endpoint returns a Do Not Publish subject's identity to anyone else. The two RLS policies, `SELECT` on `media` and `event`, get a Realtime test: a non-member receives nothing, and a member receives no unprocessed row they did not upload.
+
+Also worth an integration test, because it fails silently in the other direction: does the album query exclude rows with `processed_at` null (D-55), and does a Do Not Publish user's Find My Photos return their own photos (spec §4.11, the viewer-scoped filter).
+
+### 11.4 Calibrating the similarity thresholds
 
 **One calibration task that is not a test but belongs here.** The similarity thresholds in spec §4.11 are placeholders. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
 
 Two honesty notes that belong with the numbers rather than in the viva prep, because this is where they will be forgotten. Thirty photos of three people is a small and unrepresentative sample, so the thresholds are overfitted to your demo set; say that yourself rather than being asked.
+
+### 11.5 CI and error reporting
 
 **CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for app, API, and worker, plus the authorization test above. Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
 
@@ -499,13 +517,13 @@ Add the on-device GPS check, the server-side re-validation, the queue gate, the 
 
 Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, a blurred thumbnail for each (D-69), the serving endpoint with its authorization check, and the self-visible badge. Every file it writes applies the blur regions S-19 already stores (root invariant 6).
 
-**Write the serving endpoint's negative test before the endpoint** (§11). It is the most valuable test in the project and it is twenty lines.
+**Write the serving endpoint's negative test before the endpoint** (§11.3). It is the most valuable test in the project and it is twenty lines.
 
 **Do not skip the `reprocess` job.** It is easy to leave for later because nothing visibly depends on it during a happy-path test, and then three things break at once. It is what makes Do Not Publish retroactive over already-published photos (spec §4.11), what carries a change in someone's reference photos to every photo, and what matches a user who joins an event late against the photos already there (D-84). It also has to apply every stored blur region, or a region disappears on its next run (root invariant 6). Build it in the same pass as the blur pipeline, not in Phase 6.
 
 **Verify the viewer-scoped filter with an actual test, not by inspection.** Spec §4.11 hides Do Not Publish faces from every viewer except the subject. The wrong implementation, a global exclusion, passes every test written from the other viewers' perspective and fails only for the subject, where it returns nothing. Write the positive case explicitly: a Do Not Publish user runs Find My Photos and gets their photos back.
 
-Then run the calibration exercise in §11.
+Then run the calibration exercise in §11.4.
 
 **Face blur has a real fallback ladder, and you should build the bottom rung early.** This is what makes it not a single point of demo-day risk:
 
@@ -688,9 +706,9 @@ Context is the scarcest resource in an agent session and most people waste it on
 
 **Good delegation.** Boilerplate CRUD screens and endpoints. Zod schemas from a described shape. Test scaffolding. Converting a design description into NativeWind components. Explaining an unfamiliar API. Reviewing your code for bugs, which is one of the highest-value uses and the most underused. Writing the systemd units and nginx config in §13. Migration SQL, which you then read.
 
-**Delegate carefully, and pair it with the negative test from §11.** Anything with RLS. The blur pipeline's box expansion and elliptical mask math, where an off-by-a-few-pixels error means a face is partly visible. The upload queue's state machine, where a wrong transition means photos silently vanish. Anything touching money or identity, which here means auth and invite tokens.
+**Delegate carefully, and pair it with the negative test from §11.3.** Anything with RLS. The blur pipeline's box expansion and elliptical mask math, where an off-by-a-few-pixels error means a face is partly visible. The upload queue's state machine, where a wrong transition means photos silently vanish. Anything touching money or identity, which here means auth and invite tokens.
 
-**Do not delegate.** The similarity thresholds; measure those (§11). The architecture decisions, which are the ones you defend. The demo script. This document.
+**Do not delegate.** The similarity thresholds; measure those (§11.4). The architecture decisions, which are the ones you defend. The demo script. This document.
 
 ### 18.4 The version-drift problem, specifically
 
