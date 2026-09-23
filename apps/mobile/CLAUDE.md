@@ -6,6 +6,8 @@ Routes live in `src/app/` (Expo Router) and everything else under `src/`. Screen
 
 **Expo SDK 57 docs are at https://docs.expo.dev/versions/v57.0.0/.** Read the page for an Expo package before writing code against it. Training data describes older SDKs.
 
+Three more traps from training data. **RN 0.86 runs the New Architecture only**; there is no legacy bridge. **NativeWind v4** is configured through `tailwind.config.js`; v5 is a release candidate with a different config model, so ignore its docs. **`expo-file-system` changed its API in SDK 54**, so read its SDK 57 page before using it.
+
 ---
 
 ## State goes in exactly one place
