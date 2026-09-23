@@ -1,1 +1,11 @@
 pnpm exec lint-staged
+
+# The docs gate reads the staged snapshot, not the working tree. Run on the working tree it
+# passed a commit that left out a doc it depended on, which then failed in CI.
+if git diff --cached --name-only | grep -qE '\.md$|^scripts/doc(index)?\.mjs$'; then
+  snap=.slices/precommit
+  rm -rf "$snap"
+  git ls-files -z -- docs scripts/doc.mjs scripts/docindex.mjs '*.md' | git checkout-index -z --stdin --prefix="$snap/"
+  node "$snap/scripts/doc.mjs" check || { rm -rf "$snap"; exit 1; }
+  rm -rf "$snap"
+fi
