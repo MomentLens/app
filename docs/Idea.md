@@ -620,7 +620,7 @@ SHA-256 over the exact byte stream the client uploads (§4.8). An exact match is
 - **The Do Not Publish filter is viewer-scoped, not global.** A face matched to a Do Not Publish user is hidden from the Recognized Faces strip and the People filter (§2.5.2) for every viewer *except that user themselves*, who sees their own face listed normally. No other viewer can filter the album by that person.
 
   This distinction is load-bearing and easy to get wrong. A global exclusion would mean **Find My Photos returns nothing for a Do Not Publish user**, so the one person who most needs to audit which photos contain them would be the one person who cannot search for them. It would also break the correction path below, which assumes the subject can navigate to photos containing themselves. Implement the filter as a predicate on the read, parameterized by the requesting user, never as a hard exclusion at write time.
-- Find My Photos therefore works normally for a Do Not Publish user, and is the practical way they audit for missed matches.
+- Find My Photos therefore works normally for a Do Not Publish user and shows every photo the system matched them in. It cannot show a missed match, because a missed face was never matched to them, so the subject checks for those by browsing the album (§4.11.4.4, D-105).
 
 #### 4.11.4 Do Not Publish: personalized face blurring
 
@@ -655,7 +655,7 @@ The count is linear, never combinatorial, because no viewer ever needs two diffe
 
 **Automatic matching blurs a close match and nothing else.** A face that matches a Do Not Publish subject at or above the match threshold is blurred for everyone else. Below it, nothing is blurred automatically and nothing goes to the Admin: at a wedding of relatives a loose match is usually a cousin, and a queue of them would flag almost everyone against someone (D-83).
 
-**A missed face is fixed with a blur region.** Any Guest or the Admin can draw a rectangle over part of a photo in the album, most often a face the detector never found or matched too loosely. It applies at once for every viewer, in the public file, every subject's file and all their thumbnails, and it is stored, so every later regeneration keeps it (root invariant 6). A Do Not Publish subject finds such a face with Find My Photos, by looking for photos of themselves without the self-visible marker (§4.11.4.2).
+**A missed face is fixed with a blur region.** Any Guest or the Admin can draw a rectangle over part of a photo in the album, most often a face the detector never found or matched too loosely. It applies at once for every viewer, in the public file, every subject's file and all their thumbnails, and it is stored, so every later regeneration keeps it (root invariant 6). A Do Not Publish subject finds such a face by browsing the album for photos of themselves without the self-visible marker (§4.11.4.2). Find My Photos cannot show it, since it lists only faces the system matched to them (D-105).
 
 **Removing one restores what was there.** The person who drew a region can remove it, and the Admin can remove any, from the photo or from the Review Queue (§2.5.7). The privacy-preserving state is the default and removal is the fallback (D-24).
 
@@ -760,8 +760,8 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
 ### 4.19 Settings & preferences
 - **Account:** update profile photo, manage reference photos (up to 5, and never the last accepted one while Do Not Publish is active, §4.2), request account deletion (contacts support; no automated workflow yet), change password, log out.
 - **Appearance:** theme (Light / Dark / System Default).
-- **Notifications:** push toggles for **Approval Alerts** and **Album Lifecycle**. These are the only two channels that exist (§4.16); earlier versions of this document listed four toggles for two features.
-- **Upload:** "Upload over Mobile Data" toggle (default on; phone JPEGs run 1 to 3MB and upload without resizing, §4.8); default Viewfinder mode (start Public vs. start Local Only).
+- **Notifications:** push toggles for **Approval Alerts** and **Album Lifecycle**, stored with the profile so the server checks them before sending (D-105). These are the only two channels that exist (§4.16); earlier versions of this document listed four toggles for two features.
+- **Upload:** "Upload over Mobile Data" toggle (default on; phone JPEGs run 1 to 3MB and upload without resizing, §4.8); default Viewfinder mode (start Public vs. start Local Only). Both live on the phone, since only the phone acts on them (D-105).
 - **Privacy:** Do Not Publish activation, rendered as described in §2.5.9, one-way, and blocked without an accepted reference (§4.2).
 - **Storage:** clear local image cache; storage usage breakdown (app size vs. cache vs. Local Only files).
 - **About & Legal:** Terms of Service, Privacy Policy, Open Source Licenses, app version and build number.
@@ -920,7 +920,7 @@ Every one of these will be asked about in the viva. Having a written answer is w
 
 **The Photographer link is a broad grant.** It bypasses location verification and uploads straight into the shared album from anywhere. Treat it as a credential, and revoke it after the event.
 
-**A missed match is only found by the subject noticing.** There is no automated audit. A Do Not Publish user checks whether the system caught them by using Find My Photos and looking for the self-visible lock marker on each result, then draws a blur region over any face it missed. That works, and it is the reason the recognition filter is viewer-scoped (§4.11), but it is manual and it depends on the person actually looking.
+**A missed match is only found by the subject noticing.** There is no automated audit. A Do Not Publish user checks whether the system caught them by browsing the album for photos of themselves without the self-visible lock marker, then draws a blur region over any face it missed. Find My Photos shows the photos the system did match, which is why the recognition filter is viewer-scoped (§4.11), but it cannot list a miss. The check is manual and depends on the person actually looking (D-105).
 
 **Any Guest can blur any part of any photo** until its drawer or the Admin removes the region. Nothing checks whose face is being hidden; the Admin catches abuse by looking at the Review Queue (D-83).
 
@@ -952,7 +952,7 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 2. **Judges join.** Two judges open or paste the Guest Link on the handed-around devices and land in the album. This is where deep links, auth, and role assignment all prove themselves at once.
 3. **Capture and upload.** A judge takes a photo. Location verifies silently; the photo appears in the shared album on every device within seconds once the worker finishes and the row becomes visible (§4.9). Then show the queue gate: deny location permission, clear it with a Venue QR scan.
 4. **Find My Photos.** A judge with reference photos set taps once and sees only the photos they appear in.
-5. **Do Not Publish.** Use the pre-configured team account. Walk them through the consent screen without confirming it, including the reference-photo precondition (§4.2), then hand phones around: the subject sees their own face clearly with the lock badge and "visible only to you," every other phone shows it blurred. This is the moment the project earns its grade.
+5. **Do Not Publish.** On a second team account with no accepted reference, open the activation screen and show that it is blocked until a reference is accepted (§4.2), without confirming anything. Then switch to the pre-configured team account, where Do Not Publish is already active, and hand phones around (D-105): the subject sees their own face clearly with the lock badge and "visible only to you," every other phone shows it blurred. This is the moment the project earns its grade.
 6. **A missed face.** Use a **pre-seeded photo where the detector genuinely misses the subject's face**, turned away or partly covered, so the miss is real and reproducible. Do not try to manufacture a miss live, and do not ship code that fakes one. The subject draws a blur region over it, and it updates on the other phones.
 7. **Admin restore.** A judge draws a blur region over the Admin's face in another photo. The Admin opens the Review Queue, sees who drew it, and removes it, and the face is back on every phone. Short beat, and it shows why a region anyone can draw is acceptable: nothing stays hidden without the Admin seeing it.
 8. **Photographer delivery.** A team member on the Photographer account uploads two photos from the gallery, with no location verification, through the same pipeline everyone else uses. They appear in the shared album alongside everything else. Show that the Photographer's own app cannot browse the album.
