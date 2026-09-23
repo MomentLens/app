@@ -744,50 +744,62 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 
 ### 18.8 Running a slice with subagents
 
-The procedure is `.claude/skills/slice/SKILL.md`; the three subagents are in `.claude/agents/`. Both are committed, so every developer runs the same ones. This section is why they are shaped that way, and the cheat-sheet.
+The procedure is `.claude/skills/slice/SKILL.md`; the two subagents are in `.claude/agents/`. Both are committed, so every developer runs the same ones. This section is why they are shaped that way, and the cheat-sheet.
 
-**What a session costs before anyone types.** Measured on 2026-09-23, not counting Claude Code's own system prompt and tool definitions: root `CLAUDE.md` 3,550 tokens, loaded into every session and every custom subagent. A package `CLAUDE.md` loads when work touches that package: `apps/api` 1,988, `apps/mobile` 2,623, `worker` 1,677. The skill is 2,704. A slice brief has a median of 2,094 and a p90 of 4,176, and the largest, S-21, is 6,819 (`doc toc slices` has each one).
+**What a session costs before anyone types.** Measured on 2026-09-23, not counting Claude Code's own system prompt and tool definitions: root `CLAUDE.md` 3,614 tokens, loaded into every session and every custom subagent. A package `CLAUDE.md` loads when work touches that package: `apps/api` 2,075, `apps/mobile` 2,625, `worker` 1,526. The skill is 2,887. A slice brief has a median of 1,817 and a p90 of 3,250, and the largest, S-21, is 6,298 (`doc toc slices` has each one). Repeated fixed files are served from the prompt cache, so they cost less money than their token count, but they still fill the window.
 
-**A subagent is not free.** Each one starts by loading root `CLAUDE.md` and the package file it works in, so a call costs about 4,000 to 6,000 tokens before it does anything, and every token it spends is extra spend on top of the main session. It earns that by keeping noise out of the main context, where reasoning degrades as history piles up. The rule: delegate work that would put more than about 5,000 tokens into the main context that the main agent will not need again, such as a doc hunt, a code search, or a test run. Do the rest inline.
+**A subagent is not free.** Each one starts by loading root `CLAUDE.md`, its own prompt (about 570 tokens) and the package file it works in, so a call costs about 4,000 to 6,500 tokens before it does anything, on top of the session that started it. It earns that only by keeping noise out of the session, where reasoning degrades as history piles up. The rule: delegate work that would put more than about 5,000 tokens into the session that the session will not need again. Do the rest inline.
+
+**Why these two, and not more.** This is the smallest set that passes that rule, not a proven optimum; the first three slices measure it.
+
+| Candidate | What it keeps out of the session | Verdict |
+|---|---|---|
+| `slice-auditor` | The doc lookups behind the read-back's hunt: every entity checked in `ARCHITECTURE.md`, every decision's `why`, spec §5. An estimated 5,000 to 15,000 tokens on a large brief, in the session that also carries the discussion with the developer | Kept, for briefs over about 1,500 tokens, 23 of the 42. Below that a brief names too few ids to repay 4,000 tokens of overhead. Runs on the session's model at high effort, once per slice, because the read-back is where a silent bug is cheapest to catch |
+| `slice-verifier` | Lint, typecheck and test output, repeated on every fix round. A failing Jest suite or a `tsc` cascade runs to hundreds of lines | Kept. Sonnet, since it runs commands and summarizes failures; its invariant checks are suspicions a person confirms, and the four human-read surfaces still get a person |
+| Built-in `Explore` | Whole files read to answer "what already exists" | Kept. It loads no `CLAUDE.md`, so it is the cheapest call there is |
+| An implementer subagent | A package's code, in a build session that holds nothing else anyway | Dropped. A fresh build session per package isolates the same work for one root `CLAUDE.md` load instead of two, and the agent that builds is the one the developer answers, with no questions relayed |
+| A schema author | Nothing; the schema is small and the developer reviews it in the same session | Not built |
+| A reviewer | Nothing a teammate's review and `/code-review` do not already cover | Not built |
+
+A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` is set, so both agents run the same model on every machine.
 
 **Where context bloats, and what stops it.**
 
 | Source | What happens | What stops it |
 |---|---|---|
 | The read-back conversation | Brief, follow-up sections and discussion ride into the build as history nobody needs | A fresh session per stage; only the approved card crosses |
-| Test, lint, typecheck and build output | A failing Jest run or a `tsc` cascade is hundreds of lines, repeated on every retry | `slice-verifier` writes full logs to `.slices/<id>/` and returns at most 20 lines per failure |
-| Reading files to find one function | Whole files enter the context to answer a one-line question | The built-in `Explore` agent returns paths and names only |
+| Test, lint, typecheck and build output | A failing run is hundreds of lines, repeated on every retry | `slice-verifier` writes full logs to `.slices/<id>/` and returns at most 20 lines per failure |
+| Reading files to find one function | Whole files enter the context to answer a one-line question | `Explore` returns paths and names only |
 | Fix loops | Each attempt appends a diff and an error | Two rounds per failure, then stop and ask (§18.2) |
-| Several packages in one session | Each package's `CLAUDE.md` and code pile up together | One `slice-implementer` call per package |
+| Several packages in one session | Each package's `CLAUDE.md` and code pile up together | One build session per package |
 | Native build and device logs | Gradle and `adb logcat` run to thousands of lines | A person runs the device check and reports the result; never paste the log |
 
 **The stages, and what each holds.** Token figures are estimates from the measured sizes above; replace them with the real numbers from the first three slices.
 
-| Stage | Main context holds | Delegated | Person decides | Hands forward |
+| Stage | Session holds | Delegated | Person decides | Hands forward |
 |---|---|---|---|---|
-| Read-back, `/slice S-12` | fixed files, brief, auditor and Explore reports, the read-back, the discussion: about 16,000 to 22,000 | `slice-auditor` (report under 1,200), `Explore` | go, the decisions, doc fixes | the slice card in the issue, under 900 |
+| Read-back, `/slice S-12` | fixed files, brief, auditor and Explore reports, the read-back, the discussion: about 14,000 to 20,000 | `slice-auditor` on larger briefs, `Explore` | go, the decisions, doc fixes | the slice card in the issue, under 900 |
 | Schema, `/slice S-12 schema` | fixed files, card, `packages/shared-types`: about 9,000 | nothing | merge the schema PR | the merged schema, by path |
-| Build, `/slice S-12 build` | fixed files, card, one implementer report (under 600) and one verifier report (under 800) per package per round: about 10,000 to 18,000 | `slice-implementer`, `slice-verifier` | every `BLOCKED` question, the phone check | the PR |
+| Build, `/slice S-12 build api`, one session per package | fixed files, card, the package's `CLAUDE.md` and code, verifier reports under 800 each: about 15,000 to 40,000, set by how much code it reads | `slice-verifier` | every question the card cannot answer, the phone check | commits; the last package opens the PR |
 | Done, `/slice S-12 done` | fixed files, card, verifier report, the checklist: about 9,000 | `slice-verifier` | review, the human reads, `ARCHITECTURE.md` (Ukasha) | the merged slice, its issue closed |
 
 **Handoffs are artifacts, never transcripts.**
 
 - **The slice card** is the read-back after a person answered it: goal, decisions with who made them, what the slice builds against and produces, files in build order, negative tests, invariant numbers, edge cases with their rule ids, the doc ids to read while building, and anything still open. It lives in the slice's GitHub issue, so all three developers' agents load the same one. It is written once and changed only when a person changes a decision.
-- **Schemas pass by path.** Once the schema PR merges, the card names the file in `packages/shared-types` and the exported names. An implementer reads that one file. Nothing pastes handler or screen code between agents; the compiler checks the contract.
-- **Invariants pass by number.** Root `CLAUDE.md` already reaches the main agent and every custom subagent, so nobody pastes it. The card lists the invariant numbers the slice touches and the negative test for each, and `slice-verifier` checks the diff for each numbered violation. What it flags is a suspicion for a person, not a verdict.
-- **Subagent reports have a fixed shape and a size cap**, set in each agent file. A subagent never asks a person anything, and cannot: it returns a `BLOCKED` item and the main agent asks.
+- **Schemas pass by path.** Once the schema PR merges, the card names the file in `packages/shared-types` and the exported names, and a build session reads that one file. Nothing pastes handler or screen code between sessions; the compiler checks the contract.
+- **Invariants pass by number.** Root `CLAUDE.md` already reaches every session and every custom subagent, so nobody pastes it. The card lists the invariant numbers the slice touches and the negative test for each, and `slice-verifier` checks the diff for each numbered violation. What it flags is a suspicion for a person, not a verdict.
+- **Subagent reports have a fixed shape and a size cap**, set in each agent file. A subagent never asks a person anything, and cannot: the auditor returns its questions under `DECISIONS NEEDED`, and the session asks them.
 
-**When to start over.** `/clear` and reload the card at every stage boundary, after two failed fixes of the same problem, after a large log reached the context by accident, and when `/context` shows the window more than half full. Prefer that to `/compact` whenever a card exists: the card was reviewed by a person and the compaction summary was not. Never run two `slice-implementer` calls at once on one working tree; for a genuine alternative, give one `isolation: worktree`.
+**When to start over.** `/clear` and reload the card at every stage boundary and between packages, after two failed fixes of the same problem, after a large log reached the context by accident, and when `/context` shows the window more than half full. Prefer that to `/compact` whenever a card exists: the card was reviewed by a person and the compaction summary was not. Never build two packages at once in one working tree; for a genuine alternative, use a separate git worktree.
 
-**Other agent tools** follow the same stages through the handoff template in `docs/WorkSlices.md`. Without subagents, run the audit, each package's build and the verification as separate sessions, each starting from the card.
+**Other agent tools** follow the same stages through the handoff template in `docs/WorkSlices.md`. Without subagents, run the audit and the verification as separate sessions too, each starting from the card.
 
 #### Cheat-sheet, for every slice
 
 1. **Pick** a slice whose "Depends on" issues are all closed. If it has no issue, create one from the Work slice template, titled `S-12: <name>`.
 2. **`/slice S-12`** in a fresh session. Read the read-back, starting with what the docs get wrong and the decisions list. **You decide:** answer every decision, fix the docs in their own PR if needed, then say go. The agent writes the card into the issue. `/clear`.
 3. **`/slice S-12 schema`.** Review the schema PR. **You decide:** merge it. `/clear`.
-4. **`/slice S-12 build`.** Answer every `BLOCKED` question yourself, never by asking the agent to guess. **You decide:** run the phone check if the card says one is needed. The agent opens the PR. `/clear`.
+4. **`/slice S-12 build api`**, `/clear`, then **`/slice S-12 build mobile`**, in the card's order. Answer every question yourself; never tell the agent to guess. **You decide:** run the phone check if the card says one is needed. The last package opens the PR. `/clear`.
 5. **`/slice S-12 done`.** **You decide:** get one teammate's review, read any of the four human-read surfaces yourself, and send `ARCHITECTURE.md` changes to Ukasha. Merge, and close the issue.
 
-Never carry a stage's session into the next, never paste a log into the main session, and never let an agent answer its own `BLOCKED`.
-
+Never carry a stage's session into the next, never paste a log into a session, and never let an agent answer its own question.

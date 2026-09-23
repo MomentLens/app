@@ -1,6 +1,6 @@
 ---
 name: slice-auditor
-description: Read-only audit of one MomentLens slice's docs before any code. Finds contradictions, stale lines and undocumented edge cases for the read-back. Use from /slice, step 2.
+description: Read-only audit of one MomentLens slice's docs before any code. Finds contradictions, stale lines and undocumented edge cases for the read-back. Use from /slice, step 2, when the brief is over about 1,500 tokens.
 tools: Read, Grep, Glob, Bash
 disallowedTools: Edit, Write, NotebookEdit, Agent
 model: inherit
