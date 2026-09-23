@@ -74,19 +74,32 @@ const walk = (rel, out = []) => {
   return out;
 };
 
+// Every file an agent follows as instructions. A dangling citation in AGENTS.md or an agent
+// file sends that agent to a section that is not there, exactly as one in CLAUDE.md does.
+const agentFiles = () => {
+  try {
+    return readdirSync(join(root, '.claude', 'agents'))
+      .filter((f) => f.endsWith('.md'))
+      .map((f) => `.claude/agents/${f}`);
+  } catch {
+    return [];
+  }
+};
 const GATED = new Set([
   'CLAUDE.md',
+  'AGENTS.md',
   'apps/api/CLAUDE.md',
   'apps/mobile/CLAUDE.md',
   'worker/CLAUDE.md',
   '.claude/skills/slice/SKILL.md',
   '.github/ISSUE_TEMPLATE/slice.md',
+  ...agentFiles(),
 ]);
 // The two retrieval scripts cite D-57 and §4.11 as usage examples, so scanning them puts
 // this tool in the blast radius of decisions it does not depend on.
 const SELF = /^scripts\/doc(index)?\.mjs$/;
 // Only `doc why` needs the code backlinks, and walking the tree for them costs more than
-// parsing all five docs. Everything else reads the six files that route to the docs.
+// parsing all five docs. Everything else reads only the gated files that route to the docs.
 const sources = (wide) =>
   wide
     ? [
@@ -97,7 +110,7 @@ const sources = (wide) =>
 
 const FENCE = /^([ \t]*)(`{3,}|~{3,})(.*)$/;
 const HEADING = /^(#{1,6})\s+(.*?)\s*$/;
-const D_HEAD = /^(D-\d+)\s*[—:–-]\s*(.+)$/; // 68 entries use an em dash, 12 a colon
+const D_HEAD = /^(D-\d+)\s*[—:–-]\s*(.+)$/; // older entries use an em dash, newer a colon
 const NUMBERED = /^(\d+(?:\.\d+)*)\.?\s+(.+)$/;
 const ROW = /^\|\s*\*{0,2}(S-\d+[a-z]?|P0-\d+)\*{0,2}\s*\|\s*(.+?)\s*\|/;
 const ABSTRACT = /^[ \t]*<!--\s*abstract:\s*([\s\S]*?)-->/m;
@@ -115,7 +128,7 @@ const slug = (t) =>
 // An agent decides what to read from these numbers, so a biased estimate has a cost.
 // length/4 ran 7.4% high overall and put only 38% of chunks within 10% of the truth: it
 // over-counts prose by up to a third and under-counts tables by 40%. Fitted against
-// cl100k_base over all 300 chunks of this corpus, word and punctuation counts land 85%
+// cl100k_base over the 300 chunks the corpus had on 2026-09-21, word and punctuation counts land 85%
 // within 10% and the corpus total within 0.1%. Still an estimate, still no dependency.
 export const tokens = (t) =>
   Math.ceil(1.18 * (t.match(/\S+/g)?.length ?? 0) + 0.59 * (t.match(/[^\w\s]/g)?.length ?? 0));
@@ -150,6 +163,10 @@ const sentence = (text, min = 40) => {
 const headings = (lines) => {
   const out = [];
   const stray = [];
+  // Fences pair from the top, so one stray fence flips every pair after it and the scan ends
+  // on an innocent fence far below. The first block that swallows a numbered heading is
+  // where the pairing went wrong.
+  let suspect = null;
   let fence = null;
   lines.forEach((line, i) => {
     const f = line.match(FENCE);
@@ -172,11 +189,15 @@ const headings = (lines) => {
       else if (mark === fence.mark && len >= fence.len && !f[3].trim()) fence = null;
       return;
     }
-    if (fence !== null) return;
+    if (fence !== null) {
+      if (!suspect && /^#{1,6}\s+\d+(\.\d+)*\.?\s/.test(line))
+        suspect = { line: fence.line, heading: i + 1 };
+      return;
+    }
     const h = line.match(HEADING);
     if (h) out.push({ level: h[1].length, title: h[2], line: i + 1 });
   });
-  return { out, open: fence, stray };
+  return { out, open: fence, stray, suspect };
 };
 
 // Derived from the body wherever possible, so almost nothing here is an authoring job.
@@ -205,10 +226,13 @@ const abstractOf = (c) => {
 const parse = (key, text) => {
   const cfg = FILES[key];
   const lines = text.split('\n');
-  const { out: heads, open, stray } = headings(lines);
+  const { out: heads, open, stray, suspect } = headings(lines);
   const chunks = [];
   // A note header naming a slice that does not exist is a typo that drops the note.
   const notesBad = [];
+  // A | inside a cell shifts every column after it, and the brief silently loses its
+  // dependency rows. Phase 0's table has three cells, every other slice table five.
+  const rowsBad = [];
 
   for (const h of heads) {
     const title = plain(h.title);
@@ -268,6 +292,21 @@ const parse = (key, text) => {
     lines.forEach((line, i) => {
       const m = line.match(ROW);
       if (!m || m[1] === 'ID') return;
+      const cells = line.split('|').slice(1, -1);
+      const want = m[1].startsWith('P0') ? 3 : 5;
+      if (cells.length !== want)
+        rowsBad.push({
+          line: i + 1,
+          msg: `${m[1]} has ${cells.length} cells and a row in its table has ${want}. A | inside a cell shifts the Depends on column; take it out`,
+        });
+      else if (want === 5) {
+        const other = cells[4].replace(/\b(S-\d+[a-z]?|P0-\d+)\b/g, '').replace(/[,\s]/g, '');
+        if (other)
+          rowsBad.push({
+            line: i + 1,
+            msg: `${m[1]}'s Depends on cell holds "${cells[4].trim()}". It takes slice ids only, because the brief prints exactly those rows`,
+          });
+      }
       const c = {
         file: key,
         level: 9,
@@ -295,7 +334,7 @@ const parse = (key, text) => {
       chunks.push(c);
     });
 
-    // All 13 notes in this file are written the same way: the paragraph opens with the id
+    // Every note in this file is written the same way: the paragraph opens with the id
     // in bold. Match exactly that, because the looser rule this replaces counted the ids
     // anywhere on the first line and required there to be only one, so editing a note to
     // mention a second slice silently detached it from the first.
@@ -330,7 +369,7 @@ const parse = (key, text) => {
     for (const c of rows) {
       if (!c.attached) continue;
       c.notes = c.attached.map((p) => ({ start: p.start, end: p.end }));
-      // Citations in a note become the slice's own edges, so D-19 reaches S-04.
+      // Citations in a note become the slice's own edges, so D-88 reaches S-04.
       c.selfBody += '\n' + c.attached.map((p) => p.lines.join('\n')).join('\n');
       c.tokens = c.selfTokens = tokens(c.selfBody);
       for (const p of c.attached) c.segments.push({ text: p.lines.join('\n'), from: p.start });
@@ -371,7 +410,7 @@ const parse = (key, text) => {
     c.cites = [];
     c.citedBy = [];
   }
-  return { chunks, open, stray, notesBad, lines };
+  return { chunks, open, stray, suspect, notesBad, rowsBad, lines };
 };
 
 const PREFIXES = Object.entries(FILES).flatMap(([k, c]) => c.prefixes.map((p) => [p, k]));
@@ -384,9 +423,9 @@ const SECTION = new RegExp(
 
 // "Handbook §5 and §7" elides the prefix on the second citation. A bare §n inherits the
 // nearest qualified one within 60 characters, then falls back to its own file, then the spec.
-// 289 of the 397 § citations in docs/ carry no prefix and resolve by that fallback, so it is
-// convention, not a guess, and the gate does not flag it. 26 of those name a number that
-// exists in more than one document. The limit: in "Handbook §5, plus §2 of the spec" the bare
+// Most § citations in docs/ carry no prefix and resolve by that fallback, so it is
+// convention, not a guess, and the gate does not flag it. Some name a number that exists in
+// more than one document. The limit: in "Handbook §5, plus §2 of the spec" the bare
 // §2 inherits `hb` from six words earlier and the trailing qualifier is not read.
 // ARCHITECTURE.md's 17 table entries carry no section number, so nothing could cite one and
 // a row wanting `venue_verification` had to cite arch §2 and get a 17-item menu. `arch:slug`
@@ -458,6 +497,8 @@ export const buildIndex = ({ wide = false } = {}) => {
         line: t.line,
         msg: `this paragraph opens "**${t.key}" but there is no such slice, so the note reaches no brief`,
       });
+    for (const t of p.rowsBad)
+      errors.push({ code: 'slice-row', file: posix(cfg.path), line: t.line, msg: t.msg });
     for (const t of p.stray)
       errors.push({
         code: 'fence-indent',
@@ -472,7 +513,11 @@ export const buildIndex = ({ wide = false } = {}) => {
         code: 'unbalanced-fence',
         file: posix(cfg.path),
         line: p.open.line,
-        msg: `the ${p.open.mark.repeat(p.open.len)} fence opened here never closes`,
+        msg:
+          `the ${p.open.mark.repeat(p.open.len)} fence opened here never closes` +
+          (p.suspect
+            ? `. Fences pair from the top, so look earlier: the block opened at line ${p.suspect.line} swallows the heading at line ${p.suspect.heading}, so that fence is probably the stray one`
+            : ''),
       });
 
     const seenSlug = new Map();
@@ -598,8 +643,10 @@ export const buildIndex = ({ wide = false } = {}) => {
   // somewhere in WorkSlices.md. A section nothing points at is behaviour nobody is assigned
   // to build, and an agent asked to build around it invents it instead. spec §5, the whole
   // of the error handling, had zero inbound citations when this check was written.
+  // A section whose children are all unnumbered, like spec §9's three beats, counts as a leaf:
+  // nothing can cite those children, so the section itself needs an owner.
   for (const c of chunks.values()) {
-    if (c.file !== 'idea' || !c.number || c.children.length) continue;
+    if (c.file !== 'idea' || !c.number || c.children.some((k) => chunks.get(k).number)) continue;
     let seen = false;
     for (let x = c; x && !seen; x = x.parent ? chunks.get(x.parent) : null)
       seen = x.citedBy.some((b) => chunks.get(b)?.file === 'slices');
