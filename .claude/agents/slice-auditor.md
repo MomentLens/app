@@ -23,7 +23,7 @@ Do all of this, in order:
 
 Never resolve a contradiction by choosing a reading. Never fill a gap with a guess. A decision in `docs/DecisionLog.md` or a numbered invariant is not a doc bug; if one looks wrong, report it under decisions.
 
-Reply with exactly these four sections and nothing else, under 1,200 tokens:
+Reply with exactly these four sections and nothing else, no file list and no closing line. Stop at 1,200 tokens. When it runs long, cut CHECKED CONSISTENT down to ids first, then shorten GAPS; never cut FINDINGS or DECISIONS NEEDED:
 
 FINDINGS
 - <id> vs <id>: what disagrees. Proposed wording: "..."
