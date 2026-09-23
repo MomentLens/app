@@ -228,7 +228,7 @@ Every job is a message on one pgmq queue, `jobs`: `{ "job": "<name>" }` plus the
 - **Regions survive every regeneration.** `face_process`, `reprocess` and `blur_region` all apply the photo's stored regions. None of them regenerates from the bare upload alone (root invariant 6).
 - **Model.** InsightFace through ONNX Runtime, loaded once at startup (D-40). `buffalo_l`, detection and recognition modules only (D-92).
 - **Processes.** One worker process per machine, one message at a time (Handbook §6, D-103).
-- **Failures.** A message that fails three times is archived and logged, and reported to Sentry once the worker has it. A failed `face_process` leaves its photo unpublished. A failed `reprocess` or `blur_region` leaves a published photo with its previous files, which is an open item in `DecisionLog.md` (D-103).
+- **Failures.** A message that fails three times is archived and logged, and reported to Sentry once the worker has it. If it names a photo, the worker also clears that photo's `processed_at`, so the photo leaves the album and never stays up with files a failed job should have replaced. To run the job again, send the archived message from pgmq's archive for `jobs` back to `jobs` (D-103, D-108).
 - **Cleanup.** After a regeneration commits, the worker deletes the objects the rows no longer point at, never the upload keys (D-103).
 - **Scheduled work.** None in demo scope. Retention deletion (§4.21) appears in no demo beat (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes the objects and rows.
 

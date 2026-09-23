@@ -856,6 +856,7 @@ One table per area, so a slice cites the part it needs.
 | Someone draws a blur region over another person to hide them | It applies. The Admin sees it in the Review Queue, with who drew it, and removes it (§4.11.4.4). |
 | A photo with a blur region is reprocessed | The region is applied again. No regeneration drops it (root invariant 6). |
 | Photo uploaded before a Do Not Publish flag is activated | Existing photos are reprocessed asynchronously to blur that face. |
+| A job to reprocess or re-blur a published photo keeps failing | The photo leaves the album until the job runs again, and its uploader sees it as processing in My Media. It never stays up with files the failed job should have replaced (D-108). |
 | A Do Not Publish user joins an event that already has photos | Joining triggers reprocessing for that user in that event, so earlier photos blur the same way (§4.11.4.5). |
 
 ### 5.6 The event and the service

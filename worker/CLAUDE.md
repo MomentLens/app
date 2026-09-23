@@ -8,7 +8,7 @@ Detail in Handbook §6, spec §4.11, and `docs/ARCHITECTURE.md` §2 (tables) and
 
 ## Shape
 
-The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). A message that fails three times is archived and logged, and goes to Sentry once the worker has it; a failed `face_process` leaves its photo unpublished. The HTTP surface is `/health` and nothing else, so nginx and a human can ping it.
+The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). A message that fails three times is archived and logged, and goes to Sentry once the worker has it. If it names a photo, clear that photo's `processed_at`, so a failed job never leaves a photo up with files it should have replaced (D-108). The HTTP surface is `/health` and nothing else, so nginx and a human can ping it.
 
 The worker connects to Postgres directly with `DATABASE_URL`, so RLS does not apply to it. Scope every query to the event yourself.
 
@@ -34,7 +34,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 
 ## The rules inside those jobs
 
-1. **`processed_at` is written last**, after every variant and thumbnail is in R2. It publishes the row. Written early, it publishes an unblurred photo.
+1. **`processed_at` is written last**, after every variant and thumbnail is in R2. It publishes the row. Written early, it publishes an unblurred photo. The one other write is clearing it after a final failure, which unpublishes the photo (D-108).
 2. **Bump `variant_version` on every write, including the first**, and put it in every key you build. Shapes are in `docs/ARCHITECTURE.md` §3.
 3. **Write the keys onto the rows as you upload them.** The API reads those columns. The worker builds every derived key and never an upload key; the API builds those (D-70).
 4. **N subjects → N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. A photo with no Do Not Publish face and no blur region produces no extra files; its public keys point at the upload.

@@ -109,7 +109,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5.2, spec §5.4 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256, and the **upload loop**: pre-flight, both PUTs, completion, and the queue state each answer leads to | §4.8.1 Stage 1, §4.8.2, §4.8.3, D-58, D-69, D-32, D-53, D-97, arch §4, HB §5.3, spec §5.4 | C | S-10, S-12 |
 | S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5.4, D-73, arch:venue_verification, arch:media, D-95, D-96, D-98, HB §5.3 | U | S-03, S-04 |
-| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, arch §5 | U | S-12 |
+| S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, D-108, arch §5 | U | S-12 |
 | S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-11 |
 
