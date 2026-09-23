@@ -750,6 +750,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** D-84's join path and every `variant_version` bump assumed two jobs never write one photo at once, and no doc said so. A URL presigned before a retroactive blur kept serving the unblurred file for up to an hour, because the old object was never deleted.
 **Rejected.** One queue per job, which loses the order between two jobs on the same photo. Retrying forever, which hides a broken job.
 **Cost.** One slow photo delays every job behind it. A viewer looking at a replaced file gets one failed load and re-resolves. A `reprocess` or `blur_region` that fails three times leaves a published photo with its previous files, which can still show a face that should now be blurred; that is an open item below.
+**Amended (see D-108).** A message about a photo that fails three times now also clears that photo's `processed_at`, so a failed `reprocess` or `blur_region` never leaves it up with its previous files.
 
 ### D-104: Until S-26 measures, matching fails closed
 **Decision.** The worker reads its thresholds from configuration that mirrors `docs/ARCHITECTURE.md` §6. While §6 says "not measured", it blurs every detected face in every file it writes, subjects' own files included, and records no match on `face` rows. Tests set a threshold in their own fixtures, never in configuration.
@@ -790,6 +791,12 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A hook enforcing read-only agents, about 40 lines of script for a risk the prompts already name.
 **Cost.** A pinned model id needs a bump when models change. A docs PR waits for a teammate's review.
 
+### D-108: A job that keeps failing on a photo unpublishes it
+**Decision.** Amends D-103. When a message about a photo fails its third try, the worker archives it and clears that photo's `processed_at` if it was set. The photo leaves the album, and its uploader sees it as processing in My Media. The serving endpoint stops signing it at once, because its visibility check needs `processed_at` (`docs/ARCHITECTURE.md` §1), and other phones drop it on their next fetch of the event. To run the job again, send the archived message back to `jobs`; on success the job sets `processed_at` last, as always.
+**Why.** A failed `reprocess` or `blur_region` left a published photo with its previous files, which can still show a face that was just made Do Not Publish or just blurred. This fails closed, like D-104: a missing photo is visible and fixable, and a leaked face is neither.
+**Rejected.** Keeping the previous files, D-103's first answer. Letting the `media` policy pass the unpublished row so Realtime removes it live, which would also hand members rows that were never processed, against the Realtime test in Handbook §11.3.
+**Cost.** The photo is gone from the album until someone re-queues the job, and only the log says so, and Sentry once the worker has it. A URL already signed stays valid for up to an hour, and a phone that already shows the photo keeps it until its next fetch.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -800,5 +807,4 @@ These are not settled and should not be treated as though they are.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
 - **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
-- **What a failed `reprocess` or `blur_region` does to a published photo.** D-103 leaves its previous files in place, which can still show a face that should now be blurred.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
