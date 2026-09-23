@@ -222,6 +222,27 @@ There is no `PlanTier` table. The hard-coded constants in spec §4.17 are plain 
 
 **The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It first drops every media id the requester may not see under the media rule in `docs/ARCHITECTURE.md` §1. For the rest it answers "which file does this requester get for this photo": the subject's own variant if a `dnp_subject` row on that media points at the requester's subject, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3).
 
+### 5.3 API conventions
+
+Every endpoint follows these, so the app has one way to read an answer. They exist before S-01 writes its first schema.
+
+- **Paths** are plural nouns under the resource that owns them: `GET /events/{eventId}/media`, `POST /events/{eventId}/media/preflight`, `POST /media/{mediaId}/complete`. Ids are uuids in the path, never in a query string.
+- **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
+- **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
+- **A 403 on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1).
+- Anything the table does not cover is a 500, which Sentry reports.
+
+| Status | Means | `code` values so far |
+|---|---|---|
+| 200, 201 | Done; 201 when a row was created | |
+| 400 | The body or path failed validation | `invalid_request` |
+| 401 | No session, or it expired | `no_session` |
+| 403 | Not an active member of this event, or the wrong role | `not_member`, `wrong_role`, `not_uploader` |
+| 404 | Not found, or soft-deleted | `not_found` |
+| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing` |
+| 422 | A limit reached | `event_full`, `too_many_references` |
+| 503 | A dependency is down | `GET /health` only, with its own body |
+
 ---
 
 ## 6. AI worker architecture (FastAPI)
