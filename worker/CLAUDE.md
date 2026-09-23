@@ -8,7 +8,7 @@ Detail in Handbook §6, spec §4.11, and `docs/ARCHITECTURE.md` §2 (tables) and
 
 ## Shape
 
-The main loop polls `pgmq`, dispatches to a job handler, writes to Postgres and R2, and moves on. The HTTP surface is `/health` and nothing else, so nginx and a human can ping it.
+The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). A message that fails three times is archived and logged, and goes to Sentry once the worker has it; a failed `face_process` leaves its photo unpublished. The HTTP surface is `/health` and nothing else, so nginx and a human can ping it.
 
 The worker connects to Postgres directly with `DATABASE_URL`, so RLS does not apply to it. Scope every query to the event yourself.
 
@@ -38,7 +38,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 2. **Bump `variant_version` on every write, including the first**, and put it in every key you build. Shapes are in `docs/ARCHITECTURE.md` §3.
 3. **Write the keys onto the rows as you upload them.** The API reads those columns. The worker builds every derived key and never an upload key; the API builds those (D-70).
 4. **N subjects → N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. A photo with no Do Not Publish face and no blur region produces no extra files; its public keys point at the upload.
-5. **Never overwrite an object in place.** A regenerated file or thumbnail gets a new versioned key, or every client cache keeps the old one (D-60, D-69).
+5. **Never overwrite an object a row points at.** A regenerated file or thumbnail gets a new versioned key, or every client cache keeps the old one (D-60, D-69). A retry may rewrite a versioned key no row points at yet. Once the rows point at the new files, delete the objects they replaced, and never `upload_key` or `upload_thumb_key` (D-103).
 6. **`thumbnail_dims` and `face_process` never run on the same upload.** Once Do Not Publish users exist, `thumbnail_dims` publishes a photo nobody blurred, or points the public keys back at the unblurred upload after `face_process` finished (D-72).
 
 ---
@@ -52,7 +52,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 - **Matching is biased toward blurring when uncertain.** A missed match is the expensive failure; a false positive only blurs someone who did not ask, and that person stays blurred in the photo (spec §4.11.4.5).
 - **Every file you write applies the photo's stored blur regions** (root invariant 6), blurred at D-65's strength over exactly the rectangle drawn. There are no auto-added references and no tap-to-blur (D-83).
 - Matching is scoped to subjects who are **active members of this event**, never global.
-- **Thresholds come from `docs/ARCHITECTURE.md` §6.** If they are not measured yet, say so. Do not invent one. The spec carries no numbers.
+- **Thresholds come from `docs/ARCHITECTURE.md` §6.** If they are not measured yet, say so. Do not invent one. The spec carries no numbers. Until §6 has a value, fail closed: blur every detected face in every file, subjects' own files included, and record no match. A test sets its threshold in its own fixture, never in configuration (D-104).
 
 ---
 

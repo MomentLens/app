@@ -253,7 +253,7 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 **Load the model once, at startup.** Cold-loading InsightFace per job costs several seconds; a warm model takes well under a second for a photo with a few faces and several seconds for a large group, because every face gets its own recognition pass (D-78 has the measured numbers). Lazy-loading is the single most likely reason your demo feels slow, and it is entirely avoidable. Note that input resolution barely moves this number, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; what full-size input actually costs you is JPEG decode time, roughly 100 to 200ms.
 
-**Job types.** Five pgmq jobs: `thumbnail_dims`, `face_process`, `reference_process`, `reprocess` and `blur_region`. Their triggers and work are in `docs/ARCHITECTURE.md` §5 and nowhere else, so this section does not repeat them. `face_process` matches every face against every subject with references who is an active member of the event, Do Not Publish or not, because Find My Photos reads the same matches (D-74).
+**Job types.** Five jobs, all on one pgmq queue, `jobs`, which the worker reads one message at a time (D-103): `thumbnail_dims`, `face_process`, `reference_process`, `reprocess` and `blur_region`. Their triggers and work are in `docs/ARCHITECTURE.md` §5 and nowhere else, so this section does not repeat them. `face_process` matches every face against every subject with references who is an active member of the event, Do Not Publish or not, because Find My Photos reads the same matches (D-74).
 
 **Three rules inside `face_process` that are easy to get subtly wrong:**
 
@@ -389,7 +389,7 @@ Also worth an integration test, because it fails silently in the other direction
 
 ### 11.4 Calibrating the similarity thresholds
 
-**One calibration task that is not a test but belongs here.** The spec gives no similarity thresholds, and `docs/ARCHITECTURE.md` §6 records them as not measured. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
+**One calibration task that is not a test but belongs here.** The spec gives no similarity thresholds, and `docs/ARCHITECTURE.md` §6 records them as not measured. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Until then the worker fails closed, blurring every detected face and recording no match (D-104), so nothing ships on an example number. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
 
 Two honesty notes that belong with the numbers rather than in the viva prep, because this is where they will be forgotten. Thirty photos of three people is a small and unrepresentative sample, so the thresholds are overfitted to your demo set; say that yourself rather than being asked.
 
