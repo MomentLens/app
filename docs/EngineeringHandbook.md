@@ -412,7 +412,7 @@ main ← always deployable
 
 **PRs, even at this size.** The value is not process for its own sake. It is insurance against the bus-factor problem: if only the author has ever read a piece of code, that is a real risk when they are unavailable during exam week and their area breaks. A quick review spreads enough context that the team is not hostage to one person's availability.
 
-**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. Not to gatekeep. To keep any area from becoming a black box.
+**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. `main` takes changes only through pull requests, and the team's rule is one review and a green CI run before merging (D-107). Not to gatekeep. To keep any area from becoming a black box.
 
 **Conventional commits** (`feat:`, `fix:`, `chore:`). Makes `git log` useful when you are trying to remember why something changed three weeks ago. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits. PR titles and descriptions carry no tool attribution either, such as a "Generated with Claude Code" line.
 
@@ -764,6 +764,15 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 - **Cite a section id, never a line number.** `EngineeringHandbook.md:542` went stale in one PR. Ids survive edits and the gate checks them (gated: a dangling citation fails).
 - **Renaming a heading changes its id.** Before renaming one, `doc why` it, or grep for `arch:<slug>` if it is a table heading, and update what cites it.
 - **Say the date on anything that will stop being true**, such as a server that goes away on 2026-10-15, so the next reader can tell a stale line from a current one.
+- **Write plainly.** These apply to `docs/`, the `CLAUDE.md` files, `AGENTS.md`, `.claude/`, commit messages and PR descriptions, whoever's agent writes them (D-107). Fix an older line when you touch it; do not rewrite a file just to comply.
+  - No em dashes. End the sentence or use a comma. Older decision headings keep theirs.
+  - None of these words: delve, crucial, pivotal, showcase, tapestry, testament, underscore, landscape used abstractly, leverage, utilize, robust, seamless.
+  - No "not just X, but Y". State the point.
+  - No colon joining two halves of a sentence. A colon before a list, a code block or a label is fine.
+  - Active voice, with the actor named.
+  - No adverb propping up a weak verb. Use the number or a stronger verb.
+  - Say what a thing does. A sentence that could sit unchanged in another project's docs says nothing, so cut it.
+  - Sentence-case headings, straight quotes, no decorative emoji.
 
 ### 18.8 Running a slice with subagents
 
@@ -778,13 +787,13 @@ The procedure is `.claude/skills/slice/SKILL.md`; the two subagents are in `.cla
 | Candidate | What it keeps out of the session | Verdict |
 |---|---|---|
 | `slice-auditor` | The doc lookups behind the read-back's hunt: every entity checked in `ARCHITECTURE.md`, every decision's `why`, spec §5. An estimated 5,000 to 15,000 tokens on a large brief, in the session that also carries the discussion with the developer | Kept, for briefs over about 1,500 tokens, 29 of the 44. Below that a brief names too few ids to repay 4,000 tokens of overhead. Runs on the session's model at high effort, once per slice, because the read-back is where a silent bug is cheapest to catch |
-| `slice-verifier` | Lint, typecheck and test output, repeated on every fix round. A failing Jest suite or a `tsc` cascade runs to hundreds of lines | Kept. Sonnet, since it runs commands and summarizes failures; its invariant checks are suspicions a person confirms, and the four human-read surfaces still get a person |
+| `slice-verifier` | Lint, typecheck and test output, repeated on every fix round. A failing Jest suite or a `tsc` cascade runs to hundreds of lines | Kept. Pinned to `claude-sonnet-5`, since it runs commands and summarizes failures; its invariant checks are suspicions a person confirms, and the four human-read surfaces still get a person |
 | Built-in `Explore` | Whole files read to answer "what already exists" | Kept. It loads no `CLAUDE.md`, so it is the cheapest call there is |
 | An implementer subagent | A package's code, in a build session that holds nothing else anyway | Dropped. A fresh build session per package isolates the same work for one root `CLAUDE.md` load instead of two, and the agent that builds is the one the developer answers, with no questions relayed |
 | A schema author | Nothing; the schema is small and the developer reviews it in the same session | Not built |
 | A reviewer | Nothing a teammate's review and `/code-review` do not already cover | Not built |
 
-A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` is set. That does not make the two agents run the same model on every machine. `slice-auditor` inherits whatever model the developer's session runs. `slice-verifier`'s `sonnet` is the session's own Sonnet when the session runs one, and the default Sonnet otherwise. Both agents drop Edit and Write but keep Bash, which can still write; their prompts forbid it and nothing enforces it.
+A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` is set. `slice-verifier` names a full model id, `claude-sonnet-5`, so it runs the same model on every machine; bump the id when the team moves to a newer Sonnet. `slice-auditor` inherits whatever model the developer's session runs, on purpose (D-107). Both agents drop Edit and Write but keep Bash, which can still write. They are read-only by instruction, not by enforcement: their prompts forbid writing and nothing blocks it (D-107).
 
 **Where context bloats, and what stops it.**
 

@@ -60,4 +60,4 @@ this one depends on, before starting. If it turned up nothing, look again.
 - [ ] Unit test for any pure logic (Handbook §11.2)
 - [ ] Dark mode through tokens, no hardcoded hex
 - [ ] Reviewed by one of the other two (Handbook §12)
-- [ ] `docs/ARCHITECTURE.md` updated in this PR if it added a table, column, R2 key or job, and Ukasha has reviewed that change (D-75)
+- [ ] `docs/ARCHITECTURE.md` updated in this PR if it added a table, column, R2 key or job, as its own commit from the done stage, and Ukasha has reviewed that change (D-75, D-107)

@@ -3,7 +3,7 @@ name: slice-verifier
 description: Runs lint, typecheck and tests for the packages a MomentLens slice touched, checks the diff against the invariants on its slice card, and reports only failures. Read-only. Use after each round of building a package, and before the PR.
 tools: Read, Grep, Glob, Bash
 disallowedTools: Edit, Write, NotebookEdit, Agent
-model: sonnet
+model: claude-sonnet-5
 maxTurns: 30
 color: yellow
 ---
