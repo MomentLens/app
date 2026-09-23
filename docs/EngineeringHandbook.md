@@ -276,9 +276,9 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 **Do not route media bytes through Express.** If every photo flows through Node, you pay for that bandwidth and CPU twice, once receiving and once forwarding, on a box you are specifically keeping light. Instead:
 
 1. **Pre-flight** (small JSON, this *does* go through Express): content hash, sub-event ID, and any GPS reading or Venue QR scan the device holds for verification, each with its time; the photo carries no location (D-89). No image bytes, the thumbnail included (D-69). The checks and their order are `docs/ARCHITECTURE.md` §4: membership and album state; then the hash, where the caller's own unfinished row resumes and any other match is silently rejected; then, for a new row, the cap and verification. Every one is an indexed lookup, so none risks blocking the event loop.
-2. **Presigned URLs.** If it passes, Express builds the upload keys for the photo and its thumbnail in its one key function, writes them onto the new media row (D-70), and presigns a PUT URL for each via `@aws-sdk/client-s3` (R2 is S3-API-compatible; this is standard SDK functionality).
+2. **Presigned URLs.** If it passes, Express builds the upload keys for the photo and its thumbnail in its one key function, writes them onto the new media row (D-70), and presigns a PUT URL for each with `@aws-sdk/s3-request-presigner` over `@aws-sdk/client-s3` (R2 is S3-API-compatible), living 15 minutes (D-105). The cap check and the insert run in the `start_upload` SQL function, with the event row locked (D-95).
 3. **Direct upload.** The client PUTs the photo and its thumbnail straight to R2. Express is not in this path.
-4. **Completion.** The client tells Express "done." Express sets `uploaded_at` where it is null and enqueues the `pgmq` job in the same transaction, so a retried completion enqueues nothing (D-82).
+4. **Completion.** The client tells Express "done." Express checks both objects with a HEAD, then calls the `complete_upload` SQL function, which sets `uploaded_at` where it is null and enqueues the `pgmq` job in the same transaction, so a retried completion enqueues nothing (D-82, D-95). supabase-js holds no transaction, so this cannot be two calls.
 
 **The same rule covers every other image.** Event covers, profile photos and reference photos also go to R2 by presigned PUT, with a key the API builds (`docs/ARCHITECTURE.md` §3). No route handler ever receives image bytes.
 
@@ -287,9 +287,9 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 | Step | Every role |
 |---|---|
 | EXIF strip | Yes. Timestamp and orientation survive; everything else, including GPS, is stripped. |
-| HEIC to JPEG | Yes |
+| HEIC to JPEG | Yes, and any other format that is not JPEG (D-105) |
 | Client resize | **None**, unless the longest edge exceeds 4096px, in which case resize to 4096px. Never fires on a phone photo. |
-| Thumbnail | 300px WebP, for the grid. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face and no blur region (D-69, D-83) |
+| Thumbnail | WebP, 300px on the long edge, for the grid. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face and no blur region (D-69, D-83) |
 | Hash | SHA-256 over the **exact byte stream about to be uploaded**, after EXIF strip and HEIC conversion |
 | Location gate | Server-side in pre-flight. Photographers pass automatically. |
 

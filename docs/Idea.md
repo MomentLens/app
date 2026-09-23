@@ -541,22 +541,23 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 **One pipeline for every role.** Guest, Admin and Photographer uploads receive byte-identical treatment (D-58).
 
 - Retain only timestamp and orientation in EXIF; strip everything else, including GPS.
-- Convert HEIC/HEIF to JPEG.
+- Convert HEIC/HEIF, and any other format that is not JPEG, to JPEG, so every upload is `upload.jpg` (D-105).
 - **No resize, with one guard.** Phone JPEGs are already 1 to 3MB. If the longest edge exceeds **4096px**, resize to 4096px preserving native aspect. This never fires on a phone photo; it exists so a DSLR file dragged in during a rehearsal does not surprise anyone.
-- Generate a 300px WebP thumbnail for the album grid. It is made from the unblurred photo, so it is served only for photos with no Do Not Publish face and no blur region; the worker writes blurred thumbnails for the rest (§4.13, D-69, D-83).
+- Generate a WebP thumbnail 300px on its long edge for the album grid (D-105). It is made from the unblurred photo, so it is served only for photos with no Do Not Publish face and no blur region; the worker writes blurred thumbnails for the rest (§4.13, D-69, D-83).
 - Compute a **SHA-256 hash of the exact byte stream about to be uploaded**, after EXIF stripping and HEIC conversion. Never the thumbnail: WebP encoders differ across platforms and versions, so that hash is not reproducible (D-53).
 
 #### 4.8.2 Stage 2 — pre-flight
-- A single small JSON round-trip: content hash, sub-event ID, and any verification records the device holds, a GPS reading or a Venue QR scan, each with its time (§4.5). The photo carries no location of its own. There is no album id; media belongs to an event through its sub-event (`docs/ARCHITECTURE.md` §2). No image bytes travel in it, the thumbnail included (D-69).
+- A single small JSON round-trip: content hash, sub-event ID, the photo's EXIF capture time (the pre-flight time stands in when it has none, D-98), and any verification records the device holds, a GPS reading or a Venue QR scan, each with its time (§4.5). The photo carries no location of its own. There is no album id; media belongs to an event through its sub-event (`docs/ARCHITECTURE.md` §2). No image bytes travel in it, the thumbnail included (D-69).
 - **Membership and album state.** The caller must be an active member, the event must not be deleted, and the album must be open (§4.9). A closed album leaves the photo in the local queue, and the queue retries once the album opens (D-82).
-- **Exact duplicate** (identical SHA-256) is silently rejected, with no upload and no user-facing prompt. This is one indexed lookup, not a distance computation. There is no near-duplicate detection of any kind; anything that isn't byte-identical after processing uploads. **The one exception is the caller's own unfinished upload.** A row with this hash that the same user created and never completed gets fresh upload URLs for its existing keys, so a photo whose app was killed mid-upload resumes instead of vanishing (D-82).
-- **Cap and verification, for a new row.** The event must be under its 2,000-photo cap (§4.17). Then `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role = 'photographer')`. If verification fails, the upload is rejected and the photo waits in the local queue. A resumed upload already passed both.
-- If every check passes, Express names the upload keys and issues presigned R2 upload URLs for the photo and its thumbnail (D-70).
+- **Exact duplicate** (identical SHA-256 to a finished photo in the event, even one since deleted) is silently rejected, with no upload and no user-facing prompt (D-96). This is one indexed lookup, not a distance computation. There is no near-duplicate detection of any kind; anything that isn't byte-identical after processing uploads. **The one exception is the caller's own unfinished upload.** A row with this hash that the same user created and never completed gets fresh upload URLs for its existing keys, so a photo whose app was killed mid-upload resumes instead of vanishing (D-82).
+- **Another user's unfinished upload of the same photo is not a duplicate.** Both upload, the first to complete wins, and the second completion is answered as a duplicate (D-96).
+- **Verification and cap, for a new row.** `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role = 'photographer')`. If verification fails, the upload is rejected and the photo waits in the local queue. Then the event must be under its 2,000-photo cap (§4.17), counted with the event row locked so two uploads at 1,999 cannot both pass (D-95). A resumed upload already passed both.
+- If every check passes, Express names the upload keys and issues presigned R2 upload URLs for the photo and its thumbnail, which live 15 minutes (D-70, D-105).
 
 #### 4.8.3 Stage 3 — upload
 - Direct to R2 via the presigned URLs, one for the photo and one for its thumbnail. Express never proxies media bytes.
 - Sequential, not parallel, per photo in a session, so most of a session stays cancelable from My Media.
-- On completion the client notifies Express, which marks the row uploaded and enqueues the processing job via `pgmq` in one transaction. A repeated completion call enqueues nothing (D-82).
+- On completion the client notifies Express. Express checks that both files arrived in R2, then marks the row uploaded and enqueues the processing job via `pgmq` in one transaction. A repeated completion call enqueues nothing (D-82, D-95). A missing file sends the photo back to upload again.
 - **Background behavior, bounded deliberately:** iOS uses `beginBackgroundTask` (roughly 3 minutes of continued execution after backgrounding); Android uses a foreground service with a visible sticky notification. Neither attempts to guarantee completion hours later or survive a force-kill. If the app is force-killed mid-upload, the local SQLite queue resumes the remaining items on next launch.
 
 ---
@@ -685,7 +686,7 @@ Renamed from "Private mode," which saved to the camera roll, the most publicly s
 ---
 
 ### 4.13 Media delivery
-- 300px WebP thumbnails via `expo-image`, center-cropped to square for grid uniformity across mixed-aspect sources. They are served through the same endpoint as full images and follow the same personalization and versioning rules (D-69).
+- WebP thumbnails 300px on the long edge via `expo-image`, center-cropped to square when the grid draws them, for uniformity across mixed-aspect sources (D-105). They are served through the same endpoint as full images and follow the same personalization and versioning rules (D-69).
 - **There is one image per photo.** The file that was uploaded is the file that is served, zoomed, downloaded and blurred from (D-58).
 - **Every image request goes through the serving endpoint in §4.11**, which checks whether the requester is a Do Not Publish subject in that photo and mints a presigned R2 URL for the correct file. Do not wire an image component or a download button directly to a bucket URL; personalization silently stops working for exactly the people it exists for, and nothing throws an error when it does.
 - **Blur variant object keys carry a version, and the version lives on the media row.** Retroactive Do Not Publish and a blur region both regenerate the public file. With a stable key, every client that already loaded the photo keeps serving the pre-blur image out of its `expo-image` disk cache, and no test written against a fresh client notices (D-60). Key shapes are in `docs/ARCHITECTURE.md` §3. `variant_version` is bumped on every regeneration and the Realtime row update carries it, so a client with the photo on screen asks for it again.
@@ -832,6 +833,10 @@ One table per area, so a slice cites the part it needs.
 | Photographer uploads after the Admin closed the album | Blocked, same as any role. The Close Album confirm dialog (§4.9) names any Photographer who has uploaded nothing yet, specifically to prevent this. |
 | Any user tries to upload while the album is closed | Upload disabled with a clear banner. Applies to Admin too, who is prompted to open the album first. Pre-flight rejects it as well, so a modified app gets nowhere (§4.8.2). |
 | The album closes while photos are queued | They stay in the local queue and upload if the Admin reopens the album. |
+| A guest re-uploads a photo that was deleted from the album | Rejected as a duplicate, with no prompt. A deleted photo's bytes cannot come back except through Restore (D-96). |
+| Two guests upload the same photo and one of them crashes mid-upload | The other's upload is not blocked. Whoever completes first wins, and the other is treated as a duplicate (D-96). |
+| The event reaches its 2,000-photo cap with photos still queued | Each one stays in My Media with "This event is full" and never uploads. The person can delete it (D-97). |
+| A user with queued photos is removed or blocked | The app shows Access Removed, and the queued photos stay on the phone, stopped, until the membership is active again (§4.1, D-102). |
 | App force-killed mid-upload | The local SQLite queue resumes the remaining items on next launch. A photo that had passed pre-flight resumes on its existing row instead of being rejected as its own duplicate (§4.8.2). No attempt at guaranteed background completion. |
 
 ### 5.5 Do Not Publish and blur
