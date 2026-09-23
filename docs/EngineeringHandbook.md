@@ -395,7 +395,7 @@ Two honesty notes that belong with the numbers rather than in the viva prep, bec
 
 ### 11.5 CI and error reporting
 
-**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest, with S-18a. Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
+**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest, with S-18a. The RLS negative test needs a real project, so a separate workflow, `.github/workflows/rls.yml`, runs it against the dev project on every pull request that touches `supabase/` or `apps/api/` (D-106). Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
 
 ---
 

@@ -1,0 +1,54 @@
+# The RLS negative test against the dev project (D-106, docs/ARCHITECTURE.md §1). An RLS mistake
+# fails silently (root invariant 14), and this test ran on no machine while CI held no keys.
+#
+# It needs the dev project's secret key, so it runs only on pull requests that touch the database
+# or the API, and never for a fork, which gets no secrets. The stable project's secret key is never
+# stored in GitHub.
+name: RLS
+
+on:
+  pull_request:
+    paths:
+      - 'supabase/**'
+      - 'apps/api/**'
+      - '.github/workflows/rls.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: rls-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rls:
+    name: RLS negative test, dev project
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # The root prepare script installs git hooks, which a CI checkout never uses.
+      HUSKY: 0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - run: pnpm install --frozen-lockfile
+
+      # test:rls sets REQUIRE_SUPABASE, so a missing secret fails the run instead of skipping.
+      - name: Run test:rls against the dev project
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_DEV_PUBLISHABLE_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: pnpm --filter api test:rls

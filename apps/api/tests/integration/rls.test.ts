@@ -2,9 +2,10 @@
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for
 // the dev project from the environment.
 //
-// `pnpm --filter api test:rls` loads them from the root .env and sets REQUIRE_SUPABASE, so a
-// missing value fails there instead of skipping. Plain `pnpm test`, and so CI, skips this file,
-// because CI never holds the secret key.
+// `pnpm --filter api test:rls` loads them from the root .env when it exists and sets
+// REQUIRE_SUPABASE, so a missing value fails there instead of skipping. Plain `pnpm test` skips
+// this file. CI runs test:rls in .github/workflows/rls.yml with the dev project's keys as
+// repository secrets (D-106).
 import { describe, expect, it } from '@jest/globals';
 import { pino } from 'pino';
 
