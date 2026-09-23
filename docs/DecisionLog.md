@@ -200,6 +200,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** The pre-blur uploaded file stays in R2 and is the source every blur variant is generated from.
 **Amended (see D-57 and D-58).** Two clauses stopped being true. There is no compositing, because variants are pre-generated. And "never served to anyone including the subject" is false for a photo with exactly one Do Not Publish subject, whose variant is byte-identical to the uploaded file. The surviving guarantee, and the one to state in a viva, is that no viewer ever receives a file in which a Do Not Publish face other than their own is unblurred.
 **Why.** In v9.1 this was storage held for a stretch goal that might never ship, which was worth questioning. Now that D-01 made personalized blur core and D-24 requires revert, the original is required rather than optional.
+**Amended (see D-83).** A lone subject's variant is byte-identical to the upload only when the photo also has no blur region; a region is applied to every file (root invariant 6).
 
 ### D-28 — Downloads are personalized, so DNP photos leave the public CDN path ~~(SUPERSEDED by D-57)~~
 > **Superseded.** The premise holds: two people must receive two different files. The mechanism does not. Server-side compositing would have routed media bytes through Express, which Handbook §7 forbids on the box the whole system depends on, and neither document ever resolved that contradiction. Pre-generated per-subject variants make the download a presigned URL for a file that already exists.
@@ -220,6 +221,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 ### D-31 — Do Not Publish is permanently irreversible; a single manual blur is not
 **Decision.** Two different objects. Enabling DNP cannot be undone by anyone, ever. A single per-photo manual blur correction can be reverted by the Admin if judged fraudulent (D-24).
 **Why.** Conflating them in the UI copy is the easiest way to make the irreversibility warning look like a lie.
+**Amended (see D-83).** The single manual blur here is now a blur region. Any Guest or the Admin draws one, and its drawer or the Admin removes it; "reverted by the Admin if judged fraudulent" no longer describes it.
 
 ---
 
@@ -237,6 +239,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** Down from 500 and 10,000.
 **Why.** The old numbers were chosen without reference to any free tier. Supabase's free plan allows 200 peak concurrent Realtime connections and 2 million Realtime messages per month; a 500-guest event broadcasting every upload exceeds both from a single wedding.
 **Cost.** None practically. Both numbers are far above anything a demo will produce.
+**Amended (see D-102).** The 150 counts active Guests. The Admin and Photographers do not count.
 
 ---
 
@@ -255,6 +258,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 ### D-36 — GPS is transmitted for verification and not persisted
 **Decision.** Stripped from the image file. A separate reading rides with the pre-flight request, is validated against the sub-event's coordinates, and is not written to the media record.
 **Why.** v9.1's onboarding promised GPS never reaches the network while the pipeline sent a per-photo GPS reading with every upload and stored one per queued item. The promise was misleading as written, which matters more in a consent screen than anywhere else.
+**Amended (see D-89).** The device keeps one GPS reading per sub-event with its time and sends it with the next pre-flight, instead of one per photo. The server still stores no coordinates, only the `venue_verification` row.
 
 ### D-37 — Known Limitations are written down rather than hidden
 **Decision.** The spec carries a section stating plainly that DNP only protects people who install the app and opt in, that face-processing consent is obtained from the uploader rather than the subject, that downloads defeat every in-app control, that false-positive blurs will happen, that the verification gate is bypassable in principle, and that the Photographer link is a broad grant.
@@ -308,7 +312,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** An eight-beat script lives in the spec, and anything not in it is not core scope.
 **Why.** Scope discussions without an anchor drift forever. With one, "is this core?" becomes "does it appear in a beat?", which is answerable in five seconds.
 **Corollary.** A seeded dataset that loads in ten seconds must exist before the defense, so that a WiFi failure does not become a live debugging session.
-**Amended.** The v11 script in spec §9 has nine beats. D-62 replaced this corollary's fallback with a recording.
+**Amended (see D-62).** The v11 script in spec §9 has nine beats. D-62 replaced this corollary's fallback with a recording.
 **Amended (see D-77).** Pinch-zoom is core without appearing in any beat, the one named exception to this rule.
 
 ### D-45 — Every AI-generated line must be explainable by a human on the team ~~(SUPERSEDED by D-68)~~
@@ -354,6 +358,7 @@ Two constraints settled a third of these before any of them were argued individu
 **Reopen if.** Someone decides to cover a real wedding. Nobody has.
 
 ### D-50 — The demo backend runs on the M1; the Oracle instance is provisioned anyway ~~(SUPERSEDED by D-78)~~
+> **Superseded.** D-78 moved development and the demo to one Netcup server, so the M1 no longer runs the demo backend and the Oracle instance goes on 2026-10-15.
 **Decision.** Express and the FastAPI worker run on the team's M1 behind a Cloudflare Tunnel named hostname for the demo. Supabase and R2 are unchanged. The Oracle ARM instance is still provisioned in week one, still runs production, and is still reachable during the defense.
 **Why.** The M1 runs InsightFace 3 to 5 times faster than 2 OCPUs of Ampere, and demo latency is what a panel experiences. Dev and demo become the same environment. Oracle's capacity lottery stops being a demo-day risk.
 **Why the instance stays regardless.** The deployment claim has to survive "show me." It is a fallback that is not sitting in the demo room. It is the shared backend the other two team members develop against, which is also the fix for a bus factor of one on demo morning. And D-38's reason is untouched: the home region is fixed at signup and ARM capacity is contested, so it is a week-one task or it never happens.
@@ -363,6 +368,7 @@ Two constraints settled a third of these before any of them were argued individu
 **Amended (see D-76).** Development runs on the Oracle instance and the M1 demo stack goes up one month before the demo, so dev and demo are no longer the same environment.
 
 ### D-51 — ngrok is not the tunnel ~~(SUPERSEDED by D-78)~~
+> **Superseded.** D-78 removed the tunnel. The API is served from the Netcup server under `api.momentlens.me`.
 **Decision.** Cloudflare Tunnel with a named hostname.
 **Why.** ngrok's free URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
 
@@ -378,6 +384,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Decision.** SHA-256 over the exact byte stream the client is about to PUT, after EXIF stripping and HEIC conversion.
 **Why.** D-32 hashed the 300px WebP thumbnail. WebP encoders differ across iOS, Android and library versions, so the same source photo hashes differently on two devices and after any dependency bump. The dedup would have caught close to nothing while looking like it worked.
 **Rejected.** Hashing the source file before processing, which is also deterministic but misses the case where the same photo arrives as HEIC on one device and JPEG on another.
+**Amended (see D-96).** The hash is unique per event among finished rows, deleted ones included. Another user's unfinished row with the same hash is not a duplicate.
 
 ### D-54 — Curated and auto-added references are tracked separately ~~(SUPERSEDED by D-83)~~
 > **Superseded.** With no auto-added references, every reference is one the user uploaded, so there is nothing to split.
@@ -422,6 +429,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Why.** The public file is a mutable derived artifact. Retroactive Do Not Publish regenerates it and so does a confirmed manual blur, while spec §4.13 also says it is cached client-side by `expo-image` and cacheable by any CDN in front of R2. With a stable key, every client that already loaded that photo keeps serving the pre-blur image out of its own disk cache. That is precisely the failure the feature exists to prevent, and it is invisible to any test written against a fresh client.
 **Rejected.** Cache-busting query strings, which some CDNs ignore, and short cache lifetimes, which trade the bug for a bandwidth cost and still leave a window.
 **Treat this as a correctness requirement, not an optimisation.** It is one integer column and it must exist before the first table does.
+**Amended (see D-83).** "A confirmed manual blur" above is now a blur region, which regenerates the files the same way.
 
 ### D-61 — Judges use team-owned Android devices; there is no deferred deep link ⚠
 **Decision.** Demo beat 2 runs on team-owned Android devices handed around, with the build installed and accounts signed in a week ahead. The deferred deep link claim is removed from spec §4.1.
@@ -487,6 +495,7 @@ Four gaps found by reading the spec, handbook and this log against each other be
 **Rejected.** The worker writing every thumbnail, with the client never uploading one. One code path instead of two, and one fewer Stage 1 step. The reason it lost is not recorded yet (see Open items).
 **What keeps it safe.** A replacement thumbnail always gets a new versioned key; nothing is overwritten in place (D-60). The row stays invisible until `processed_at`, so before the worker decides, the unblurred thumbnail reaches only its uploader (D-55).
 **Cost.** ⚠ Two writers for one kind of file. The likely failure is `reprocess` regenerating the full files and forgetting the thumbnails, which throws nothing and exposes the face in the grid only. The S-25 negative test asserts on both.
+**Amended (see D-83).** The client thumbnail is served only for a photo with no Do Not Publish face and no blur region (root invariant 13).
 
 ### D-70: R2 keys have one builder per key family
 **Decision.** Replaces the "one place" rule in Handbook §3 and root invariant 12. The API builds upload keys, the original photo and the client thumbnail, in one function, and writes them onto the media row at pre-flight before presigning the PUT URLs. The worker builds every derived key, blurred files and blurred thumbnails, and writes those onto the rows. Neither side builds the other's keys. Whatever serves a file reads the column.
@@ -564,6 +573,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Cost.** ⚠ About €15 a month. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
 **Reopen if.** The benchmark on the server, run inside Netcup's 30-day refund window at four threads, is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
 **Open.** How the stable stack sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location was settled on 2026-09-16, Nuremberg, and the demo-week fallback by D-79.
+**Amended (see D-107).** This entry supersedes D-38, as D-38's heading says. "Amends D-38" above understates it.
 
 ### D-79: The standby is a rotation across three student credits, and it runs only twice ⚠
 **Decision.** Amends D-38. The demo-week standby is not one untouched Azure credit. It is the team's Azure for Students, AWS and GCP credits, held across the three members and used in that order, moving to the next when one runs out. The standby VM is created for the Phase 7 rehearsal, deleted, and created again for demo week. It never runs between those two windows.
@@ -585,6 +595,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 
 **Cost.** Two scripts to keep working on three machines, one of them Windows. Every part is built to degrade to the current state rather than to a wrong answer: ids derive from headings, retrieval never throws and never exits non-zero, every section carries a number that `grep` finds without the tooling, and the grep fallback stays documented in root `CLAUDE.md` on purpose. If both scripts are deleted the corpus is still better addressed than it was before this entry. `docs/ARCHITECTURE.md` gained two `<!-- abstract: -->` comments, which record neither a decision nor merged code, so D-75 takes an explicit exception for them in this PR.
 **Reopen if.** The corpus outgrows a linear scan, which at 300 chunks and roughly 45ms it is nowhere near, or the team stops running `doc` and goes back to grep, which would mean the command is not earning its place.
+**Amended (see D-107).** The gate also fails on a slice row with the wrong number of cells, a Depends-on cell that holds anything but ids, a dangling citation in `AGENTS.md` or an agent file, and an unowned spec section whose children are all unnumbered.
 
 ### D-81 — Every slice opens with a read-back, and the docs are a draft rather than a contract
 **Decision.** `/slice` produces a read-back before anything is written: what the slice is in one paragraph, how it would be built and which files that touches, what interface it inherits from the slices it depends on and what later slices will read from it, every edge case with "the docs do not say" where that is the honest answer, everything the docs get wrong about it with section ids, and the invariants and human-read surfaces it touches. Work stops there until the owner says go or fixes the docs for that slice and its dependencies. Alongside it: the docs are a draft. An agent that finds two sections disagreeing says so and proposes the wording instead of picking one or inventing a reading that reconciles them. The numbered invariants in root `CLAUDE.md` and the entries in this file are decisions rather than descriptions, so those get raised and ruled on rather than routed around, and `docs/ARCHITECTURE.md` still wins over the spec and the handbook when they disagree (D-75).
@@ -603,6 +614,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Pre-flight inserts the media row, hash included, before any byte reaches R2. An app killed between pre-flight and completion retries on the next launch, the dedup lookup finds its own unfinished row, and the photo is rejected as a duplicate with no prompt. The queue marks it done and the row never gets processed. That is the upload queue's state machine losing a photo with no error (D-68). Separately, album state (D-12), membership and the upload cap were enforced only in the app, and D-73 puts every rule in the API.
 **Rejected.** Inserting the row at completion, which breaks D-70, because the upload keys go onto the row before the PUT URLs are signed. Asking R2 whether the object exists, which puts a network call inside the endpoint that must stay cheap.
 **Cost.** The album-open check blocks every upload until an Admin opens the album, and the toggle only arrives in S-31. S-12 builds the check switched off and S-31 turns it on, as Phase 3 does with the verification gate.
+**Amended (see D-95 and D-96).** Pre-flight's insert and completion run in SQL functions, completion checks both objects in R2, and another user's unfinished row with the same hash is not a duplicate.
 
 ### D-83: Tap-to-blur is removed; a missed face is fixed with a blur region anyone can draw ⚠
 **Decision.** Supersedes D-23, D-25, D-47, D-52 and D-54; amends D-24, D-26, D-64 and D-74. Automatic matching blurs a face that matches a Do Not Publish subject at or above the match threshold, and nothing else is blurred automatically. There is no tap-to-blur and no Admin queue for loose matches. Any Guest or the Admin can draw a rectangular blur region on a photo in the album. It applies at once to the public file, every subject's file and all their thumbnails, is stored in `manual_blur_region`, and every later regeneration applies it (root invariant 6). The person who drew it and the Admin can remove it. With no tap-to-blur there are no auto-added references, so every reference is one the user uploaded.
@@ -632,6 +644,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** D-56 blocked activation without a reference, and nothing stopped the user deleting every reference afterwards, which puts the badge back to reading "Active" while it protects nobody. "Has a reference photo", the spec's wording, was also true before `reference_process` ran and when the photo held no usable face.
 **Rejected.** Allowing the deletion behind a warning, which is the failure D-56 exists to prevent.
 **Amended (see D-83).** The audit's draft also made `is_curated` a generated column. With no auto-added references that column has nothing to distinguish, and it is dropped.
+**Amended (see D-91).** A reference counts only once `reference_process` has accepted it with exactly one face. A pending or rejected one does not.
 
 ---
 
@@ -668,6 +681,115 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** A larger model and slower recognition on large group photos: D-78 measured about 200ms per face at two threads on the free-tier instance.
 **Reopen if.** The benchmark on the Netcup server misses D-78's bar.
 
+### D-93: The image-serving endpoint is built in two steps, S-13 then S-21
+**Decision.** Changes the slice plan, not D-57. S-13 builds the one image-serving endpoint: a batch of media ids, the check that the requester may see each one (`docs/ARCHITECTURE.md` §1), the public file and public thumbnail only, and the cache key (D-86), with its negative test written first. S-21 adds the subject's own file and the own-variant flag to that same endpoint. There is still one endpoint and one check.
+**Why.** The album grid in Phase 3 has to show photos, and the endpoint used to arrive in Phase 5. Whoever built S-13 would have written a second serving path, against root invariant 3, or waited two phases.
+**Rejected.** A stopgap path in S-13 that S-21 replaces, which is the second path under another name. Moving S-13 after S-21, which leaves Phase 3 unable to show its own uploads.
+**Cost.** The serving check, a human-read surface, moves into Phase 3 and into B's slice, so Ukasha reads S-13's PR. S-13's brief grows by about 2,800 tokens, to about 8,900, the largest in the plan (estimated).
+
+### D-94: One set of API conventions for paths, errors and status codes
+**Decision.** Handbook §5.3 holds them. Paths are plural nouns under the resource that owns them. Bodies are JSON with camelCase fields, named as the zod schemas name them. Every error has one body, `{ "error": { "code", "message" } }`, whose schema is `ErrorResponse` in `packages/shared-types`, and `code` is a snake_case string the app switches on. Status codes: 400 invalid input, 401 no session, 403 not an active member or the wrong role, 404 not found or deleted, 409 a state conflict such as a duplicate, a closed album or an unverified uploader, 422 a limit reached.
+**Why.** No doc named a path, an error body or a status code beyond `GET /health`, so every slice's schema stage would have invented its own and the app would need an error parser per screen.
+**Rejected.** Leaving it to each slice.
+**Cost.** One schema and one handbook section, written before S-01.
+
+### D-95: Pre-flight's insert and completion run in SQL functions
+**Decision.** Amends D-82. The API calls both with `rpc`, because supabase-js holds no transaction and pgmq is not on the Data API.
+- `start_upload` locks the event row, counts the event's media rows that are not soft-deleted, finished or not, refuses at 2,000, and inserts the new row with its upload keys.
+- Before completion the API sends R2 a HEAD for both objects. If either is missing it answers `upload_missing` and the phone uploads again. It does not check the album a second time.
+- `complete_upload` checks that the caller uploaded the row, sets `uploaded_at` while it is null, stores the photo's size from the HEAD, and sends exactly one message to pgmq, all in one transaction. A repeated call changes nothing and answers `completed`. It answers `duplicate` when another finished row in the event has the same hash (D-96).
+**Why.** Updating the row and enqueueing in two calls looks right, throws nothing, and loses the job on a crash between them. An unlocked count lets two pre-flights at 1,999 both insert. A completion with nothing behind it in R2 leaves a row the worker can never process, which never gets `processed_at` and fails in silence.
+**Rejected.** Two supabase-js calls. The HEAD in pre-flight, which D-82 rejected for cost; completion runs once per photo.
+**Cost.** Two migrations in S-12, two R2 requests per completion, and a row lock on every new-row pre-flight.
+
+### D-96: A duplicate is a finished photo with the same bytes, deleted or not
+**Decision.** Amends D-53 and D-82. `media.content_hash` is unique per event among rows with `uploaded_at` set, soft-deleted rows included. Pre-flight treats a finished row with the hash as a duplicate even when it was deleted. The caller's own unfinished row is a resume (D-82). Another user's unfinished row is not a duplicate: both upload, the first to complete wins, and the second completion deletes its own row and objects and answers `duplicate`.
+**Why.** One guest's crashed upload blocked every other guest's copy of the same photo, often the same forwarded image, until that guest reopened the app, which might be never. Treating a deleted photo as new would let a restored photo collide with its re-upload.
+**Rejected.** An index that skips deleted rows, which makes Restore fail once the photo was uploaded again.
+**Cost.** A photo someone deleted can never be uploaded to that event again. Two guests can both spend the upload on the same photo before one of them loses.
+
+### D-97: S-11 owns the phone's upload loop and its queue states
+**Decision.** S-11 builds the loop that sends pre-flight, PUTs both files, calls completion and moves each queue item to the state its answer leads to. `docs/ARCHITECTURE.md` §4 holds the table from each answer to a state. S-10 builds the queue's storage and its badges. S-11 is a human-read slice (D-68). It depends on S-12, and S-12 now depends on S-03 and S-04 for its tables instead of on S-11.
+**Why.** No slice claimed the transitions, which are the upload queue's state machine, and nothing said what each pre-flight answer does to an item.
+**Rejected.** Splitting the loop between S-10 and S-12.
+**Cost.** S-11 grows and needs a human read.
+
+### D-98: Pre-flight carries the capture time
+**Decision.** The phone sends the photo's EXIF capture time with pre-flight. When the photo has none, the API uses the time of the pre-flight. `media.captured_at` holds it.
+**Why.** `captured_at` was a column nothing wrote. The API cannot read the file (root invariant 5), and no worker job set it.
+**Rejected.** The worker reading EXIF, which adds a write after publishing and leaves the order unknown until it runs.
+**Cost.** One field in the pre-flight schema. The phone's clock and EXIF are trusted, which only affects sort order.
+
+### D-99: Stage 1 rotates the pixels, and every box and region is a fraction of the stored image
+**Decision.** Stage 1 applies the EXIF orientation tag to the pixels, then strips the tag with everything else but the timestamp, so the uploaded file is upright and carries no orientation. Every face box and every blur region is stored as fractions of that file's width and height, so one set of numbers fits every file and thumbnail of the photo.
+**Why.** The phone kept the orientation tag. An app drawing on the rotated image and a worker reading raw pixels disagree about where a rectangle is, and the wrong area gets blurred with no error.
+**Rejected.** Keeping the tag and trusting every reader to honour it, which is one missed flag away from a silent leak.
+**Cost.** It replaces "keep timestamp and orientation" in spec §4.8.1. Stage 1 already re-encodes the file.
+
+### D-100: A sub-event with photos cannot be deleted, and editing one moves nothing
+**Decision.** The Admin can delete a sub-event only while it has no photos, and never the event's last one (D-88). Editing a sub-event's name, venue or times moves no photo and no `venue_verification` row. Other phones learn of an edit or a Delay when they next fetch the event, on foreground and on reconnect. `sub_event` has no Realtime.
+**Why.** Nothing said what deleting or moving a sub-event does to the photos in it, and a guess either deletes photos or leaves them with no section.
+**Rejected.** Moving a deleted sub-event's photos into another one, which mislabels them without telling anyone. Realtime on `sub_event`, which needs a third RLS policy (D-73).
+**Cost.** A sub-event that already has photos can only be renamed or moved, not removed.
+
+### D-101: The invite link is the `momentlens://` scheme, for now
+**Decision.** An invite link is `momentlens://invite/{token}`. It opens the app when the app is installed and the chat app hands the link to the system. Where it does not, the person types the 6-character shortcode (spec §4.1). https App Links and Universal Links wait.
+**Why.** The scheme needs nothing on the server, and the shortcode already covers every chat app that will not open it.
+**Rejected.** https links on the demo domain now, which need `.well-known` files on nginx and matching app configuration.
+**Cost.** Some chat apps show the link as plain text, so a guest there joins by code.
+**Reopen if.** Joining by code is where the demo stumbles.
+
+### D-102: One Admin per event, the 150 cap counts Guests, and removal is a state
+**Decision.** Amends D-33. An event has exactly one Admin, its creator. A role change moves someone between Guest and Photographer only. The 150 cap counts `active` Guest rows; the Admin and Photographers do not count. Remove from Event sets the membership to `removed`: the person sees Access Removed, their uploads stay in the album, and they may join again through a live invite. Block sets `blocked`, and a blocked person cannot rejoin.
+**Why.** Spec §1 has one Admin while a flow still offered promote and demote. `docs/ARCHITECTURE.md` counted every active row toward a cap the spec calls a guest count. Remove from Event had no state to land in.
+**Rejected.** Co-Admins, which the spec never designed. Deleting the row on removal, which makes a removed person look like a stranger to the app.
+**Cost.** An Admin who loses their phone cannot hand the event to someone else.
+
+### D-103: The worker reads one queue, one message at a time, and removes what it replaced
+**Decision.** Every job is a message on one pgmq queue, `jobs`, carrying the job's name and the ids it needs (`docs/ARCHITECTURE.md` §5). The worker handles one message at a time, oldest first. A message that fails three times is archived and logged, and reported to Sentry once the worker has it; a failed `face_process` leaves its photo unpublished rather than out unblurred. After a regeneration commits, the worker deletes the objects the rows no longer point at, never `upload_key` or `upload_thumb_key`. A retry may rewrite a versioned key that no row points at yet.
+**Why.** D-84's join path and every `variant_version` bump assumed two jobs never write one photo at once, and no doc said so. A URL presigned before a retroactive blur kept serving the unblurred file for up to an hour, because the old object was never deleted.
+**Rejected.** One queue per job, which loses the order between two jobs on the same photo. Retrying forever, which hides a broken job.
+**Cost.** One slow photo delays every job behind it. A viewer looking at a replaced file gets one failed load and re-resolves. A `reprocess` or `blur_region` that fails three times leaves a published photo with its previous files, which can still show a face that should now be blurred; that is an open item below.
+
+### D-104: Until S-26 measures, matching fails closed
+**Decision.** The worker reads its thresholds from configuration that mirrors `docs/ARCHITECTURE.md` §6. While §6 says "not measured", it blurs every detected face in every file it writes, subjects' own files included, and records no match on `face` rows. Tests set a threshold in their own fixtures, never in configuration.
+**Why.** S-20 and S-21 come before S-26, which needs them in order to measure. Without a rule the stopgap is an example number, which is how the blur silently fails in a demo (Handbook §11.4).
+**Rejected.** A provisional number, however low, which nobody remembers to replace.
+**Cost.** Until S-26, Find My Photos returns nothing and no subject sees their own face clear, so the self-visible marker cannot be shown on real data before then.
+
+### D-105: Smaller build rulings from the pre-feature audit
+**Decision.** Each of these was a fact an agent would otherwise have guessed.
+- The sub-event status function lives in `packages/shared-types` as one pure function, so the capture button and the API's scan-time check agree. Its unit tests run in `apps/api`'s Jest suite, since the package has no test runner.
+- "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV. The push toggles stay on the server as `profile.notify_approval` and `profile.notify_album`, because the server decides whether to send.
+- S-12 adds `@aws-sdk/s3-request-presigner` to `apps/api`, approved here.
+- Presigned PUT URLs live 15 minutes.
+- "300px" is the thumbnail's long edge. The grid crops it to a square when it draws.
+- Stage 1 converts every file that is not JPEG to JPEG, HEIC included, so `upload.jpg` is always true.
+- When S-21 merges, the dev project's photos are wiped and reseeded through the real pipeline, because photos processed by `thumbnail_dims` have no `face` rows for `reprocess` to match (root invariant 10).
+- Demo beat 5 shows the activation screen on a second team account with no accepted reference, then switches to the prepared account.
+- A subject finds a missed face by browsing the album for photos of themselves without the marker. Find My Photos lists only faces the system matched, so it cannot show a miss.
+**Why.** The audit found each one unstated.
+**Cost.** `packages/shared-types` holds one function besides its schemas.
+
+### D-106: The RLS negative test runs in CI against the dev project
+**Decision.** Keeps D-73's access model and changes where its test runs. A workflow runs `apps/api`'s `test:rls` against the dev project on every pull request that touches `supabase/` or `apps/api/`, with the dev project's URL, publishable key and secret key as repository secrets. The stable project's secret key never reaches GitHub.
+**Why.** The only RLS negative test had run on no machine. `pnpm test` skips it without the keys, and CI had none. An RLS mistake fails silently (root invariant 14).
+**Rejected.** A Definition-of-done line saying someone ran it by hand, which was the rule before and never happened.
+**Cost.** GitHub holds a key that bypasses RLS on the dev project's data. A pull request from a fork gets no secrets, so the job skips there.
+
+### D-107: Process rulings from the pre-feature audit
+**Decision.** Amends D-80.
+- A slice's `docs/ARCHITECTURE.md` change is written by its done stage, as its own commit on the slice branch, and Ukasha approves it there (D-75). The build stage still never edits `docs/`.
+- `slice-verifier` is pinned to `claude-sonnet-5`. `slice-auditor` inherits each developer's session model.
+- Both agents are read-only by instruction, not by enforcement: they keep Bash, which can write.
+- The writing rules live in Handbook §18.7, so every developer's agent follows them.
+- `main` takes changes only through pull requests, with one review and a passing CI run.
+- The docs gate also fails on a slice row with the wrong number of cells, a Depends-on cell that holds anything but ids, a dangling citation in `AGENTS.md` or an agent file, and a spec section whose children are all unnumbered when nothing owns it. The pre-commit hook runs it on the staged snapshot.
+- D-78 supersedes D-38, as D-38's heading says. "Amends" in D-78 understates it.
+**Why.** The audit found each one missing, wrong, or held on one machine only.
+**Rejected.** A hook enforcing read-only agents, about 40 lines of script for a risk the prompts already name.
+**Cost.** A pinned model id needs a bump when models change. A docs PR waits for a teammate's review.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -676,4 +798,7 @@ These are not settled and should not be treated as though they are.
 - **Whether the standby actually works.** D-79 defines it. It is not real until `scripts/provision.sh` has run against a real VM on one of the three credits. Half a day in Phase 7.
 - **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
+- **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
+- **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
+- **What a failed `reprocess` or `blur_region` does to a published photo.** D-103 leaves its previous files in place, which can still show a face that should now be blurred.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
