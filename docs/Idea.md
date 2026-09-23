@@ -540,7 +540,7 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 
 **One pipeline for every role.** Guest, Admin and Photographer uploads receive byte-identical treatment (D-58).
 
-- Retain only timestamp and orientation in EXIF; strip everything else, including GPS.
+- Rotate the pixels to match the EXIF orientation tag, then retain only the timestamp in EXIF and strip everything else, the tag and GPS included. The uploaded file is upright and says nothing about orientation, so the app and the worker agree on where every face box and blur region sits (D-99).
 - Convert HEIC/HEIF, and any other format that is not JPEG, to JPEG, so every upload is `upload.jpg` (D-105).
 - **No resize, with one guard.** Phone JPEGs are already 1 to 3MB. If the longest edge exceeds **4096px**, resize to 4096px preserving native aspect. This never fires on a phone photo; it exists so a DSLR file dragged in during a rehearsal does not surprise anyone.
 - Generate a WebP thumbnail 300px on its long edge for the album grid (D-105). It is made from the unblurred photo, so it is served only for photos with no Do Not Publish face and no blur region; the worker writes blurred thumbnails for the rest (§4.13, D-69, D-83).

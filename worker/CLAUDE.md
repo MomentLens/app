@@ -46,7 +46,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 ## Detection and matching
 
 - **One detection pass per photo.** Detection is never re-run, including in `reprocess`.
-- **Store the bounding box with every embedding.** `reprocess` re-blurs without re-detecting, so the box has to exist already (D-30, D-66).
+- **Store the bounding box with every embedding**, as fractions of the stored image's width and height. `reprocess` re-blurs without re-detecting, so the box has to exist already (D-30, D-66). The upload is already upright with no orientation tag, and blur regions use the same fractions (D-99), so read the pixels as they are and never apply an orientation.
 - **Every similarity comparison in the system happens here, and the result is stored** (D-74). Embeddings are `vector(512)` columns. Each `face` row gets its matched subject, similarity and Unknown cluster. The API only reads those results, so thresholds live in exactly one codebase.
 - **Do not re-detect on blurred output.** An earlier design did this to exclude Do Not Publish users from the Recognized Faces list. It doubled inference cost to avoid what is a read-time filter, and the premise was wrong: detectors do find heavily blurred head-shaped regions.
 - **Matching is biased toward blurring when uncertain.** A missed match is the expensive failure; a false positive only blurs someone who did not ask, and that person stays blurred in the photo (spec §4.11.4.5).
