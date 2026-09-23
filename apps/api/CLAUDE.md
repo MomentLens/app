@@ -14,7 +14,7 @@ This is not ceremony. It means "is this event's guest limit reached" is testable
 
 Auth middleware verifies the Supabase JWT with Supabase's server SDK and attaches the user to `req.user`. Do not hand-roll JWT verification. Nothing downstream re-checks identity.
 
-Request and response shapes are zod schemas in `packages/shared-types`, imported by both sides. Generate the OpenAPI spec from them with `@asteasolutions/zod-to-openapi`.
+Request and response shapes are zod schemas in `packages/shared-types`, imported by both sides. Paths, the one error body and the status codes are Handbook §5.3; follow it for every endpoint. Generate the OpenAPI spec from them with `@asteasolutions/zod-to-openapi`.
 
 ---
 

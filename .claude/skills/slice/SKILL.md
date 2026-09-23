@@ -87,7 +87,7 @@ Then **stop**. The user either says go or fixes the docs for this slice and the 
 
 ## 3. Schema
 
-Load the card: `gh issue view <n> --json body`. Read `packages/shared-types`. Write the zod schemas the card's "Produces" line names, and nothing else: every request, response and error shape the slice's endpoints use. Run `pnpm typecheck`. Open it as its own PR titled `<id>: schema`. Stop. Nothing else gets written until the user has reviewed and merged it.
+Load the card: `gh issue view <n> --json body`. Read `packages/shared-types`. Write the zod schemas the card's "Produces" line names, and nothing else: every request, response and error shape the slice's endpoints use, following the paths, error body and status codes in Handbook §5.3. Run `pnpm typecheck`. Open it as its own PR titled `<id>: schema`. Stop. Nothing else gets written until the user has reviewed and merged it.
 
 ## 4. Build
 
