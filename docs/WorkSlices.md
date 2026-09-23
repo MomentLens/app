@@ -29,7 +29,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 - [ ] A negative test for each of those surfaces, and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-73)
 - [ ] Loading, empty, and error states exist, not just the happy path (Handbook §15)
 - [ ] Works on a physical device, not only a simulator, if it touches camera, GPS, or the queue (Handbook §10)
-- [ ] Unit test for any pure logic in it (Handbook §11)
+- [ ] Unit test for any pure logic in it (Handbook §11.2)
 - [ ] Dark mode uses tokens, no hardcoded hex
 - [ ] Reviewed by one other person (Handbook §12)
 - [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, with Ukasha reviewing that change (D-75)
@@ -50,14 +50,14 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Reference |
 |---|---|---|
-| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, HB §11 |
+| P0-1 | Repo scaffold, pnpm workspace, TS strict, ESLint rules, Prettier, Husky | HB §3, HB §11.1 |
 | P0-2 | Server provisioned by `scripts/provision.sh`, nginx, TLS, both systemd units running something trivial | HB §13.3.2, HB §13.3.3, HB §13.3.4, D-39 |
 | P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13.3.5, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14.0 Phase 0 |
 | P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it on the x86-64 server | HB §14.0 Phase 0 |
 | P0-6 | Figma tokens into `apps/mobile/tailwind.config.js` | HB §15 |
 | P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
-| P0-8 | Sentry on the app and the API, on the Education plan | HB §11 |
+| P0-8 | Sentry on the app and the API, on the Education plan | HB §11.5 |
 | P0-9 | **Development build replaces Expo Go.** App name, URL scheme, bundle ID and Android package in `app.json`, `expo-dev-client`, first `expo run:android` on every machine and `expo run:ios` on the Mac, `eas init` | HB §10, HB §13.1 |
 
 ---
@@ -104,7 +104,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule | §4.7, §2.5.4, D-21, D-20, D-90 | B | S-08 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256 | §4.8.1 Stage 1, D-58, D-69, D-32, D-53, arch §4 | C | S-10 |
-| S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, HB §7, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification | U | S-11 |
+| S-12 | Pre-flight endpoint with every check and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5, D-73, arch:venue_verification | U | S-11 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, arch §5 | U | S-12 |
 | S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime | §4.9, §2.5.2, §4.10, D-22, D-55, D-60, D-86, HB §4, HB §16 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-12 |
@@ -142,11 +142,11 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-23 | Find My Photos, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29 | C | S-20, S-13 |
 | S-24 | Review Queue: blur regions (Keep / Remove), flagged photos (Keep / Remove), removed photos (Restore) | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22 |
 | S-25 | `reprocess` job: retroactive DNP, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21 |
-| S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11, arch §6 | U | S-20 |
+| S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11.4, arch §6 | U | S-20 |
 
 **S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6).
 
-**S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5). Write its negative test before the endpoint (HB §11). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72).
+**S-21 is the riskiest slice in the project.** It contains the image-serving endpoint, the most sensitive authorization check in the system (HB §5.2). Write its negative test before the endpoint (HB §11.3). The same PR removes the `thumbnail_dims` enqueue, because left in place it publishes unblurred photos (D-72).
 
 **S-22's marker is a correctness requirement, not polish** (D-26). Without it a missed match is undetectable by the only person who could report it.
 

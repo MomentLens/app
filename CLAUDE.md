@@ -22,7 +22,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Blur, face detection, Do Not Publish | Spec §4.11 + Handbook §6 |
 | Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §2 + D-69 |
 | Album, grid, filters | Spec §4.9 + Handbook §16 |
-| RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5 |
+| RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5.1 |
 | Navigation or screens | Spec §2.5 + Handbook §16.5 |
 | Deployment | Handbook §13 |
 | Any error path: failed upload, lost connectivity, revoked access, a missed face match | Spec §5 |
