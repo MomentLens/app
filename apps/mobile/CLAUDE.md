@@ -52,11 +52,11 @@ Three more traps from training data. **RN 0.86 runs the New Architecture only**;
 One pipeline for every role. There is no role branch; do not reintroduce one.
 
 1. Strip EXIF, keeping only timestamp and orientation
-2. HEIC → JPEG
+2. HEIC, and anything else that is not JPEG, → JPEG
 3. Resize **only** if the longest edge exceeds 4096px
-4. 300px WebP thumbnail. It shows the unblurred photo, so it goes to R2 and nowhere else (root invariant 13)
+4. WebP thumbnail, 300px on its long edge. It shows the unblurred photo, so it goes to R2 and nowhere else (root invariant 13)
 5. SHA-256 over the exact bytes about to be uploaded, **not the thumbnail** (root invariant 7). Use `expo-crypto`'s `digest()`; Node's `crypto` does not exist here
-6. Pre-flight (JSON, no image bytes) → presigned URLs for the photo and the thumbnail → direct PUT of both to R2 → notify the API. A retry after a crash sends the same pre-flight and gets the same row back (D-82). A rejection for a closed album or failed verification leaves the item queued. The queue unlocks on the local GPS or QR check, or on the verification state the event response carries, refetched on foreground and on reconnect (spec §4.5)
+6. Pre-flight (JSON, no image bytes, with the photo's EXIF capture time) → presigned URLs for the photo and the thumbnail → direct PUT of both to R2 → notify the API. What every answer does to the queued item is the table in `docs/ARCHITECTURE.md` §4; that loop is the upload queue's state machine, and a human reads it before it merges (D-97). A retry after a crash sends the same pre-flight and gets the same row back (D-82). A rejection for a closed album or failed verification leaves the item queued. The queue unlocks on the local GPS or QR check, or on the verification state the event response carries, refetched on foreground and on reconnect (spec §4.5)
 
 All Stage 1 image work goes through `expo-image-manipulator`, never hand-rolled JS.
 
