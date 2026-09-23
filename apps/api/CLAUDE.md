@@ -84,7 +84,7 @@ Pre-flight is small JSON and indexed lookups, in this order (`docs/ARCHITECTURE.
 
 Then build the upload keys for the photo and its thumbnail in the one key function, insert the media row with them, and presign a PUT URL for each (D-70). On the client's completion call, set `uploaded_at` where it is null and enqueue exactly one `pgmq` job in the same transaction: `thumbnail_dims` until S-21, `face_process` from then on. Never both (D-72). A repeated completion call changes no row and enqueues nothing.
 
-**The client's GPS reading is optimistic; this server is the authority.** Re-validate the reading against the sub-event's stored coordinates and write the `venue_verification` row here. Never trust a client-supplied `verified: true`. A Venue QR scan carries its venue, its secret and the scan time; check the secret and verify the sub-event at that venue that was In Progress at the scan time (D-85). The event response carries the caller's verification state, so a device learns of a Force Verify or of a verification made on another device (spec §4.5).
+**The client's verification is optimistic; this server is the authority.** Photos carry no location (D-89). The device sends one GPS reading per sub-event, or a Venue QR scan, each with its time. Check the reading against the venue, or the QR's secret, and verify the sub-event at that venue that was In Progress at that time (D-85). Write the `venue_verification` row here. Never trust a client-supplied `verified: true`. The event response carries the caller's verification state, so a device learns of a Force Verify or of a verification made on another device (spec §4.5).
 
 ---
 
@@ -93,7 +93,8 @@ Then build the upload keys for the photo and its thumbnail in the one key functi
 - Node's event loop is single-threaded: any synchronous CPU work in a handler blocks every other request that process is serving. That is why image and face work lives in the Python worker behind `pgmq`.
 - The API never compares face embeddings. Matches are stored on `face` rows by the worker (D-74); the API reads them.
 - **Both join paths enqueue `reprocess`** for a subject with references who becomes an active member, auto-approve and the Admin's approval alike, from S-25 on. Without it a Do Not Publish user who joins late stays unblurred in every earlier photo (D-84).
-- **Refuse to delete the last curated reference while Do Not Publish is active** (root invariant 8, D-87).
+- **Refuse to delete the last accepted reference while Do Not Publish is active** (root invariant 8, D-87). A new reference photo is inserted `pending`; the worker accepts or rejects it, and the app polls its status (D-91).
+- **Blur regions** (D-83): any Guest or the Admin creates one on a photo they can see; only its drawer or the Admin deletes one; each change enqueues `blur_region`. A Photographer never draws one.
 - `pino` for logging, `helmet` for headers.
 - **Sentry starts in `src/instrument.ts`, preloaded with `node --import`** by `pnpm dev` and the systemd unit. Never import it from `index.ts` or call `Sentry.init` anywhere else. ESM runs a module's imports before its code, so Sentry would start after express had loaded and events would lose their request. It reports errors only, with `sendDefaultPii` off. Keep `setupExpressErrorHandler` after the last route and before any other error middleware.
 - Two Supabase projects exist, dev and stable. Development uses dev; the demo stack uses stable (D-76).

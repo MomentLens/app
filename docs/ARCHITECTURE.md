@@ -36,6 +36,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | `membership` | A user sees their own rows; the Admin sees every row for their events (Handbook §5) |
 | `face`, `dnp_subject` | Only through the viewer-scoped rule (root invariant 4). A Do Not Publish subject learns they are in a photo; no other viewer learns who is |
 | `face_reference` | The owner, and only their photos. Embeddings never leave the database and the worker (Handbook §5) |
+| `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see; its drawer or the Admin removes it. Only the Admin lists them, with who drew each, in the Review Queue (D-83) |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
 | `profile.avatar_key` | People who share an event with the user, unless the user's subject has Do Not Publish active. Then nobody else, the Admin included (D-35) |
 | `profile.full_name` | Active members of an event the user belongs to, and that event's Admin while the user's join request is pending. Do Not Publish does not hide it (D-35). A Photographer sees no other member's name, since the name list is the guest list (D-08) |
@@ -59,18 +60,18 @@ One row per auth user, keyed by `user_id`.
 The identity that reference photos and Do Not Publish attach to, split from the account in the first migration (D-63).
 - `user_id`, nullable. Null only for the deferred Proxy Blur
 - `dnp_activated_at`, nullable. Set once and never cleared (D-31)
-- Created when a user adds their first reference or profile photo. Activation needs at least one curated `face_reference` row, and while Do Not Publish is active the API refuses to delete the last one (D-56, D-87)
+- Created when a user adds their first reference or profile photo. Activation needs at least one accepted `face_reference` row, and while Do Not Publish is active the API refuses to delete the last one (D-56, D-87)
 
 ### `face_reference`
-- `subject_id`, `source` (`profile`, `reference`, `auto_added`), `embedding vector(512)`
-- `is_curated`, a generated column, true for `profile` and `reference` rows. Generated so it can never disagree with `source` (D-54, D-87)
-- `photo_key` for `profile` and `reference` rows. `face_id` for `auto_added` rows, pointing at the event face the crop came from; the row copies that face's stored embedding (D-25, D-66)
-- At most 5 `reference` rows per subject (§4.2). A new profile photo does not replace the `profile` reference once Do Not Publish is active (§4.2)
-- Written by the worker (`reference_process`, `manual_blur`). A photo in which the worker finds no face gets no row. What it does with more than one face is **Open** for S-20
+- `subject_id`, `source` (`profile`, `reference`), `photo_key`
+- `status` (`pending`, `accepted`, `rejected`), `reject_reason` (`no_face`, `multiple_faces`), `embedding vector(512)`, null until accepted (D-91)
+- The API inserts the row as `pending` when the photo is uploaded. `reference_process` sets `accepted` with the embedding when it finds exactly one face, and `rejected` with the reason otherwise. Only `accepted` rows are matched against or counted (D-87, D-91)
+- At most 5 `reference` rows per subject that are not rejected (§4.2). A new profile photo does not replace the `profile` reference once Do Not Publish is active (§4.2)
+- There are no auto-added references (D-83)
 
 ### `event`
 - `name`, `type`, `description`, `cover_key`
-- `starts_at`, `ends_at`, at most 14 days apart (§4.17)
+- No start or end of its own. The event runs from its first sub-event's start to its last sub-event's end, computed on read, at most 14 days (§4.17, D-88). So it has at least one sub-event
 - `venue_id`, `verification_radius_m` (50 to 2000, default 200, §4.3)
 - `approval_mode` (`auto`, `manual`, §4.4), `album_open` (false at creation, §2.1)
 - `deleted_at`, `archived_at` (§4.21)
@@ -82,7 +83,7 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 ### `sub_event`
 - `event_id`, `name`, `description`, `starts_at`, `ends_at`, `venue_id`
 - At most 15 per event (§4.3). A delay moves `starts_at` and `ends_at`
-- Status is computed on read and never stored. `ends_at` is for display only; In Progress lasts until the next sub-event starts or the event ends (§4.3, D-19)
+- Status is computed on read and never stored: In Progress from `starts_at` until `ends_at` (§4.3, D-88). Inside the event there can be times when none is
 
 ### `membership`
 - `event_id`, `user_id`, unique together
@@ -111,19 +112,20 @@ The spec's `VenueVerification`, renamed to the naming convention.
 ### `face`
 One row per detected face, written only by the worker.
 - `media_id`, `bbox`, `embedding vector(512)`
-- `matched_subject_id` (nullable), `match_source` (`auto`, `manual`), `similarity` (D-74)
+- `matched_subject_id` (nullable), `similarity` (D-74)
 - `cluster_id`, the Unknown identity for an unmatched face (§4.11)
-- `reprocess` re-blurs from the stored `bbox` and never detects again (D-30, D-66). It leaves a `manual` match in place; only a revert clears one (D-83)
+- `reprocess` re-blurs from the stored `bbox` and never detects again (D-30, D-66)
 
 ### `dnp_subject`
 A Do Not Publish subject found in a photo, with that subject's personalized files. Written only by the worker.
 - `media_id`, `subject_id`, unique together
 - `variant_key`, `variant_thumb_key`, at the media row's `variant_version` (D-57, D-60, D-69)
 
-### `blur_request`
-- `face_id`, `requester_subject_id`, `similarity` against curated references only (D-54), `auto_reference_id`
-- `state`: `applied` (above the loose threshold, no review), `queued` (waiting in the Review Queue), `confirmed`, `reverted` (D-23, D-24)
-- Revert clears the face's manual match, deletes the `auto_reference_id` reference and enqueues `reprocess`. Leaving that reference in place would keep pulling the requester's matching toward someone else's face (D-54)
+### `manual_blur_region`
+A rectangle someone drew to hide part of a photo, usually a face the detector missed (D-83).
+- `media_id`, `drawn_by_user_id`, `x`, `y`, `width`, `height` as fractions of the image, so one row fits every file of the photo
+- Adding or deleting a row enqueues `blur_region`. Removing one deletes the row
+- Every file the worker writes for the photo applies every row, on every regeneration (root invariant 6)
 
 ### `photo_flag`
 - `media_id`, `flagged_by_user_id`, `state` (`open`, `kept`, `removed`) (§2.5)
@@ -155,7 +157,7 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 | Profile photo | API | `profile.avatar_key` | `users/{user_id}/avatar_{upload_id}.jpg` |
 | Reference photo | API | `face_reference.photo_key` | `users/{user_id}/reference_{upload_id}.jpg` |
 
-- For a photo with no Do Not Publish face, `public_key` and `public_thumb_key` hold the upload keys (§4.11). If the client's thumbnail is missing, the worker writes one at the public thumbnail key.
+- For a photo with no Do Not Publish face and no blur region, `public_key` and `public_thumb_key` hold the upload keys (§4.11). If the client's thumbnail is missing, the worker writes one at the public thumbnail key.
 - Cover, profile and reference keys carry a fresh `upload_id`, so a replacement lands at a new key and no cache keeps the old image.
 - Every file reaches R2 by a presigned PUT, covers, profile photos and reference photos included (root invariant 5).
 - Media files are served by the one image-serving endpoint (D-57). With each presigned URL it returns a cache key, built from the object key it signed plus `variant_version`, and whether the file is the requester's own variant, which drives the self-visible marker. It takes a batch of media ids (D-86).
@@ -168,7 +170,7 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 Spec §4.8, Handbook §7.
 
 1. **Client.** EXIF strip keeping timestamp and orientation, HEIC to JPEG, resize only past 4096px, 300px WebP thumbnail, SHA-256 over the upload bytes with `expo-crypto`. Identical for every role (D-58).
-2. **Pre-flight, JSON only.** Hash, sub-event ID, capture-time GPS, and any Venue QR scan the device holds. The API checks, in order (D-82):
+2. **Pre-flight, JSON only.** Hash, sub-event ID, and any verification records the device holds: a GPS reading or a Venue QR scan, each with its time (D-85, D-89). The photo itself carries no location. The API checks, in order (D-82):
    - the caller is an `active` member, the event is not deleted, and `album_open` is true (D-12). S-12 builds the album check switched off and S-31 turns it on
    - the hash. The caller's own row with this hash and no `uploaded_at` is a crashed upload: pre-flight re-signs its existing keys and stops there. Any other match is an exact duplicate, rejected silently (D-53)
    - for a new row only: the event holds fewer than 2,000 media rows that are not soft-deleted (§4.17), and verification passes, meaning a `venue_verification` row OR `admin_verified_at IS NOT NULL` OR `role = 'photographer'` (D-15)
@@ -183,17 +185,18 @@ Until verification passes or while the album is closed, photos wait in the devic
 ---
 
 ## 5. Worker jobs
-<!-- abstract: Five pgmq jobs: thumbnail_dims, face_process, reference_process, reprocess and manual_blur, with their triggers, plus blur geometry, the model and the one-process-per-machine rule. -->
+<!-- abstract: Five pgmq jobs: thumbnail_dims, face_process, reference_process, reprocess and blur_region, with their triggers, plus blur geometry, the model and the one-process-per-machine rule. -->
 
 | Job | Trigger | Does |
 |---|---|---|
 | `thumbnail_dims` | Upload completion, from S-18a until S-21 (D-72) | No ML. Writes `width` and `height`, points the public keys at the upload keys, bumps `variant_version`, sets `processed_at` last |
 | `face_process` | Upload completion, from S-21 | Detects faces once and stores each box and embedding. Matches every face against subjects with references who are active members of the event, and clusters the unmatched ones (D-74). If a matched subject has Do Not Publish active, writes N+1 blurred files, N+1 blurred thumbnails and the `dnp_subject` rows. Writes dimensions, bumps `variant_version`, sets `processed_at` last |
-| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Stores or deletes the `face_reference` embedding, then enqueues `reprocess` for that subject |
-| `reprocess` | Do Not Publish activated; a subject's references changed; a blur request reverted; a subject with references became an active member of the event (D-84) | Re-matches stored embeddings and never detects (D-66). Leaves `manual` matches in place (D-83). Regenerates files and thumbnails for the photos whose output changed, bumps `variant_version` |
-| `manual_blur` | Tap-to-blur (S-24) | Refuses, writing nothing, a face already matched to a different subject with Do Not Publish active (D-83). Otherwise scores the tapped face against the requester's curated references (D-54), marks it as theirs (`match_source = manual`), adds the crop as an auto-added reference, regenerates files and thumbnails, and sets `blur_request.state` to `applied` or `queued` (D-23, D-24) |
+| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Accepts the photo with its embedding when it shows exactly one face, or rejects it as `no_face` or `multiple_faces` (D-91); deletes the embedding of a removed one. Then enqueues `reprocess` for that subject |
+| `reprocess` | Do Not Publish activated; a subject's references changed; a subject with references became an active member of the event (D-84) | Re-matches stored embeddings and never detects (D-66). Regenerates files and thumbnails for the photos whose output changed, bumps `variant_version` |
+| `blur_region` | A `manual_blur_region` row added or deleted (S-19) | No ML. Regenerates that photo's public file, every subject's file and all their thumbnails with every stored region, at new versioned keys, and bumps `variant_version` (D-83) |
 
-- **Blur.** Box expanded 30 to 40%, elliptical mask, downsample then upsample with a box blur on top (D-65). Thumbnails are cut from the blurred output.
+- **Blur.** Box expanded 30 to 40%, elliptical mask, downsample then upsample with a box blur on top (D-65). A blur region is blurred with the same strength over exactly the rectangle drawn. Thumbnails are cut from the blurred output.
+- **Regions survive every regeneration.** `face_process`, `reprocess` and `blur_region` all apply the photo's stored regions. None of them regenerates from the bare upload alone (root invariant 6).
 - **Model.** InsightFace through ONNX Runtime, loaded once at startup (D-40). `buffalo_l` or `buffalo_s`: **Open** until measured.
 - **Processes.** One worker process per machine (Handbook §6).
 - **Scheduled work.** None in demo scope. Retention deletion (§4.21) appears in no demo beat (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes the objects and rows.
@@ -207,7 +210,6 @@ Until verification passes or while the album is closed, photos wait in the devic
 | Threshold | Used by | Value | Measured on | Date |
 |---|---|---|---|---|
 | Match | `face_process`, `reprocess` | not measured | | |
-| Loose manual-blur, curated references only | `manual_blur` (D-23, D-54) | not measured | | |
 | Unknown clustering | `face_process` | not measured | | |
 
 **Open**, to settle with the measurements in S-26: whether Do Not Publish blurring uses a lower match threshold than recognition, since §4.11 biases blurring toward a match when uncertain.

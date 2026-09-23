@@ -123,7 +123,7 @@ momentlens/
 │   │   │   ├── face_process.py   # detect, embed, match, write public + subject variants
 │   │   │   ├── reference_process.py
 │   │   │   ├── reprocess.py      # match only, never re-detect
-│   │   │   └── manual_blur.py
+│   │   │   └── blur_region.py    # regenerate a photo's files with its blur regions
 │   │   ├── ai/
 │   │   │   ├── face.py        # InsightFace / ONNX wrapper
 │   │   │   └── image.py       # OpenCV helpers: elliptical mask, blur, encode
@@ -227,7 +227,7 @@ This is a **queue consumer**, not a web server written in FastAPI. The distincti
 
 **Load the model once, at startup.** Cold-loading InsightFace per job costs several seconds; a warm model takes well under a second for a photo with a few faces and several seconds for a large group, because every face gets its own recognition pass (D-78 has the measured numbers). Lazy-loading is the single most likely reason your demo feels slow, and it is entirely avoidable. Note that input resolution barely moves this number, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; what full-size input actually costs you is JPEG decode time, roughly 100 to 200ms.
 
-**Job types.** Five pgmq jobs: `thumbnail_dims`, `face_process`, `reference_process`, `reprocess` and `manual_blur`. Their triggers and work are in `docs/ARCHITECTURE.md` §5 and nowhere else, so this section does not repeat them. `face_process` matches every face against every subject with references who is an active member of the event, Do Not Publish or not, because Find My Photos reads the same matches (D-74).
+**Job types.** Five pgmq jobs: `thumbnail_dims`, `face_process`, `reference_process`, `reprocess` and `blur_region`. Their triggers and work are in `docs/ARCHITECTURE.md` §5 and nowhere else, so this section does not repeat them. `face_process` matches every face against every subject with references who is an active member of the event, Do Not Publish or not, because Find My Photos reads the same matches (D-74).
 
 **Three rules inside `face_process` that are easy to get subtly wrong:**
 
@@ -249,7 +249,7 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 
 **Do not route media bytes through Express.** If every photo flows through Node, you pay for that bandwidth and CPU twice, once receiving and once forwarding, on a box you are specifically keeping light. Instead:
 
-1. **Pre-flight** (small JSON, this *does* go through Express): content hash, sub-event ID, the GPS reading taken at capture time, and any Venue QR scan the device holds. No image bytes, the thumbnail included (D-69). The checks and their order are `docs/ARCHITECTURE.md` §4: membership and album state; then the hash, where the caller's own unfinished row resumes and any other match is silently rejected; then, for a new row, the cap and verification. Every one is an indexed lookup, so none risks blocking the event loop.
+1. **Pre-flight** (small JSON, this *does* go through Express): content hash, sub-event ID, and any GPS reading or Venue QR scan the device holds for verification, each with its time; the photo carries no location (D-89). No image bytes, the thumbnail included (D-69). The checks and their order are `docs/ARCHITECTURE.md` §4: membership and album state; then the hash, where the caller's own unfinished row resumes and any other match is silently rejected; then, for a new row, the cap and verification. Every one is an indexed lookup, so none risks blocking the event loop.
 2. **Presigned URLs.** If it passes, Express builds the upload keys for the photo and its thumbnail in its one key function, writes them onto the new media row (D-70), and presigns a PUT URL for each via `@aws-sdk/client-s3` (R2 is S3-API-compatible; this is standard SDK functionality).
 3. **Direct upload.** The client PUTs the photo and its thumbnail straight to R2. Express is not in this path.
 4. **Completion.** The client tells Express "done." Express sets `uploaded_at` where it is null and enqueues the `pgmq` job in the same transaction, so a retried completion enqueues nothing (D-82).
@@ -339,7 +339,7 @@ Everything else (screens, components, styling, business logic, API calls, state)
 
 **Testing, proportionate to your timeline:**
 
-- **Unit tests, most of your test effort.** Pure logic, no UI, no network: Haversine distance for GPS verification, hard-coded limit checks, the pre-flight verification branch (§7), sub-event status computation from timestamps (spec §4.3, and this one has real edge cases because In Progress depends on the *next* sub-event's start). Jest with the `jest-expo` preset for the app and plain Jest for the API, since `jest-expo` is an Expo preset with no place on an Express server; `pytest` for the worker.
+- **Unit tests, most of your test effort.** Pure logic, no UI, no network: Haversine distance for GPS verification, hard-coded limit checks, the pre-flight verification branch (§7), sub-event status computation from timestamps (spec §4.3: overlaps, the gaps between sub-events, and the event's span computed from its sub-events, D-88). Jest with the `jest-expo` preset for the app and plain Jest for the API, since `jest-expo` is an Expo preset with no place on an Express server; `pytest` for the worker.
   - There is no pHash Hamming distance test any more. Deduplication is a hash equality check.
   - There is no client-pipeline role branch to test any more either (D-58).
 - **Integration tests, some, and one of them is the most valuable test in the project.**
@@ -351,9 +351,9 @@ Everything else (screens, components, styling, business logic, API calls, state)
   Also worth an integration test, because it fails silently in the other direction: does the album query exclude rows with `processed_at` null (D-55), and does a Do Not Publish user's Find My Photos return their own photos (spec §4.11, the viewer-scoped filter).
 - **E2E tests, few, and only for flows that would be genuinely bad to break.** Maestro against a handful of critical paths: sign up, join event, capture, see it in the album. Verify a Do Not Publish face is blurred for a second viewer. Verify photos sit in the local queue when location permission is denied and only upload after a QR scan. Do not try to E2E everything.
 
-**One calibration task that is not a test but belongs here.** The similarity thresholds in spec §4.11 are placeholders. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold and your loose manual-blur threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
+**One calibration task that is not a test but belongs here.** The similarity thresholds in spec §4.11 are placeholders. Before Phase 5 ends, take roughly 30 photos of the three of you in varied lighting and angles, compute the cosine similarity distribution for same-person and different-person pairs, and pick your production match threshold from **your own data**. Write the numbers and the date into `docs/ARCHITECTURE.md`. Shipping thresholds someone wrote down as an example is how the blur silently fails in the demo.
 
-Two honesty notes that belong with the numbers rather than in the viva prep, because this is where they will be forgotten. Thirty photos of three people is a small and unrepresentative sample, so the thresholds are overfitted to your demo set; say that yourself rather than being asked. And run the manual-blur threshold against **curated references only** (D-54), which is what the abuse check uses in production, otherwise you calibrate one thing and ship another.
+Two honesty notes that belong with the numbers rather than in the viva prep, because this is where they will be forgotten. Thirty photos of three people is a small and unrepresentative sample, so the thresholds are overfitted to your demo set; say that yourself rather than being asked.
 
 **CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for app, API, and worker, plus the authorization test above. Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
 
@@ -497,11 +497,11 @@ Add the on-device GPS check, the server-side re-validation, the queue gate, the 
 
 **Retire it in the same PR that turns on `face_process`** (D-72). Once Do Not Publish users exist, `thumbnail_dims` is a publishing bug. It sets `processed_at` without blurring anything, and if it runs on the same upload as `face_process` it can publish the photo first or point the public keys back at the unblurred upload afterwards.
 
-Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, a blurred thumbnail for each (D-69), the serving endpoint with its authorization check, the self-visible badge, and the manual correction flow with its threshold check against **curated** references (D-54).
+Then face detection and embedding. Then the blur pipeline: the public blurred file, one variant per Do Not Publish subject, a blurred thumbnail for each (D-69), the serving endpoint with its authorization check, and the self-visible badge. Every file it writes applies the blur regions S-19 already stores (root invariant 6).
 
 **Write the serving endpoint's negative test before the endpoint** (§11). It is the most valuable test in the project and it is twenty lines.
 
-**Do not skip the `reprocess` job.** It is easy to leave for later because nothing visibly depends on it during a happy-path test, and then four things break at once. It is what makes Do Not Publish retroactive over already-published photos (spec §4.11), what applies a confirmed manual blur across a user's other photos, what the Admin's Revert action calls to undo a fraudulent request, and what matches a user who joins an event late against the photos already there (D-84). Build it in the same pass as the blur pipeline, not in Phase 6.
+**Do not skip the `reprocess` job.** It is easy to leave for later because nothing visibly depends on it during a happy-path test, and then three things break at once. It is what makes Do Not Publish retroactive over already-published photos (spec §4.11), what carries a change in someone's reference photos to every photo, and what matches a user who joins an event late against the photos already there (D-84). It also has to apply every stored blur region, or a region disappears on its next run (root invariant 6). Build it in the same pass as the blur pipeline, not in Phase 6.
 
 **Verify the viewer-scoped filter with an actual test, not by inspection.** Spec §4.11 hides Do Not Publish faces from every viewer except the subject. The wrong implementation, a global exclusion, passes every test written from the other viewers' perspective and fails only for the subject, where it returns nothing. Write the positive case explicitly: a Do Not Publish user runs Find My Photos and gets their photos back.
 
@@ -513,7 +513,7 @@ Then run the calibration exercise in §11.
 2. **If recognition is too slow or too inaccurate:** drop to *blur every detected face in this photo*, triggered manually per photo. This needs detection only, no reference embeddings, no matching, no thresholds. Detection is far more reliable than recognition, so this rung is much sturdier than the one above it.
 3. **If detection itself is unusable on the server:** a manual blur box the user drags over a face. Pure image manipulation, no ML at all, cannot fail.
 
-Build rung 3 first, in roughly half a day, before rungs 1 and 2. It is a useful feature in its own right, it is the escape hatch when automatic matching misses something in the demo, and building it after you need it is building it under pressure. No spec section describes it yet: who may draw a box, which files it blurs, and where the box is stored so `reprocess` does not undo it are open items in the decision log, to settle before this phase starts.
+Build rung 3 first, in roughly half a day, before rungs 1 and 2. It is a useful feature in its own right, it is the escape hatch when automatic matching misses something in the demo, and building it after you need it is building it under pressure. Spec §4.11.4.4 specifies it (D-83): any Guest or the Admin draws a rectangle, it blurs every file of the photo, and it is stored so no regeneration drops it.
 
 ### 14.6 Phase 6 — the rest
 Notifications (Approval Alerts and Album Lifecycle only). Multi-select download, which routes through the same serving endpoint Phase 5 already built, because there is no separate download path and no compositing step (D-57). Theme and settings. The formalized screens from spec §2.5: Join Confirmation, Pending Approval, Join Error, Forced Logout, Consent re-gate, Supabase Unavailable. The album toggle with its Close Album confirm dialog (spec §4.9), which is small and prevents the most likely real failure of the Photographer role, and which switches on the album-open check pre-flight has carried since Phase 3 (D-82). The hard-coded limits are not here: each is enforced by the slice where it can be crossed (spec §4.17).
@@ -535,7 +535,7 @@ Roughly: Phases 0 through 4 in the first semester, 5 through 7 in the second. A 
 
 Generation speed helps most with the parts that were never the bottleneck: Express routes, Postgres schemas, RN screens, FastAPI handlers. It helps very little with the parts that actually consume months here, which are the viewfinder, background upload with `beginBackgroundTask` and an Android foreground service, the SQLite queue's retry and cancel semantics, deep links, push certificates, and RLS. Those fail at device and configuration boundaries rather than in code, and the debug loop is manual, on real hardware, one device at a time.
 
-And "harden later" is false for anything with a shape. `variant_version` (D-60), the subject-versus-account split (D-63), the curated flag (D-54), and the `processed_at` predicate (D-55) are not hardening; they are schema. Get them wrong and the fix is a migration against live rows.
+And "harden later" is false for anything with a shape. `variant_version` (D-60), the subject-versus-account split (D-63), the blur-region table (D-83), and the `processed_at` predicate (D-55) are not hardening; they are schema. Get them wrong and the fix is a migration against live rows.
 
 D-68 settled the review question that used to sit here: code comprehension is not a merge gate, and reading the codebase happens in this phase rather than continuously. What that does not change is where the surplus goes. Spend it on seed tooling, the tests in §11, reading the codebase, and rehearsal, not on more features. A feature generated in an afternoon still costs a rehearsal slot, a bug surface, and a question you have to answer.
 
@@ -555,7 +555,7 @@ The photos are the product. The chrome around them should recede, not compete.
 
 **Dark mode, done once.** Define color tokens once and reference them everywhere. Never hardcode a hex in a component. Retrofitting dark mode onto scattered hardcoded colors is real, avoidable pain.
 
-**Two pieces of UI carry real weight, and both are specified in the spec rather than here.** The Do Not Publish activation flow (spec §2.5.9) is the most sensitive UX in the app: not a toggle, blocked without a curated reference, and a permanent "Active" badge once confirmed (D-31, D-56). The self-visible marker (spec §4.11.4.2) is a static lock badge, drawn from the serving endpoint's own-variant flag, and it is the only way a subject can tell working blur from a missed match (D-26, D-86). Design both properly and early; neither is polish.
+**Two pieces of UI carry real weight, and both are specified in the spec rather than here.** The Do Not Publish activation flow (spec §2.5.9) is the most sensitive UX in the app: not a toggle, blocked without an accepted reference, and a permanent "Active" badge once confirmed (D-31, D-56). The self-visible marker (spec §4.11.4.2) is a static lock badge, drawn from the serving endpoint's own-variant flag, and it is the only way a subject can tell working blur from a missed match (D-26, D-86). Design both properly and early; neither is polish.
 
 ---
 
@@ -593,7 +593,7 @@ The two-tier navigation model is the most architecturally significant UI piece i
 
 **Persistent Event header.** A custom header component in the Event layout, not Expo Router's default stack header: event cover thumbnail, name, and a "‹ Events" back affordance, visible above the tabs the whole time.
 
-**Camera FAB.** Not a tab. A positioned `Pressable` inside the My Media screen that launches a full-screen modal route. Its visibility is a derived boolean from the schedule data: is any sub-event currently In Progress, per spec §4.3's rule. Note that this rule now depends on the *next* sub-event's start time, not the current one's end time, so the derivation reads two rows, not one.
+**Camera FAB.** Not a tab. A positioned `Pressable` inside the My Media screen that launches a full-screen modal route. Its visibility is a derived boolean from the schedule data: is any sub-event currently In Progress, per spec §4.3's rule. A sub-event is In Progress from its start to its end (D-88), so between sub-events the FAB is hidden; overlapping ones tag a capture to the most recently started.
 
 **Merged Home and Album with two-tier filtering.** Home is one screen, not a folder per sub-event. The sub-event chip row is local UI state in Zustand. The People/Uploader filter opens a bottom sheet; keep its active state in Zustand too and render it as a dismissible pill above the grid. The grid query takes `{ subEventId?, personId?, uploaderId? }` and is just an AND of whatever is active.
 

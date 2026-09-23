@@ -123,6 +123,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** Venue connectivity at weddings is bad enough that requiring a round-trip before a guest can even queue photos would fail most of the time.
 **Rejected.** A pure server-side check (fails offline) and a pure client-side check with a client-supplied `verified: true` boolean (trivially forged).
 **Cost.** ⚠ A modified client with a spoofed GPS reading can still get a real verification row. This is a UX gate, not a security boundary, and it is listed as such in the spec's Known Limitations.
+**Amended (see D-89).** Photos carry no GPS reading. The device sends one reading per sub-event when its check passes, and the server writes the row from that.
 
 ### D-17 — The Venue QR works offline without pre-caching any secret
 **Decision.** A scan is written to local SQLite and travels with the next pre-flight request when connectivity returns.
@@ -138,7 +139,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 
 # D. Capture
 
-### D-19 — A sub-event stays In Progress until the next one starts
+### D-19 — A sub-event stays In Progress until the next one starts ~~(SUPERSEDED by D-88)~~
+> **Superseded.** A sub-event now ends at its scheduled end, and the Admin delays one that runs late. The reasoning below is the risk D-88 accepts.
 **Decision.** Status ignores the sub-event's own scheduled end time. It ends when the next sub-event begins, or when the parent event ends.
 **Why.** The capture FAB is hidden when no sub-event is In Progress (D-20). Under the old rule, a sub-event scheduled 7pm to 8pm auto-completed at 8pm, so if the next started at 10pm and the baraat actually arrived at 9:40, **the camera disappeared for the two most photographed hours of the night**. South Asian events running late is the modal case, not an edge case.
 **Rejected.** Relying on the Admin to pad durations or delay sub-events manually. That works, and it is a one-minute task, but it means the failure mode is silent: nobody discovers it until people are already unable to take photos.
@@ -148,6 +150,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** Capture is available only during a live sub-event.
 **Why.** It guarantees no photo can ever have an ambiguous sub-event tag, which removes an entire class of data problem and makes "Move to..." reassignment optional rather than required.
 **Rejected.** Making the sub-event a default tag with an "Unsorted" bucket and always-available capture. Argued for on the grounds that a gate is riskier than a tag. Declined, and D-19 removes most of the risk that argument rested on. The gate is on *time*, not on verification: an unverified user can still capture freely.
+**Amended (see D-88).** Sub-events end at their scheduled time, so the FAB is also hidden in the gaps between them, and D-19 no longer covers a sub-event that runs late.
 
 ### D-21 — Capture keeps the camera's native aspect ratio
 **Decision.** No forced 4:3 or any other crop.
@@ -165,20 +168,22 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 
 # E. Face processing and blur
 
-### D-23 — Manual self-blur is gated by an embedding check, not by Admin approval
+### D-23 — Manual self-blur is gated by an embedding check, not by Admin approval ~~(SUPERSEDED by D-83)~~
+> **Superseded.** Tap-to-blur is removed. A missed face is fixed with a blur region, which has no embedding check.
 **Decision.** When a user taps their own face to blur it, compare that face to the requester's own reference set. Above a loose threshold, apply with no review. Below it, apply **and** queue the request to the Admin.
 **Amended (see D-52 and D-54).** Two things were undefined here. The action is now available only to users with Do Not Publish active, and the comparison runs against the requester's **curated** references only, never the auto-added ones from D-25.
 **Why.** The concern that drove this was real: without a check, anyone could blur the bride out of every photo. But a genuine missed match lands in the middle similarity band, while someone maliciously blurring another person scores near zero against their own references. Those are not close numbers, and separating them is one cosine comparison against data the system already has.
 **Rejected.** Routing every manual blur to the Admin. That fills the queue with legitimate corrections he has to rubber-stamp, which is the same "Admin juggling a queue during the event" problem that D-07 rejected a staging pool over.
 **Cost.** It contradicts v9.1's rule that no AI uncertainty is ever routed to a human. That rule was rewritten deliberately, not violated by accident.
-**Amended (see D-83).** A tap on a face already matched to another Do Not Publish subject is refused, because applying it would show the requester that face unblurred.
 
 ### D-24 — The blur applies immediately and the Admin reverts, rather than approving first
 **Decision.** A queued blur request is already applied while it waits. The Admin's actions are Confirm and Revert, not Approve and Reject.
 **Why.** Pending review means the face stays unblurred for as long as the Admin is busy, which at a wedding is the whole night. That is exactly the exposure the feature exists to prevent. The privacy-preserving state should be the default and the Admin's job should be undoing abuse.
 **Enabler.** The retained original (D-27) makes revert mechanically free.
+**Amended (see D-83).** The principle now governs blur regions: a region applies at once, and the person who drew it or the Admin removes it.
 
-### D-25 — A confirmed face crop becomes a new reference embedding
+### D-25 — A confirmed face crop becomes a new reference embedding ~~(SUPERSEDED by D-83)~~
+> **Superseded.** With no tap-to-blur there is no confirmed crop, so no reference is ever added automatically.
 **Decision.** When a user taps their own face, that crop is added to their reference set automatically.
 **Why.** It is a correctly-labeled face from a real event photo in real lighting, which is a substantially better reference than a profile selfie. The match that failed once becomes less likely to fail again, so the correction improves the system rather than just fixing one photo.
 **Amended (see D-54).** As written this was an undamped feedback loop. Crops are now tagged auto-added and are excluded from the abuse check in D-23, which is what stops a drifting reference set from degrading the check that depends on it.
@@ -188,6 +193,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** Without it, a subject seeing their own clear face cannot tell whether personalized blur is working or whether the match failed and everyone can see them. **The two states are pixel-identical to the only person who can report the problem.** The marker is the entire discoverability mechanism for D-23; without it, every miss becomes a permanent, unreportable privacy failure.
 **Treat this as a correctness requirement, not a polish item.**
 **Amended (see D-57).** There is no crop now. The subject views their own personalized variant, and the marker is a static badge on the photo.
+**Amended (see D-83).** A subject who finds a missed face fixes it by drawing a blur region, since tap-to-blur is gone.
 
 ### D-27 — Retained originals are load-bearing, not speculative
 **Decision.** The pre-blur uploaded file stays in R2 and is the source every blur variant is generated from.
@@ -239,6 +245,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** Local Only files go to `FileSystem.documentDirectory`, not the camera roll, with the do-not-backup flag set on iOS.
 **Why.** The old design saved to `DCIM/MomentLens_Private`, which is Android-only path thinking and, worse, the most publicly synced location on the phone. Files there reach iCloud and Google Photos. Calling that "Private" is a naming lie.
 **Cost.** These files do not appear in the device gallery and are deleted on uninstall. That is the honest price of actually being local, and the UI states it at first use.
+**Amended (see D-90).** A Public capture is also saved to the phone's gallery. Only Local Only stays out of it.
 
 ### D-35 — Do Not Publish hides the profile photo, not the name
 **Decision.** The image is replaced by a name-initial placeholder everywhere, including for the Admin. The name still appears where a workflow requires it, such as Pending Approvals and the Attendees list.
@@ -317,7 +324,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Rejected.** The global exclusion, which is simpler and reads as a stronger guarantee. It is not stronger; it is the same guarantee for other viewers plus a broken feature for the subject.
 **Implementation note that matters.** Write it as a read predicate parameterized by the requesting user, never as omitting the row at write time. The wrong version throws no error and passes every test written from another viewer's perspective, failing only for the subject.
 
-### D-47 — The Admin's inability to verify a blur requester's identity is accepted, not solved ⚠
+### D-47 — The Admin's inability to verify a blur requester's identity is accepted, not solved ⚠ ~~(SUPERSEDED by D-83)~~
+> **Superseded.** There are no blur requests to judge. The Admin restores blur regions instead.
 **Decision.** When a low-confidence manual blur request reaches the Review Queue, the Admin judges it from personal knowledge. There is no in-app reference image, because Do Not Publish hides the requester's profile photo from everyone including the Admin and the disputed face is already blurred. A legitimate requester whose score came back near zero contacts the Admin out of band.
 **Why.** The path is expected to be rare, and it already fails in the safe direction: the blur is applied while the request waits (D-24), so the cost of a slow or wrong decision is a face staying hidden rather than a face being exposed.
 **Rejected.** Surfacing the requester's profile photo to the Admin on this one screen, which would put a hole in the "no exception for anyone, including the Admin" guarantee in §4.2 for a feature almost nobody will use. Also rejected: removing the Admin from the loop entirely, since that is what invites the abuse D-23 exists to catch.
@@ -357,20 +365,21 @@ Two constraints settled a third of these before any of them were argued individu
 **Decision.** Cloudflare Tunnel with a named hostname.
 **Why.** ngrok's free URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
 
-### D-52 — Tap-to-blur is available only to users with Do Not Publish active
+### D-52 — Tap-to-blur is available only to users with Do Not Publish active ~~(SUPERSEDED by D-83)~~
+> **Superseded.** Tap-to-blur is removed. Blur regions are open to every Guest and the Admin.
 **Decision.** The manual correction affordance renders only for users who have Do Not Publish enabled. Everyone else never sees it.
 **Why.** Spec v10 left this undefined: §4.11 framed the correction path as something a Do Not Publish user does, while demo beat 7 had a team member tapping somebody else's face. The two readings have very different abuse surfaces and the spec chose neither.
 Three reasons for this side of it. It matches what the feature is for, since a user without Do Not Publish has nothing to correct. It collapses the abuse surface, because an attacker must first permanently and irreversibly blur their own face across every event they will ever join. And combined with D-56 it removes the undefined case where a requester has no reference set to compare against.
 **Rejected.** Leaving it open to everyone, which is the more permissive reading and the one that makes "what stops a malicious guest" a harder question than it needs to be.
 **Cost.** Demo beat 7 now needs a second pre-configured account with Do Not Publish enabled. One line on the pre-demo checklist.
-**Amended (see D-83).** Beat 7's second account aims at a face nobody has blurred, such as the Admin's. Aimed at the first subject's face, the tap is refused.
 
 ### D-53 — Hash the bytes being uploaded, not a re-encoded thumbnail
 **Decision.** SHA-256 over the exact byte stream the client is about to PUT, after EXIF stripping and HEIC conversion.
 **Why.** D-32 hashed the 300px WebP thumbnail. WebP encoders differ across iOS, Android and library versions, so the same source photo hashes differently on two devices and after any dependency bump. The dedup would have caught close to nothing while looking like it worked.
 **Rejected.** Hashing the source file before processing, which is also deterministic but misses the case where the same photo arrives as HEIC on one device and JPEG on another.
 
-### D-54 — Curated and auto-added references are tracked separately
+### D-54 — Curated and auto-added references are tracked separately ~~(SUPERSEDED by D-83)~~
+> **Superseded.** With no auto-added references, every reference is one the user uploaded, so there is nothing to split.
 **Decision.** One boolean column. Matching and Find My Photos use curated plus auto-added. The D-23 abuse check uses curated only.
 **Why.** D-25 adds a confirmed tap crop to the reference set automatically with nothing damping it. A user tapping faces that score just above the loose threshold, meaning the sibling-and-cousin population spec §8 already expects to produce false positives, drifts their reference set toward that other person. The drifted set is what the abuse check runs against, so the check degrades exactly as the thing it guards against gets easier.
 **Rejected.** Capping the number of auto-added references, which slows the drift without stopping it, and dropping D-25 entirely, which throws away the best reference data the system ever gets.
@@ -384,7 +393,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Decision.** Activation is blocked unless the user has at least one reference photo or a profile photo.
 **Why.** Spec v10 made both optional and gated activation on a checkbox, so a user could complete a permanent, irreversible privacy action, see a static "Active" badge, and be protected against nobody, because the pipeline had no vector to match on. This is the same class of bug as D-34, where "Private mode" wrote to the camera roll: a name that promises something the mechanism does not do.
 **Rejected.** Activating anyway and prompting for references afterwards, which leaves a window where the badge lies.
-**Amended (see D-87).** "A reference" means a curated `face_reference` row, which exists only once the worker has found a face, and the last one cannot be deleted while Do Not Publish is active.
+**Amended (see D-87 and D-91).** "A reference" means an accepted `face_reference` row: the worker found exactly one face in it. The last one cannot be deleted while Do Not Publish is active.
 
 ### D-57 — Personalized variants replace the crop-and-overlay design ⚠
 **Decision.** For a photo with N Do Not Publish subjects the worker writes N+1 files: one public with every subject blurred, and one per subject with only that subject clear. One serving endpoint checks whether the requester is a subject and mints a presigned R2 URL for the correct file. Viewing and downloading use the same mechanism.
@@ -434,6 +443,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Decision.** Not built in v1. Written into spec §6.2: cap at 10 requests per user per event, mark the requester on each Admin revert, disable after two reverts.
 **Why.** The hole is real. Each tap applies immediately, so the similarity check catches requests individually and stops none of them in aggregate. It is also unreachable with 100 seeded photos and three people who know each other.
 **Rejected.** Building it now. It is a counter column and one conditional, so if it ever looks like more than twenty minutes of work, something has gone wrong with the design.
+**Amended (see D-83).** The cap applies to blur regions per user per event, since tap-to-blur is gone.
 
 ### D-65 — Blur geometry and blur strength are specified, not left to the implementer
 **Decision.** Expand the detection box by 30 to 40 percent, apply an elliptical mask, and blur by downsampling then upsampling with a box blur on top.
@@ -514,6 +524,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Why.** The worker never serves live requests (Handbook §2), so request-time matching would have put the similarity logic and thresholds in SQL functions as well as in the worker. Stored results keep every threshold in one codebase.
 **Rejected.** pgvector similarity queries run by the API on each request. No re-match job, and two places to keep in sync.
 **Cost.** New reference photos show up in Find My Photos only after a `reprocess` run. At this scale that is milliseconds of work (D-66).
+**Amended (see D-83).** There is no tap-to-blur comparison any more. The worker compares on processing and on reference changes only.
 
 ### D-75: Ukasha owns ARCHITECTURE.md, and agents write it
 **Decision.** Settles the ownership open item and replaces "you maintain it by hand" in Handbook §18.1 Rule 2. Ukasha owns `docs/ARCHITECTURE.md` and decides what it says. Agents write the text. An agent changes the file only to record a decision Ukasha made or what merged code actually does, in the same PR. It never edits the file to match code that disagrees with it, and it asks instead of filling in anything undecided.
@@ -584,7 +595,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 
 # O. Found in the whole-corpus audit (2026-09-23)
 
-Six gaps, each of which would have failed without an error. Written by the audit and listed for Ukasha's veto.
+Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 were accepted. The audit's draft of D-83, a refusal rule for tap-to-blur, was rejected, and D-83 records Ukasha's ruling instead.
 
 ### D-82: Pre-flight resumes a crashed upload and enforces every upload rule the API owns
 **Decision.** Pre-flight checks, in order: the caller is an active member, the event is not deleted and the album is open; then the hash; then, for a new row, the 2,000-photo cap and verification. A row with the same hash that the same caller created and never completed is not a duplicate: pre-flight re-signs PUT URLs for its existing keys, and a resumed upload skips the cap and verification it already passed. `media.uploaded_at` marks completion. The completion call sets it only while it is null and enqueues the job in the same transaction, so a retried completion enqueues nothing.
@@ -592,10 +603,11 @@ Six gaps, each of which would have failed without an error. Written by the audit
 **Rejected.** Inserting the row at completion, which breaks D-70, because the upload keys go onto the row before the PUT URLs are signed. Asking R2 whether the object exists, which puts a network call inside the endpoint that must stay cheap.
 **Cost.** The album-open check blocks every upload until an Admin opens the album, and the toggle only arrives in S-31. S-12 builds the check switched off and S-31 turns it on, as Phase 3 does with the verification gate.
 
-### D-83: Tap-to-blur never claims a face that belongs to another Do Not Publish subject
-**Decision.** Amends D-23 and D-52. The affordance renders only on faces that are unblurred in the requester's own view. `manual_blur` refuses, writing nothing, a face already matched to a different subject with Do Not Publish active. `reprocess` leaves `match_source = manual` faces as they are; only a revert clears one.
-**Why.** `face.matched_subject_id` holds one subject. If requester B claims a face matched to subject A, the worker regenerates B's variant with that face clear, and B sees a face Do Not Publish hides from everyone. D-27's guarantee fails the moment the request applies, before any Admin sees it, and demo beat 7 as written did exactly this. Separately, a `reprocess` that re-matches every face drops every manual match, because a manual match exists only where the automatic score fell below the threshold.
-**Rejected.** Relying on the Admin's Revert, which leaves A exposed to B until the Admin acts. Allowing two subjects per face, which breaks N+1 (D-57) for a case no honest request produces.
+### D-83: Tap-to-blur is removed; a missed face is fixed with a blur region anyone can draw ⚠
+**Decision.** Supersedes D-23, D-25, D-47, D-52 and D-54; amends D-24, D-26, D-64 and D-74. Automatic matching blurs a face that matches a Do Not Publish subject at or above the match threshold, and nothing else is blurred automatically. There is no tap-to-blur and no Admin queue for loose matches. Any Guest or the Admin can draw a rectangular blur region on a photo in the album. It applies at once to the public file, every subject's file and all their thumbnails, is stored in `manual_blur_region`, and every later regeneration applies it (root invariant 6). The person who drew it and the Admin can remove it. With no tap-to-blur there are no auto-added references, so every reference is one the user uploaded.
+**Why.** Tap-to-blur needs a detected face to tap, and the miss that matters most is a face the detector never found, which a region covers and a tap cannot. A queue for loose matches would flood: at a wedding of relatives a loose match is usually a cousin, so it would flag almost everyone against someone. The Admin is busy all night and guests care about their privacy, so a blur that applies at once with a restore as the fallback beats a face left visible while it waits for anyone.
+**Rejected.** The audit's first draft of this entry: keep tap-to-blur and refuse a tap on a face already matched to another subject. A loose-match band sent to the Admin, blurred or visible while it waits.
+**Cost.** ⚠ Any Guest can blur any part of any photo until its drawer or the Admin removes it. D-23's similarity check no longer stands between a guest and the bride's face, so abuse is caught only by the Admin looking at the Review Queue. A face below the match threshold stays visible until someone draws a region over it. D-64's rate limit is the designed answer if abuse ever appears.
 
 ### D-84: Joining an event re-matches the new member's references
 **Decision.** When a subject with references becomes an active member of an event, by auto-approve or by an Admin's approval, the API enqueues `reprocess` for that subject in that event.
@@ -615,9 +627,38 @@ Six gaps, each of which would have failed without an error. Written by the audit
 **Rejected.** Caching by URL, which rotates every hour and defeats the cache. Deriving the marker on the client, which needs subject identity the client must not have (root invariant 4).
 
 ### D-87: Do Not Publish always keeps a reference to match on
-**Decision.** Amends D-56. Activation counts curated `face_reference` rows, and the worker writes one only for a photo in which it found a face, so an uploaded photo that has not been processed yet, or has no usable face, does not unlock activation. While Do Not Publish is active, the API refuses to delete the last curated reference. `is_curated` is a generated column over `source`.
-**Why.** D-56 blocked activation without a reference, and nothing stopped the user deleting every reference afterwards, which puts the badge back to reading "Active" while it protects nobody. "Has a reference photo", the spec's wording, was also true before `reference_process` ran and when the photo held no face. And an `is_curated` written separately from `source` can be true on an auto-added row, which then feeds the abuse check (root invariant 6).
+**Decision.** Amends D-56. Activation counts accepted `face_reference` rows, those in which the worker found exactly one face (D-91), so a photo still being processed, or one the worker rejected, does not unlock activation. While Do Not Publish is active, the API refuses to delete the last accepted reference.
+**Why.** D-56 blocked activation without a reference, and nothing stopped the user deleting every reference afterwards, which puts the badge back to reading "Active" while it protects nobody. "Has a reference photo", the spec's wording, was also true before `reference_process` ran and when the photo held no usable face.
 **Rejected.** Allowing the deletion behind a warning, which is the failure D-56 exists to prevent.
+**Amended (see D-83).** The audit's draft also made `is_curated` a generated column. With no auto-added references that column has nothing to distinguish, and it is dropped.
+
+---
+
+# P. Ukasha's rulings on the audit (2026-09-23)
+
+### D-88: A sub-event ends at its scheduled end, and the event spans its sub-events
+**Decision.** Supersedes D-19; amends D-20. A sub-event is In Progress from its start to its end. The event runs from its first sub-event's start to its last sub-event's end, computed on read and never stored, so an event needs at least one sub-event and the 14-day cap applies to that span. There can be stretches inside the event when no sub-event is In Progress, and the capture FAB is hidden then (D-20). When a sub-event runs late, the Admin delays it.
+**Why.** Sub-events are planned across several days, and the host knows ahead of time when one will run late or move. Adjusting one with Delay takes under a minute. D-19's rule kept a sub-event open until the next one started, which across a multi-day event holds capture open overnight.
+**Rejected.** D-19's rule, In Progress until the next sub-event starts.
+**Cost.** A sub-event that overruns closes capture at its scheduled end until the Admin delays it, which is the failure D-19 was written for: a late baraat with no in-app camera. "+ Add Media" is not time-gated, so photos taken with the phone's own camera can still be added to that sub-event afterwards.
+
+### D-89: Verification belongs to the person, and photos carry no location
+**Decision.** Amends D-16 and D-36. A `venue_verification` row is for one person and one sub-event. When the device's local GPS check passes, it stores that one reading with its time, as it stores a Venue QR scan (D-85), and sends it with the next pre-flight. The server checks the reading against the venue and the sub-event In Progress at that time, then writes the row. Photos carry no location, so a photo taken with location off, or imported from the gallery, uploads once the person is verified for its sub-event.
+**Why.** Some guests keep location off, and a gallery import was never captured by the app, so neither has a capture-time reading. Verification was always about the person being there. The photo's own location added nothing but a way to fail.
+**Rejected.** A reading attached to every photo, the previous design, which blocks gallery imports and location-off photos. Reading the GPS out of a gallery photo's EXIF.
+**Cost.** The person has to be at the venue with GPS on at least once during the sub-event, scan its QR, or be Force Verified. Less location data leaves the phone than before: one reading per sub-event instead of one per photo.
+
+### D-90: A Public capture is also saved to the phone's gallery
+**Decision.** Amends D-34. A photo captured in Public mode is saved to the phone's gallery as the camera took it. A Local Only capture is not. The copy that uploads is the stripped one (spec §4.8.1).
+**Why.** Guests expect photos from a camera to appear in their camera roll.
+**Rejected.** Keeping Public captures out of the gallery.
+**Cost.** The gallery copy keeps its EXIF, location included, and syncs wherever the phone syncs its gallery, like any camera app's photo. The app needs write access to the gallery, which `expo-media-library` already provides for downloads.
+
+### D-91: A reference photo must show exactly one face
+**Decision.** Amends D-56 and D-87. The API records a new reference photo as `pending`. `reference_process` accepts it with its embedding when it finds exactly one face, and otherwise rejects it as `no_face` or `multiple_faces`. The app waits for that status and shows the reason, for several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." A profile photo with no face or several is still the avatar, but it is not used as a reference. Only accepted references count toward activation and the last-reference rule.
+**Why.** An embedding from a group photo may be someone else's face, which would blur the wrong person and miss the subject.
+**Rejected.** Rejecting with a 400 at upload, which needs face detection in Express, against root invariant 5 and the rule that the worker never serves live requests (Handbook §2). Taking the largest face, which is a guess.
+**Cost.** The rejection arrives a few seconds after the upload rather than with it, so the app polls the reference until the worker has decided.
 
 ## Open items that are not decisions yet
 
@@ -627,9 +668,6 @@ These are not settled and should not be treated as though they are.
 - **`buffalo_l` versus `buffalo_s`.** Decide with a measurement, on the Netcup server, since D-78 makes it the demo runtime.
 - **Whether GPS is reliable in the demo room.** A rehearsal task. D-14 rests on it.
 - **Whether the standby actually works.** D-79 defines it. It is not real until `scripts/provision.sh` has run against a real VM on one of the three credits. Half a day in Phase 7.
-- **What S-19's manual blur box does.** Handbook §14.5 makes it the bottom rung of the fallback ladder and no spec section describes it. Undecided: who may draw a box, which files it blurs (the public file and every variant, or the public file only), and where the box is stored. It has to be stored, or the next `reprocess` regenerates the files from the upload and the face comes back. Settle before Phase 5.
-- **Which GPS reading a gallery import carries.** Spec §4.5 sends the reading taken at capture time, and a photo added through "+ Add Media" was not captured by the app. The candidates are the photo's own EXIF location, read before the strip, or the device's reading when the photo is added, which fails for anyone importing from home. A guest already verified for that sub-event passes either way. Settle before S-15.
-- **Whether a Public capture is also saved to the phone's gallery.** Spec §4.12 keeps Local Only captures out of the gallery and says nothing about Public ones. Settle before S-09.
 - **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
