@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 Run slice work for: $ARGUMENTS
 
-The first word is the slice id. A second word picks the stage; with none, the stage is the read-back. The build stage takes a third word, the package: `api`, `mobile` or `worker`.
+The first word is the slice id. A second word picks the stage; with none, the stage is the read-back. The build stage takes a third word, the package: `api`, `mobile` or `worker`. If it is missing, ask which package; never pick one.
 
 | Stage | Command | Runs sections | Ends at |
 |---|---|---|---|
@@ -81,7 +81,7 @@ Produce these seven, in this order:
 
 Then **stop**. The user either says go or fixes the docs for this slice and the ones it depends on first.
 
-**When the user has answered**, write the slice card into the issue's "Slice card" section with `gh issue edit <n> --body-file`, following the template there. It holds ids and paths, never copied doc text, and stays under about 900 tokens. Doc fixes the read-back turned up go in their own docs PR. Then tell the user this stage is finished and the next is `/slice <id> schema` in a fresh session.
+**When the user has answered**, write the slice card into the issue's "Slice card" section, following the template there. `--body-file` replaces the whole body, so fetch it first: `gh issue view <n> --json body -q .body > .slices/<id>/issue.md`, replace only the Slice card section in that file, then `gh issue edit <n> --body-file .slices/<id>/issue.md`. It holds ids and paths, never copied doc text, and stays under about 900 tokens. Doc fixes the read-back turned up go in their own docs PR. Then tell the user this stage is finished and the next is `/slice <id> schema` in a fresh session.
 
 **The docs are a draft, not a contract.** They are written by the same agents that read them, and every review of them so far has found something wrong. If two sections disagree, or one describes something that cannot work, say so in step 5 and propose the wording. Do not bend the build to match a document, and do not invent a reading that makes a contradiction go away. Two things are different in kind: the numbered invariants in root `CLAUDE.md` and the entries in `docs/DecisionLog.md` are decisions, not descriptions. Those you raise and the team rules on; you do not quietly build the other thing. `docs/ARCHITECTURE.md` wins over the spec and the handbook when they disagree (D-75), and it has been wrong too, so say when it is the one that looks wrong.
 
