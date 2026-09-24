@@ -24,6 +24,8 @@ export const ErrorCode = z.enum([
   // 422
   'event_full',
   'too_many_references',
+  // 500
+  'internal_error',
 ]);
 export type ErrorCode = z.infer<typeof ErrorCode>;
 
