@@ -12,7 +12,7 @@ Detail in Handbook §5 and §7. Tables and who may see what: `docs/ARCHITECTURE.
 
 This is not ceremony. It means "is this event's guest limit reached" is testable without an HTTP server, and it is what keeps three people out of one giant `routes.ts`.
 
-Auth middleware verifies the Supabase JWT with Supabase's server SDK and attaches the user to `req.user`. Do not hand-roll JWT verification. Nothing downstream re-checks identity.
+Auth middleware verifies the Supabase JWT with supabase-js `getClaims`, which checks it against the project's cached signing keys, and attaches the user to `req.user` (D-109). Do not hand-roll JWT verification. Nothing downstream re-checks identity.
 
 Request and response shapes are zod schemas in `packages/shared-types`, imported by both sides. Paths, the one error body and the status codes are Handbook §5.3; follow it for every endpoint. Generate the OpenAPI spec from them with `@asteasolutions/zod-to-openapi`.
 
@@ -64,9 +64,9 @@ Thumbnails and downloads use this same endpoint and the same check. There is no 
 
 - **`media`**: active members, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (spec §4.10). A row without `uploaded_at` is shown to nobody (D-82). Update and delete by the uploader and the event's Admin.
 - **`face`, `dnp_subject`**: only through the viewer-scoped rule (root invariant 4). The subject learns they are in a photo; nobody else learns who is.
-- **`face_reference`**: the owner, and only their photos. Embeddings never leave the database and the worker.
+- **`face_reference`**: the owner, and only their photos, with or without Do Not Publish (D-109). Embeddings never leave the database and the worker.
 - **`venue.qr_secret`**: the event's Admin only (D-17).
-- **`profile.avatar_key`**: never presigned for a user whose subject has Do Not Publish active, for anyone, the Admin included. The app shows a name-initial placeholder instead (D-35). One function presigns avatars, and every endpoint that returns a person calls it.
+- **`profile.avatar_key`**: never presigned for a user whose subject has Do Not Publish active, for anyone but that user, the Admin included (D-109). The app shows a name-initial placeholder instead (D-35). One function presigns avatars, and every endpoint that returns a person calls it.
 - **`profile.full_name`**: members of a shared event, Do Not Publish or not (D-35). A Photographer sees no other member's name, because the name list is the guest list (D-08).
 
 `uploader_role_at_upload` is display metadata. It drives the Uploader filter chip and nothing else. Never in an authorization check, never in a routing branch.
