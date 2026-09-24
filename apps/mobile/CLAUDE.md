@@ -18,7 +18,7 @@ Three more traps from training data. **RN 0.86 runs the New Architecture only**;
 | Client/UI state | Zustand | active sub-event chip, Public/Local Only toggle, filter sheet state, theme |
 | Upload queue | `expo-sqlite` | queued photos, status, retry count |
 | Device preferences | `react-native-mmkv` | Upload over Mobile Data, default Viewfinder mode (D-105) |
-| Auth | Supabase Auth owns the token; a thin `useAuthStore` mirrors "is someone logged in" | |
+| Auth | Supabase Auth owns the token and keeps its session in MMKV (D-109); a thin `useAuthStore` mirrors "is someone logged in" | |
 
 **Never copy server data into Zustand "just in case."** That reintroduces exactly the sync bugs TanStack Query exists to prevent.
 

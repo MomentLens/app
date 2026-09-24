@@ -254,6 +254,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 ### D-35 — Do Not Publish hides the profile photo, not the name
 **Decision.** The image is replaced by a name-initial placeholder everywhere, including for the Admin. The name still appears where a workflow requires it, such as Pending Approvals and the Attendees list.
 **Why.** v9.1 said DNP hides the profile photo "everywhere with no exception, including the Admin," while other sections rendered requester photos and names in the approval queue. An Admin cannot approve a join request from an anonymous row.
+**Amended (see D-109).** "Everywhere" includes the user's own screens, so a Do Not Publish user sees the placeholder on their own profile too.
 
 ### D-36 — GPS is transmitted for verification and not persisted
 **Decision.** Stripped from the image file. A separate reading rides with the pre-flight request, is validated against the sub-event's coordinates, and is not written to the media record.
@@ -692,6 +693,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** No doc named a path, an error body or a status code beyond `GET /health`, so every slice's schema stage would have invented its own and the app would need an error parser per screen.
 **Rejected.** Leaving it to each slice.
 **Cost.** One schema and one handbook section, written before S-01.
+**Amended (see D-109).** The handbook section came before S-01. The `ErrorResponse` schema did not, and S-01's schema PR writes it, as Handbook §5.3 says.
 
 ### D-95: Pre-flight's insert and completion run in SQL functions
 **Decision.** Amends D-82. The API calls both with `rpc`, because supabase-js holds no transaction and pgmq is not on the Data API.
@@ -771,6 +773,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - A subject finds a missed face by browsing the album for photos of themselves without the marker. Find My Photos lists only faces the system matched, so it cannot show a miss.
 **Why.** The audit found each one unstated.
 **Cost.** `packages/shared-types` holds one function besides its schemas.
+**Amended (see D-109).** S-01 adds `@aws-sdk/s3-request-presigner`, with `@aws-sdk/client-s3`, for the avatar function, so S-12 finds both installed.
 
 ### D-106: The RLS negative test runs in CI against the dev project
 **Decision.** Keeps D-73's access model and changes where its test runs. A workflow runs `apps/api`'s `test:rls` against the dev project on every pull request that touches `supabase/` or `apps/api/`, with the dev project's URL, publishable key and secret key as repository secrets. The stable project's secret key never reaches GitHub.
@@ -796,6 +799,25 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** A failed `reprocess` or `blur_region` left a published photo with its previous files, which can still show a face that was just made Do Not Publish or just blurred. This fails closed, like D-104: a missing photo is visible and fixable, and a leaked face is neither.
 **Rejected.** Keeping the previous files, D-103's first answer. Letting the `media` policy pass the unpublished row so Realtime removes it live, which would also hand members rows that were never processed, against the Realtime test in Handbook §11.3.
 **Cost.** The photo is gone from the album until someone re-queues the job, and only the log says so, and Sentry once the worker has it. A URL already signed stays valid for up to an hour, and a phone that already shows the photo keeps it until its next fetch.
+
+### D-109: Auth rulings from S-01's read-back
+**Decision.** Amends D-35, D-94 and D-105. Ukasha ruled on each of these on 2026-09-24.
+- A `security definer` trigger on `auth.users` creates the `profile` row from the `full_name` the app sends as signup metadata. It trims the name and refuses one outside 1 to 80 characters, so that signup fails and no account exists without a profile.
+- Email confirmation is off in both Supabase projects, because the invite path (spec §4.1) and D-61's pre-signed phones need a session straight after signup. Passwords need at least 8 characters.
+- The recovery email links to `momentlens://reset-password`, allow-listed in both projects, through supabase-js's PKCE flow. The link works on the phone that asked for it, and the reset screen says so when it fails anywhere else.
+- Reset mail goes through Supabase's built-in sender, which delivers only to the project team's addresses, 2 messages an hour (checked 2026-09-24). A demo beat that shows a reset needs custom SMTP first.
+- The API verifies a JWT with supabase-js `getClaims`. Both projects sign with an asymmetric key, so the check runs against the cached JWKS with no call to Auth.
+- The app signs out with `local` scope, so the account's other device stays signed in (spec §4.1). On a 401 it refreshes the session once and retries the request once. It shows Forced Logout only when Supabase rejects the refresh token. A network error never logs anyone out.
+- A Do Not Publish user's avatar is hidden from everyone, the user included (D-35). Otherwise it reaches the same people as `profile.full_name`, so a Photographer sees no other member's (D-08).
+- S-01 builds no profile photo upload. S-20 builds it, for signup (spec §2.1.1) and for Settings, because setting one can create the subject and the `profile` reference with its `reference_process` message (arch:face_reference).
+- Signup ends at Home. S-31's consent gate blocks any account with no `consent` row for the current policy version, so it also catches the accounts made before it lands.
+- `ErrorResponse` is written in S-01's schema PR, as Handbook §5.3 says. D-94 placed it before S-01.
+- The app keeps the Supabase session in MMKV. S-01 adds `@supabase/supabase-js` 2.116.0 to `apps/mobile`, the version `apps/api` already runs, and `@aws-sdk/client-s3` with `@aws-sdk/s3-request-presigner` to `apps/api`.
+- S-01's one endpoint is `GET /profiles/me`. It returns the caller's profile, with the avatar from the one avatar function.
+- `profile` and `subject` reference `auth.users` with `ON DELETE CASCADE`. `SET NULL` would turn a deleted account's subject into a Proxy Blur subject (D-63). `subject.user_id` is unique where it is not null. `notify_approval` and `notify_album` default to true.
+**Why.** S-01's read-back found each one unstated or contradicted.
+**Rejected.** Creating the profile with an API call after `signUp`, which leaves an account with no profile when the app dies in between. `getUser` on every request, a round trip to Auth each time. supabase-js's default global sign-out, which logs out the other device. Showing a Do Not Publish user their own avatar, which defeats the purpose of hiding it. `expo-secure-store` for the session, a native package and a rebuild on every machine.
+**Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
 
 ## Open items that are not decisions yet
 

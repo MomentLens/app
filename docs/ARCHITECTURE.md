@@ -39,7 +39,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | `face_reference` | The owner, and only their photos. Embeddings never leave the database and the worker (Handbook §5) |
 | `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see; its drawer or the Admin removes it. Only the Admin lists them, with who drew each, in the Review Queue (D-83) |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
-| `profile.avatar_key` | People who share an event with the user, unless the user's subject has Do Not Publish active. Then nobody else, the Admin included (D-35) |
+| `profile.avatar_key` | The user, and the same people as `profile.full_name`, so a Photographer sees no other member's (D-08). Nobody at all once the user's subject has Do Not Publish active, the user and the Admin included (D-35, D-109) |
 | `profile.full_name` | Active members of an event the user belongs to, and that event's Admin while the user's join request is pending. Do Not Publish does not hide it (D-35). A Photographer sees no other member's name, since the name list is the guest list (D-08) |
 | `health_check` | The API only, for `GET /health`. RLS is on with no policy, so the publishable key reads no rows, and both the keep-alive and `apps/api/tests/integration/rls.test.ts` check that |
 
@@ -52,14 +52,15 @@ Planned, not migrated, except `health_check`. Table names are singular snake_cas
 ### `profile`
 One row per auth user, keyed by `user_id`.
 - `full_name`, `avatar_key` (§4.2)
-- `notify_approval`, `notify_album` for the two push channels (§4.16, §4.19). The sender checks them before sending. "Upload over Mobile Data" and the default Viewfinder mode are not here; they live on the phone (D-105)
+- Created by a trigger on `auth.users` from the signup's `full_name`, trimmed and 1 to 80 characters, so every account has one. `ON DELETE CASCADE` to `auth.users` (D-109)
+- `notify_approval`, `notify_album` for the two push channels (§4.16, §4.19). The sender checks them before sending. "Upload over Mobile Data" and the default Viewfinder mode are not here; they live on the phone (D-105). Both default to true (D-109)
 
 ### `push_token`
 - `user_id`, `expo_push_token`
 
 ### `subject`
-The identity that reference photos and Do Not Publish attach to, split from the account in the first migration (D-63).
-- `user_id`, nullable. Null only for the deferred Proxy Blur
+The identity that reference photos and Do Not Publish attach to, split from the account in S-01's migration, the first after `health_check` (D-63).
+- `user_id`, nullable, unique where not null, `ON DELETE CASCADE` to `auth.users` (D-109). Null only for the deferred Proxy Blur
 - `dnp_activated_at`, nullable. Set once and never cleared (D-31)
 - Created when a user adds their first reference or profile photo. Activation needs at least one accepted `face_reference` row, and while Do Not Publish is active the API refuses to delete the last one (D-56, D-87)
 
@@ -69,6 +70,7 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 - The API inserts the row as `pending` when the photo is uploaded. `reference_process` sets `accepted` with the embedding when it finds exactly one face, and `rejected` with the reason otherwise. Only `accepted` rows are matched against or counted (D-87, D-91)
 - At most 5 `reference` rows per subject that are not rejected (§4.2). A new profile photo does not replace the `profile` reference once Do Not Publish is active (§4.2)
 - A `profile` row's `photo_key` is the profile's `avatar_key` at the time it was set: the same object, never a copy
+- Setting a profile photo is one SQL function called with `rpc` (D-95). It writes `avatar_key`, creates the subject if there is none, and while Do Not Publish is off inserts the `profile` reference and sends its `reference_process` message. S-20 builds it (D-109)
 - When the owner removes a reference, the API deletes the row, which takes its embedding, and deletes its object unless it is the profile photo still in use. Then it enqueues `reprocess` for the subject
 - There are no auto-added references (D-83)
 
@@ -267,6 +269,7 @@ Plan (S-26): about 30 photos of the three team members in varied light, same-per
 - **Regions, and why they are permanent.** Both Supabase projects are in `eu-central-1` (Frankfurt) and both buckets carry the `weur` location hint, matching the Nuremberg server. Neither can be corrected later. A Supabase project's region is fixed at creation, and R2 honors a location hint only the first time a bucket of that name is created, so deleting `momentlens-dev` and recreating it keeps the original location.
 - **Demo-week fallback.** The rotated standby (D-79). Its `/srv/momentlens/.env` has to carry the stable project and bucket rather than a copy of the development server's, because the demo build logs in against stable.
 - **Supabase keep-alive.** `.github/workflows/keepalive.yml`, daily at 04:17 UTC with a manual trigger, reads `health_check` in both projects through PostgREST with the publishable key on `apikey` alone (D-67). It fails the run on anything but 200, and when the response is not empty, because a row reaching the publishable key means RLS is broken. The stable project sits unused until the demo stack goes up and would pause without it. One trap: GitHub disables scheduled workflows in a public repository after 60 days with no repository activity, which stops this silently. `gh workflow enable keepalive.yml` brings it back.
+- **Supabase Auth.** Both projects run the same settings, set by hand in each dashboard, and `supabase/config.toml` mirrors them for a local stack (D-109). Email confirmation is off, passwords need 8 characters, and `momentlens://reset-password` is in the redirect allow-list. Each project signs JWTs with an asymmetric key, so the API's `getClaims` checks tokens locally. Recovery mail goes through the built-in sender, which delivers only to the project team's addresses, 2 messages an hour. The access token lives 3600 seconds and refreshes itself. On the free plan refresh tokens never expire, and session time-box and inactivity timeout are Pro features, so a session ends at sign-out, a password change or a rejected refresh token (checked 2026-09-24). S-01's done stage confirms both dashboards match.
 - **Mobile builds.** EAS profiles in `apps/mobile/eas.json`. `development` and `preview` use the dev environment variables, `production` uses stable. All three build an Android APK with internal distribution (D-61). The EAS project is `@momentlens/momentlens` (ID `5b7a8232-bb75-49ce-9e3a-64f52894e276`), owned by the `momentlens` organization. The app is MomentLens, with the URL scheme `momentlens` and `me.momentlens.app` as both the iOS bundle ID and the Android package.
 - **Error reporting.** Sentry for Education, activated in September 2026 through the GitHub Student Developer Pack and free for one year. The organization is `momentlens` in the EU region (`de.sentry.io`), with the projects `momentlens-api` and `momentlens-app`. Both report uncaught errors only, with no tracing, no replay, no screenshots and no personal data. Each event carries an environment: `local` on a developer's machine, the EAS environment name in an EAS build, `development` from the dev server and `production` from the demo stack. The API sets it with `SENTRY_ENVIRONMENT` in `/srv/momentlens/.env`, and EAS builds with `EXPO_PUBLIC_SENTRY_ENVIRONMENT`. The worker has no Sentry yet.
 - **Standby.** Not provisioned. Azure for Students, then AWS, then GCP, one credit at a time across the three members, with the VM created for the Phase 7 rehearsal and for demo week only (D-79). Two of Handbook §13's three criteria are met: `scripts/provision.sh` exists, and the DNS record is the bullet above. The rehearsal is still owed.
