@@ -1,14 +1,32 @@
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { Button } from '@/components/ui/button';
 import { BottomTabInset, MaxContentWidth } from '@/constants/theme';
+import { logout } from '@/features/auth/logout';
 import { useHealth } from '@/hooks/use-health';
+import { useMyProfile } from '@/hooks/use-my-profile';
 import { API_URL } from '@/lib/api';
 
 // P0-4's proof that a phone reaches the deployed API and the API reaches Supabase, and the first
-// screen on P0-6's tokens. S-08 replaces it with the real home screen.
+// screen on P0-6's tokens. S-01 adds who is signed in, through the API's first authenticated
+// endpoint, and a Log out button that stays here until Settings has one (spec §4.19). S-08
+// replaces the screen with the real home screen.
 export default function HomeScreen() {
   const health = useHealth();
+  const profile = useMyProfile();
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  async function logOut() {
+    setLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      // Normally this screen is gone by now, because logging out closes the signed-in group.
+      setLoggingOut(false);
+    }
+  }
 
   return (
     <View className="flex-1 flex-row justify-center bg-background">
@@ -20,6 +38,10 @@ export default function HomeScreen() {
           <Text className="font-caption text-caption text-textSecondary">
             {API_URL ?? 'EXPO_PUBLIC_API_URL is not set'}
           </Text>
+
+          <View className="gap-3 rounded-2xl border border-border bg-surface p-6">
+            <SignedInAs profile={profile} />
+          </View>
 
           <View className="gap-3 rounded-2xl border border-border bg-surface p-6">
             <HealthResult health={health} />
@@ -34,8 +56,50 @@ export default function HomeScreen() {
               {health.isFetching ? 'Checking' : 'Check again'}
             </Text>
           </Pressable>
+
+          <Button
+            label={loggingOut ? 'Logging out' : 'Log out'}
+            variant="quiet"
+            busy={loggingOut}
+            onPress={() => void logOut()}
+          />
         </View>
       </SafeAreaView>
+    </View>
+  );
+}
+
+function SignedInAs({ profile }: { profile: ReturnType<typeof useMyProfile> }) {
+  if (profile.status === 'pending') {
+    return (
+      <View className="flex-row items-center gap-3">
+        <ActivityIndicator className="text-accent" />
+        <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
+          Loading your profile
+        </Text>
+      </View>
+    );
+  }
+  if (profile.status === 'error') {
+    return (
+      <>
+        <Text className="font-h2 text-h2 text-danger">Your profile could not be loaded</Text>
+        <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
+          {profile.error.message}
+        </Text>
+        <Button
+          label={profile.isFetching ? 'Trying again' : 'Try again'}
+          variant="secondary"
+          busy={profile.isFetching}
+          onPress={() => void profile.refetch()}
+        />
+      </>
+    );
+  }
+  return (
+    <View className="gap-1">
+      <Text className="font-caption text-caption text-textSecondary">Signed in as</Text>
+      <Text className="font-h2 text-h2 text-textPrimary">{profile.data.fullName}</Text>
     </View>
   );
 }
