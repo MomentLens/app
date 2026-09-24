@@ -212,7 +212,7 @@ The rules easiest to get wrong:
 - **`media`**: an **active** member of the event, only **once `processed_at` is set**, or at any time the uploader (D-55). A Photographer sees only their own uploads (spec §4.10). A row without `uploaded_at` is shown to nobody (D-82). Update and delete by the uploader and the event's Admin. `uploader_role_at_upload` is display metadata that drives the Uploader filter and nothing else: never in an authorization check, never in a routing branch (D-13).
 - **`event`**: **active** members only.
 - **`membership`**: a user reads their own rows; the Admin reads every row for their events.
-- **`face_reference`**: the owner sees their own reference photos. Embeddings never leave the database and the worker.
+- **`face_reference`**: the owner sees their own reference photos until Do Not Publish is active, and after that nobody sees them (D-109). Embeddings never leave the database and the worker.
 - **`face` and `dnp_subject`**: only through the viewer-scoped rule, root invariant 4. A Do Not Publish subject learns they are in a photo; no other viewer learns who is. An endpoint that returns faces for a photo omits the subject identity of a Do Not Publish face unless the requester is that subject, and the People filter leaves those subjects out the same way (spec §4.11.3). Implement it as a predicate parameterized by the requesting user, never by omitting the row at write time. The wrong version throws nothing and returns nothing to Find My Photos for exactly the users the feature exists for (D-46).
 - **`subject`**: the person a blur applies to, with a **nullable** foreign key to the auth user, from the first migration (D-63).
 
