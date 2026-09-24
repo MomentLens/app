@@ -1,8 +1,26 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
+import {
+  AuthApiError,
+  AuthRefreshDiscardedError,
+  AuthRetryableFetchError,
+} from '@supabase/supabase-js';
 
 import type * as ApiModule from '@/lib/api';
 
 type Api = typeof ApiModule;
+
+type SessionResult = {
+  data: { session: { access_token: string } | null };
+  error: Error | null;
+};
+
+// The three auth-js calls api.ts makes. Each test says what they answer.
+const mockAuth = {
+  getSession: jest.fn<() => Promise<SessionResult>>(),
+  refreshSession: jest.fn<() => Promise<SessionResult>>(),
+  signOut: jest.fn((_options?: { scope?: string }) => Promise.resolve({ error: null })),
+};
+jest.mock('@/lib/supabase', () => ({ supabase: { auth: mockAuth } }));
 
 const BASE_URL = 'https://api.example.test/';
 const originalFetch = globalThis.fetch;
@@ -63,6 +81,7 @@ function neverAnswers() {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   jest.useRealTimers();
+  jest.clearAllMocks();
   delete process.env.EXPO_PUBLIC_API_URL;
 });
 
@@ -166,5 +185,199 @@ describe('getHealth', () => {
     const error = await api.getHealth().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(api.ApiError);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('getMyProfile', () => {
+  const USER_ID = '5f3a4c2e-8b1d-4e6f-9a7c-2d1e0b3f4a5c';
+  const profile = { userId: USER_ID, fullName: 'Ayesha Khan', avatar: null };
+
+  function signedIn(accessToken: string): SessionResult {
+    return { data: { session: { access_token: accessToken } }, error: null };
+  }
+
+  function noSession(error: Error | null): SessionResult {
+    return { data: { session: null }, error };
+  }
+
+  function noSessionBody() {
+    return { error: { code: 'no_session', message: 'Missing, invalid or expired access token' } };
+  }
+
+  // Answers each call with the next status and body in the list.
+  function answersInTurn(...answers: [number, unknown][]) {
+    let call = 0;
+    return jest.fn<typeof fetch>(() => {
+      const [status, body] = answers[Math.min(call, answers.length - 1)]!;
+      call += 1;
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve(body),
+      } as unknown as Response);
+    });
+  }
+
+  function authorizationOf(fetchMock: ReturnType<typeof answersInTurn>, call: number) {
+    const init = fetchMock.mock.calls[call]?.[1];
+    return (init?.headers as Record<string, string> | undefined)?.Authorization;
+  }
+
+  it('sends the access token as a Bearer header and returns the parsed profile', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([200, profile]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.getMyProfile()).resolves.toEqual(profile);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.test/profiles/me');
+    expect(authorizationOf(fetchMock, 0)).toBe('Bearer token-1');
+  });
+
+  it('refreshes once on a 401 and retries once with the new token', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(signedIn('token-2'));
+    const fetchMock = answersInTurn([401, noSessionBody()], [200, profile]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.getMyProfile()).resolves.toEqual(profile);
+    expect(mockAuth.refreshSession).toHaveBeenCalledTimes(1);
+    expect(authorizationOf(fetchMock, 1)).toBe('Bearer token-2');
+    expect(mockAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('signs this device out when Supabase rejects the refresh token, which shows Forced Logout', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(
+      noSession(new AuthApiError('Invalid Refresh Token', 400, 'refresh_token_not_found')),
+    );
+    const fetchMock = answersInTurn([401, noSessionBody()]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('no_session');
+    expect(mockAuth.signOut).toHaveBeenCalledWith({ scope: 'local' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never signs out when the refresh fails for lack of network', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(
+      noSession(new AuthRetryableFetchError('Network request failed', 0)),
+    );
+    globalThis.fetch = answersInTurn([401, noSessionBody()]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect((error as InstanceType<Api['ApiError']>).status).toBeUndefined();
+    expect(mockAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('never signs out when Supabase rate-limits the refresh, which says nothing about the token', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(
+      noSession(new AuthApiError('Request rate limit reached', 429, 'over_request_rate_limit')),
+    );
+    globalThis.fetch = answersInTurn([401, noSessionBody()]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.getMyProfile()).rejects.toBeInstanceOf(api.ApiError);
+    expect(mockAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('shows an error without signing out when the retry is still 401', async () => {
+    // Supabase accepted the refresh, so the session is alive and the API is the one refusing it,
+    // as it does for a token with no profile row (S-01 card, decided at build mobile).
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(signedIn('token-2'));
+    const fetchMock = answersInTurn([401, noSessionBody()], [401, noSessionBody()]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect((error as InstanceType<Api['ApiError']>).status).toBe(401);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('no_session');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mockAuth.refreshSession).toHaveBeenCalledTimes(1);
+    expect(mockAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('retries with the session another refresh left when this one was discarded', async () => {
+    mockAuth.getSession
+      .mockResolvedValueOnce(signedIn('token-1'))
+      .mockResolvedValueOnce(signedIn('token-3'));
+    mockAuth.refreshSession.mockResolvedValue(noSession(new AuthRefreshDiscardedError()));
+    const fetchMock = answersInTurn([401, noSessionBody()], [200, profile]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.getMyProfile()).resolves.toEqual(profile);
+    expect(authorizationOf(fetchMock, 1)).toBe('Bearer token-3');
+    expect(mockAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('throws a network ApiError without calling the API when the token cannot be refreshed offline', async () => {
+    mockAuth.getSession.mockResolvedValue(
+      noSession(new AuthRetryableFetchError('Network request failed', 0)),
+    );
+    const fetchMock = answersInTurn([200, profile]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect((error as InstanceType<Api['ApiError']>).status).toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockAuth.signOut).not.toHaveBeenCalled();
+  });
+
+  it('throws no_session without calling the API when nobody is signed in', async () => {
+    mockAuth.getSession.mockResolvedValue(noSession(null));
+    const fetchMock = answersInTurn([200, profile]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('no_session');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reads the code from an ErrorResponse body', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([
+      500,
+      { error: { code: 'internal_error', message: 'Something went wrong' } },
+    ]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).status).toBe(500);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('internal_error');
+  });
+
+  it('falls back to the status when the error body carries a code this build has never heard of', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([409, { error: { code: 'from_the_future', message: '' } }]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).status).toBe(409);
+    expect((error as InstanceType<Api['ApiError']>).code).toBeUndefined();
+  });
+
+  it('throws ApiError when a 200 body does not match ProfileResponse', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([200, { userId: 'not-a-uuid', fullName: '', avatar: null }]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.getMyProfile().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect((error as Error).message).toBe(
+      'GET /profiles/me answered with a body this app does not understand.',
+    );
   });
 });
