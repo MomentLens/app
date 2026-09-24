@@ -254,7 +254,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 ### D-35 — Do Not Publish hides the profile photo, not the name
 **Decision.** The image is replaced by a name-initial placeholder everywhere, including for the Admin. The name still appears where a workflow requires it, such as Pending Approvals and the Attendees list.
 **Why.** v9.1 said DNP hides the profile photo "everywhere with no exception, including the Admin," while other sections rendered requester photos and names in the approval queue. An Admin cannot approve a join request from an anonymous row.
-**Amended (see D-109).** "Everywhere" includes the user's own screens, so a Do Not Publish user sees the placeholder on their own profile too.
+**Amended (see D-109).** "Everywhere" means every other viewer. The user still sees their own profile photo.
 
 ### D-36 — GPS is transmitted for verification and not persisted
 **Decision.** Stripped from the image file. A separate reading rides with the pre-flight request, is validated against the sub-event's coordinates, and is not written to the media record.
@@ -808,8 +808,8 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - Reset mail goes through Supabase's built-in sender, which delivers only to the project team's addresses, 2 messages an hour (checked 2026-09-24). A demo beat that shows a reset needs custom SMTP first.
 - The API verifies a JWT with supabase-js `getClaims`. Both projects sign with an asymmetric key, so the check runs against the cached JWKS with no call to Auth.
 - The app signs out with `local` scope, so the account's other device stays signed in (spec §4.1). On a 401 it refreshes the session once and retries the request once. It shows Forced Logout only when Supabase rejects the refresh token. A network error never logs anyone out.
-- A Do Not Publish user's avatar is hidden from everyone, the user included (D-35). Otherwise it reaches the same people as `profile.full_name`, so a Photographer sees no other member's (D-08).
-- Once a user's subject has Do Not Publish active, the API presigns none of their reference photos for anyone, the owner included, the `profile` reference among them. Their reference list shows each as a placeholder with its status. Event photos do not change. Other viewers get the blurred file, and the subject gets their own variant (D-57).
+- A Do Not Publish user's avatar is shown to the user and nobody else, the Admin included (D-35). Otherwise it reaches the same people as `profile.full_name`, so a Photographer sees no other member's (D-08).
+- Reference photos, the `profile` one included, are presigned for their owner and nobody else, with or without Do Not Publish (arch §3).
 - S-01 builds no profile photo upload. S-20 builds it, for signup (spec §2.1.1) and for Settings, because setting one can create the subject and the `profile` reference with its `reference_process` message (arch:face_reference).
 - Signup ends at Home. S-31's consent gate blocks any account with no `consent` row for the current policy version, so it also catches the accounts made before it lands.
 - `ErrorResponse` is written in S-01's schema PR, as Handbook §5.3 says. D-94 placed it before S-01.
@@ -817,8 +817,8 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - S-01's one endpoint is `GET /profiles/me`. It returns the caller's profile, with the avatar from the one avatar function.
 - `profile` and `subject` reference `auth.users` with `ON DELETE CASCADE`. `SET NULL` would turn a deleted account's subject into a Proxy Blur subject (D-63). `subject.user_id` is unique where it is not null. `notify_approval` and `notify_album` default to true.
 **Why.** S-01's read-back found each one unstated or contradicted.
-**Rejected.** Creating the profile with an API call after `signUp`, which leaves an account with no profile when the app dies in between. `getUser` on every request, a round trip to Auth each time. supabase-js's default global sign-out, which logs out the other device. Showing a Do Not Publish user their own avatar or reference photos, which defeats the purpose of hiding them. `expo-secure-store` for the session, a native package and a rebuild on every machine.
-**Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Under Do Not Publish the owner removes a reference without seeing it. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
+**Rejected.** Creating the profile with an API call after `signUp`, which leaves an account with no profile when the app dies in between. `getUser` on every request, a round trip to Auth each time. supabase-js's default global sign-out, which logs out the other device. Hiding a Do Not Publish user's avatar and reference photos from the user too, which protects them from nobody and leaves them managing references they cannot see. `expo-secure-store` for the session, a native package and a rebuild on every machine.
+**Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
 
 ## Open items that are not decisions yet
 
