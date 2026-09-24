@@ -19,6 +19,8 @@
     "*.json": "prettier --write"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1138.0",
+    "@aws-sdk/s3-request-presigner": "3.1138.0",
     "@momentlens/shared-types": "workspace:*",
     "@sentry/node": "10.74.0",
     "@supabase/supabase-js": "2.116.0",
