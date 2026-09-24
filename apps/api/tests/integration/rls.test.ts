@@ -11,7 +11,7 @@
 // repository secrets (D-106).
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, describe, expect, it } from '@jest/globals';
+import { afterAll, describe, expect, it, jest } from '@jest/globals';
 import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
 
@@ -19,6 +19,10 @@ import { createServerClient } from '../../src/db/supabase';
 import { createTokenVerifier } from '../../src/middleware/auth';
 import { createDatabaseCheck } from '../../src/services/health';
 import { createFindProfile } from '../../src/services/profiles';
+
+// A test here makes up to about 20 requests in sequence to the dev project in Frankfurt, two of
+// them account creations, and from a GitHub runner that passed Jest's default 5 seconds.
+jest.setTimeout(30_000);
 
 function projectFromEnv() {
   const url = process.env.SUPABASE_URL;
