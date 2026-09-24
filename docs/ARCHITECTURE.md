@@ -36,7 +36,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | `event` | Active members. **Also an RLS policy**, so opening and closing the album reaches every phone live |
 | `membership` | A user sees their own rows; the Admin sees every row for their events (Handbook §5) |
 | `face`, `dnp_subject` | Only through the viewer-scoped rule (root invariant 4). A Do Not Publish subject learns they are in a photo; no other viewer learns who is. A Photographer gets no `face` rows, for their own photos too (§4.10, D-08) |
-| `face_reference` | The owner, and only their photos. Embeddings never leave the database and the worker (Handbook §5) |
+| `face_reference` | The owner, and only their photos. While Do Not Publish is active, not the `profile` reference's photo, which is the avatar (D-109). Embeddings never leave the database and the worker (Handbook §5) |
 | `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see; its drawer or the Admin removes it. Only the Admin lists them, with who drew each, in the Review Queue (D-83) |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
 | `profile.avatar_key` | The user, and the same people as `profile.full_name`, so a Photographer sees no other member's (D-08). Nobody at all once the user's subject has Do Not Publish active, the user and the Admin included (D-35, D-109) |
@@ -174,7 +174,7 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 - Every file the app sends reaches R2 by a presigned PUT, covers, profile photos and reference photos included (root invariant 5). The worker writes its own files directly.
 - After a regeneration commits, the worker deletes the objects the rows no longer point at, and never `upload_key` or `upload_thumb_key` (D-103).
 - Media files are served by the one image-serving endpoint (D-57). S-13 builds it with the public file only, and S-21 adds the subject's file and the own-variant flag (D-93). With each presigned URL it returns a cache key, built from the object key it signed plus `variant_version`, and whether the file is the requester's own variant, which drives the self-visible marker. It takes a batch of media ids (D-86).
-- Covers and profile photos are presigned by the endpoint that returns the event or the profile, after that endpoint's own check (§1). A reference photo is presigned only for its owner.
+- Covers and profile photos are presigned by the endpoint that returns the event or the profile, after that endpoint's own check (§1). A reference photo is presigned only for its owner, and a `profile` reference not even for them while Do Not Publish is active (§1).
 
 ---
 
