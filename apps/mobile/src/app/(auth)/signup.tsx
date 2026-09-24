@@ -1,11 +1,12 @@
 import { FullName } from '@momentlens/shared-types';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { TextInput, View } from 'react-native';
+import { Text, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { TextField } from '@/components/ui/text-field';
+import { TextLink } from '@/components/ui/text-link';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
 import { supabase } from '@/lib/supabase';
@@ -34,9 +35,10 @@ function check(name: string, email: string, password: string): FieldErrors {
   };
 }
 
-// Create Account (spec §2.1.1): name, email, password. The profile photo is S-20's and consent is
-// S-31's gate (D-109). Email confirmation is off, so signUp returns a session straight away, and
-// SIGNED_IN takes the app to Home.
+// Create Account (spec §2.1.1): name, email, password, laid out as the Figma CreateAccount frame.
+// The frame's optional profile photo is S-20's, and consent is S-31's gate (D-109). Email
+// confirmation is off, so signUp returns a session straight away, and SIGNED_IN takes the app to
+// Home.
 export default function SignupScreen() {
   const router = useRouter();
   const emailRef = useRef<TextInput>(null);
@@ -44,19 +46,19 @@ export default function SignupScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fieldErrors, setFieldErrors] = useState<FieldErrors | null>(null);
+  const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Field errors appear after the first attempt and then follow the typing.
-  const shown = fieldErrors === null ? null : check(name, email, password);
+  const shown = attempted ? check(name, email, password) : null;
 
   async function signUp() {
     if (busy) {
       return;
     }
+    setAttempted(true);
     const errors = check(name, email, password);
-    setFieldErrors(errors);
     const fullName = FullName.safeParse(name);
     if (errors.name || errors.email || errors.password || !fullName.success) {
       return;
@@ -87,11 +89,21 @@ export default function SignupScreen() {
     }
   }
 
+  function toLogin() {
+    if (router.canGoBack()) {
+      router.back();
+    } else {
+      router.replace('/login');
+    }
+  }
+
   return (
-    <AuthScreen title="Create account" subtitle="Your name is how others at the event see you.">
+    <AuthScreen title="Create your account">
       <View className="gap-4">
         <TextField
           label="Full name"
+          icon="user"
+          placeholder="Your full name"
           value={name}
           onChangeText={setName}
           error={shown?.name}
@@ -105,7 +117,9 @@ export default function SignupScreen() {
         />
         <TextField
           ref={emailRef}
-          label="Email"
+          label="Email address"
+          icon="mail"
+          placeholder="name@email.com"
           value={email}
           onChangeText={setEmail}
           error={shown?.email}
@@ -122,10 +136,12 @@ export default function SignupScreen() {
         <TextField
           ref={passwordRef}
           label="Password"
+          icon="lock"
+          placeholder={`At least ${PASSWORD_MIN} characters`}
+          secure
           value={password}
           onChangeText={setPassword}
           error={shown?.password}
-          secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
           autoComplete="new-password"
@@ -138,15 +154,11 @@ export default function SignupScreen() {
 
       {error ? <FormMessage message={error} /> : null}
 
-      <View className="gap-2">
-        <Button label="Create account" busy={busy} onPress={() => void signUp()} />
-        <Button
-          label="I already have an account"
-          variant="quiet"
-          disabled={busy}
-          onPress={() => (router.canGoBack() ? router.back() : router.replace('/login'))}
-        />
-      </View>
+      <Button label="Create account" busy={busy} onPress={() => void signUp()} />
+
+      <Text className="text-center font-caption text-caption text-textSecondary">
+        Already have an account? <TextLink label="Log in" disabled={busy} onPress={toLogin} />
+      </Text>
     </AuthScreen>
   );
 }
