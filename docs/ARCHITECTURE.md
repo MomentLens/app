@@ -9,7 +9,7 @@
 - Anything undecided is marked **Open**. Ask Ukasha instead of filling it in.
 - Ukasha reviews every PR that touches this file.
 
-**Status, 2026-09-16.** One migration exists, for `health_check`, which is infrastructure rather than a feature table. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
+**Status, 2026-09-24.** Two migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. The other is S-01's, for `profile` and `subject`. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
 
 ---
 
@@ -47,22 +47,27 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 
 ## 2. Tables
 
-Planned, not migrated, except `health_check`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
+Planned, not migrated, except `health_check`, `profile` and `subject`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
 
 ### `profile`
-One row per auth user, keyed by `user_id`.
+One row per auth user. `user_id` is the primary key, so the table has no `id`. Migration `supabase/migrations/20260924101332_create_profile_and_subject.sql`.
 - `full_name`, `avatar_key` (§4.2)
 - Created by a trigger on `auth.users` from the signup's `full_name`, trimmed and 1 to 80 characters, so every account has one. `ON DELETE CASCADE` to `auth.users` (D-109)
+- The trigger, `create_profile_on_signup`, runs `create_profile_for_new_user()` as `security definer`. A missing or non-string name, or one the check below rejects, rolls back the insert into `auth.users`, so a failed signup leaves no account. Nothing reads the name from the signup metadata again, because a user can rewrite their own metadata. After signup the row is the only source of the name
+- `profile_full_name_check` trims with `public.trim_whitespace`, which strips what JavaScript's `trim()` strips, and allows 1 to 80 code points. A stored name is then one that `FullName` in `packages/shared-types` accepts unchanged
+- `profile_avatar_key_check` accepts only `users/{user_id}/avatar_{upload_id}.jpg` for the row's own user (§3). No other file can be stored, and so presigned, as someone's avatar
 - `notify_approval`, `notify_album` for the two push channels (§4.16, §4.19). The sender checks them before sending. "Upload over Mobile Data" and the default Viewfinder mode are not here; they live on the phone (D-105). Both default to true (D-109)
+- RLS on with no policy (D-73). `anon` and `authenticated` keep `SELECT`, so a stray query from the app returns empty rows, and lose every write privilege. `service_role` reads and writes
 
 ### `push_token`
 - `user_id`, `expo_push_token`
 
 ### `subject`
-The identity that reference photos and Do Not Publish attach to, split from the account in S-01's migration, the first after `health_check` (D-63).
-- `user_id`, nullable, unique where not null, `ON DELETE CASCADE` to `auth.users` (D-109). Null only for the deferred Proxy Blur
+The identity that reference photos and Do Not Publish attach to, split from the account in S-01's migration, the first after `health_check` (D-63). Migration `supabase/migrations/20260924101332_create_profile_and_subject.sql`.
+- `user_id`, nullable, unique where not null, `ON DELETE CASCADE` to `auth.users` (D-109). Null only for the deferred Proxy Blur. The constraint is a plain `UNIQUE (user_id)`, which treats nulls as distinct
 - `dnp_activated_at`, nullable. Set once and never cleared (D-31)
 - Created when a user adds their first reference or profile photo. Activation needs at least one accepted `face_reference` row, and while Do Not Publish is active the API refuses to delete the last one (D-56, D-87)
+- RLS and grants the same as `profile`
 
 ### `face_reference`
 - `subject_id`, `source` (`profile`, `reference`), `photo_key`
