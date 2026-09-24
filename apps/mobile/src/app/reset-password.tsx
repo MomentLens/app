@@ -4,7 +4,7 @@ import {
 } from '@supabase/supabase-js';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import { ActivityIndicator } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
@@ -15,7 +15,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
 
 // Where momentlens://reset-password lands (D-109). It sits outside both guarded groups, because
-// the link has to open whether or not someone is signed in.
+// the link has to open whether or not someone is signed in. No Figma frame covers it, so it follows
+// the Forgot Password and Confirmation frames.
 //
 // The link carries a PKCE code. Exchanging it needs the verifier resetPasswordForEmail left in
 // this phone's storage, so it works only on the phone that asked. Exchanging signs the user in
@@ -150,32 +151,42 @@ export default function ResetPasswordScreen() {
   if (result !== 'ok') {
     const failure = FAILURES[result];
     return (
-      <AuthScreen title={failure.title}>
-        <FormMessage message={failure.message} />
-        <View className="gap-2">
-          {status === 'signedOut' ? (
-            <Button label="Request a new link" onPress={() => router.replace('/forgot-password')} />
-          ) : null}
-          <Button
-            label={status === 'signedIn' ? 'Go to Home' : 'Back to log in'}
-            variant={status === 'signedOut' ? 'quiet' : 'primary'}
-            onPress={leave}
-          />
-        </View>
-      </AuthScreen>
+      <AuthScreen
+        icon="circle-alert"
+        title={failure.title}
+        subtitle={failure.message}
+        footer={
+          <>
+            {status === 'signedOut' ? (
+              <Button
+                label="Request a new link"
+                onPress={() => router.replace('/forgot-password')}
+              />
+            ) : null}
+            <Button
+              label={status === 'signedIn' ? 'Go to Home' : 'Back to log in'}
+              variant={status === 'signedOut' ? 'secondary' : 'primary'}
+              onPress={leave}
+            />
+          </>
+        }
+      />
     );
   }
 
   return (
     <AuthScreen
       title="Choose a new password"
-      subtitle="Saving it logs your other devices out within the hour.">
+      subtitle="Saving it logs your other devices out within the hour."
+      footer={<Button label="Save password" busy={busy} onPress={() => void save()} />}>
       <TextField
         label="New password"
+        icon="lock"
+        placeholder={`At least ${PASSWORD_MIN} characters`}
+        secure
         value={password}
         onChangeText={setPassword}
         error={fieldError}
-        secureTextEntry
         autoCapitalize="none"
         autoCorrect={false}
         autoComplete="new-password"
@@ -186,8 +197,6 @@ export default function ResetPasswordScreen() {
       />
 
       {error ? <FormMessage message={error} /> : null}
-
-      <Button label="Save password" busy={busy} onPress={() => void save()} />
     </AuthScreen>
   );
 }

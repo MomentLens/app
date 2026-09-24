@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button';
-import { FormMessage } from '@/components/ui/form-message';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { acknowledgeSessionEnded } from '@/stores/auth';
 
@@ -7,15 +6,14 @@ import { acknowledgeSessionEnded } from '@/stores/auth';
 // refresh token, which happens after a password change on another device or when the account's
 // sessions were revoked (arch §7). Saying so keeps the jump to Login from reading as a bug.
 // The root layout shows this screen only while the store says sessionEnded, and leaving it goes to
-// Login.
+// Login. No Figma frame covers it, so it follows the Confirmation frame.
 export default function SessionEndedScreen() {
   return (
-    <AuthScreen title="You have been logged out">
-      <FormMessage
-        tone="info"
-        message="Your session ended. This happens when the password is changed on another device, or when the account is signed out everywhere. Log in again to carry on."
-      />
-      <Button label="Log in" onPress={acknowledgeSessionEnded} />
-    </AuthScreen>
+    <AuthScreen
+      icon="log-out"
+      title="You have been logged out"
+      subtitle="Your session ended. This happens when the password is changed on another device, or when the account is signed out everywhere. Log in again to carry on."
+      footer={<Button label="Log in" onPress={acknowledgeSessionEnded} />}
+    />
   );
 }

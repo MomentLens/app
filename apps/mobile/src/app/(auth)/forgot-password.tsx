@@ -1,6 +1,5 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
@@ -9,10 +8,10 @@ import { AuthScreen } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
 import { RESET_PASSWORD_URL, supabase } from '@/lib/supabase';
 
-// Asks Supabase to email a recovery link to momentlens://reset-password (D-109). The link carries
-// a PKCE code that only this phone can exchange, because the verifier it needs stays in this
-// phone's storage. Auth answers the same whether or not an account uses the address, so the sent
-// state never says one does.
+// Asks Supabase to email a recovery link to momentlens://reset-password (D-109), laid out as the
+// Figma Forgot Password and Confirmation frames. The link carries a PKCE code that only this phone
+// can exchange, because the verifier it needs stays in this phone's storage. Auth answers the same
+// whether or not an account uses the address, so the sent state never says one does.
 export default function ForgotPasswordScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -57,25 +56,26 @@ export default function ForgotPasswordScreen() {
 
   if (sentTo !== null) {
     return (
-      <AuthScreen title="Check your email">
-        <FormMessage
-          tone="info"
-          message={`If an account uses ${sentTo}, a reset link is on its way. Open it on this phone: the link does not work on any other device. Only the newest link works.`}
-        />
-        <View className="gap-2">
-          <Button label="Back to log in" onPress={backToLogin} />
-          <Button label="Send another link" variant="quiet" onPress={() => setSentTo(null)} />
-        </View>
-      </AuthScreen>
+      <AuthScreen
+        icon="send"
+        title="Check your email"
+        subtitle={`If an account uses ${sentTo}, a reset link is on its way. Open it on this phone, because it will not work on any other device. Only the newest link works.`}
+        onBack={() => setSentTo(null)}
+        footer={<Button label="Back to log in" variant="secondary" onPress={backToLogin} />}
+      />
     );
   }
 
   return (
     <AuthScreen
-      title="Reset password"
-      subtitle="We will email you a link. Open it on this phone to choose a new password.">
+      title="Reset your password"
+      subtitle="Enter the email tied to your account and we will send you a reset link."
+      onBack={backToLogin}
+      footer={<Button label="Send reset link" busy={busy} onPress={() => void sendLink()} />}>
       <TextField
-        label="Email"
+        label="Email address"
+        icon="mail"
+        placeholder="name@email.com"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
@@ -89,11 +89,6 @@ export default function ForgotPasswordScreen() {
       />
 
       {error ? <FormMessage message={error} /> : null}
-
-      <View className="gap-2">
-        <Button label="Send reset link" busy={busy} onPress={() => void sendLink()} />
-        <Button label="Back to log in" variant="quiet" disabled={busy} onPress={backToLogin} />
-      </View>
     </AuthScreen>
   );
 }
