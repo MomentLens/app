@@ -230,7 +230,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 - **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
 - **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
 - **A 403 on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1).
-- Anything the table does not cover is a 500, which Sentry reports.
+- A failure no other row covers is a 500 with `internal_error`, which Sentry reports. Its `message` names no cause, because the cause goes to Sentry and the logs.
 
 | Status | Means | `code` values so far |
 |---|---|---|
@@ -241,6 +241,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 404 | Not found, or soft-deleted | `not_found` |
 | 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing` |
 | 422 | A limit reached | `event_full`, `too_many_references` |
+| 500 | Anything else, including a dependency the API could not reach | `internal_error` |
 | 503 | A dependency is down | `GET /health` only, with its own body |
 
 ---
