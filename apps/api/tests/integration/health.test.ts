@@ -1,23 +1,17 @@
-import { once } from 'node:events';
-import type { AddressInfo } from 'node:net';
-
 import { describe, expect, it } from '@jest/globals';
 
 import { HealthResponse } from '@momentlens/shared-types';
 
-import { createApp } from '../../src/app';
 import type { DatabaseState } from '../../src/services/health';
+import { startApp, testDeps } from '../support/app';
 
 // Starts the app with a database check fixed to one answer, calls GET /health once, and closes.
 async function getHealth(state: DatabaseState): Promise<Response> {
-  const server = createApp({ checkDatabase: () => Promise.resolve(state) }).listen(0, '127.0.0.1');
-  await once(server, 'listening');
+  const app = await startApp(testDeps({ checkDatabase: () => Promise.resolve(state) }));
   try {
-    const { port } = server.address() as AddressInfo;
-    return await fetch(`http://127.0.0.1:${port}/health`);
+    return await fetch(`${app.baseUrl}/health`);
   } finally {
-    server.close();
-    await once(server, 'close');
+    await app.close();
   }
 }
 
