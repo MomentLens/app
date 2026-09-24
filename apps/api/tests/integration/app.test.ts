@@ -1,29 +1,26 @@
-import { once } from 'node:events';
-import type { Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-
 import { afterAll, beforeAll, expect, it } from '@jest/globals';
 
-import { createApp } from '../../src/app';
+import { ErrorResponse } from '@momentlens/shared-types';
 
-let server: Server;
+import { startApp, testDeps } from '../support/app';
+import type { RunningApp } from '../support/app';
+
+let app: RunningApp;
 let baseUrl: string;
 
 beforeAll(async () => {
-  server = createApp({ checkDatabase: () => Promise.resolve('ok') }).listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const { port } = server.address() as AddressInfo;
-  baseUrl = `http://127.0.0.1:${port}`;
+  app = await startApp(testDeps());
+  baseUrl = app.baseUrl;
 });
 
 afterAll(async () => {
-  server.close();
-  await once(server, 'close');
+  await app.close();
 });
 
-it('answers a route that does not exist with 404', async () => {
+it('answers a route that does not exist with 404 and the one error body', async () => {
   const response = await fetch(`${baseUrl}/no-such-route`);
   expect(response.status).toBe(404);
+  expect(ErrorResponse.parse(await response.json()).error.code).toBe('not_found');
 });
 
 // Checked on a real route, because Express's own 404 handler sets some of these headers itself
