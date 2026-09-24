@@ -9,31 +9,8 @@ import { TextField } from '@/components/ui/text-field';
 import { TextLink } from '@/components/ui/text-link';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
+import { PASSWORD_MIN, signupFieldErrors } from '@/features/auth/validation';
 import { supabase } from '@/lib/supabase';
-
-// Both Supabase projects require this many characters (arch §7).
-const PASSWORD_MIN = 8;
-
-interface FieldErrors {
-  name: string | null;
-  email: string | null;
-  password: string | null;
-}
-
-// FullName is the trigger's own rule (D-109), so a name that passes here is one the database
-// accepts. A name the trigger refused would come back as a 500 that looks like a lost connection.
-function check(name: string, email: string, password: string): FieldErrors {
-  return {
-    name: FullName.safeParse(name).success
-      ? null
-      : name.trim() === ''
-        ? 'Enter your name.'
-        : 'Use 80 characters or fewer.',
-    // Auth checks the address properly. This only catches a field left empty or half typed.
-    email: /^\S+@\S+\.\S+$/.test(email.trim()) ? null : 'Enter your email address.',
-    password: password.length >= PASSWORD_MIN ? null : `Use at least ${PASSWORD_MIN} characters.`,
-  };
-}
 
 // Create Account (spec §2.1.1): name, email, password, laid out as the Figma CreateAccount frame.
 // The frame's optional profile photo is S-20's, and consent is S-31's gate (D-109). Email
@@ -51,14 +28,14 @@ export default function SignupScreen() {
   const [error, setError] = useState<string | null>(null);
 
   // Field errors appear after the first attempt and then follow the typing.
-  const shown = attempted ? check(name, email, password) : null;
+  const shown = attempted ? signupFieldErrors(name, email, password) : null;
 
   async function signUp() {
     if (busy) {
       return;
     }
     setAttempted(true);
-    const errors = check(name, email, password);
+    const errors = signupFieldErrors(name, email, password);
     const fullName = FullName.safeParse(name);
     if (errors.name || errors.email || errors.password || !fullName.success) {
       return;

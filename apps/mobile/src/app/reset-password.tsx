@@ -1,7 +1,3 @@
-import {
-  isAuthPKCECodeVerifierMissingError,
-  isAuthRetryableFetchError,
-} from '@supabase/supabase-js';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator } from 'react-native';
@@ -11,6 +7,8 @@ import { FormMessage } from '@/components/ui/form-message';
 import { TextField } from '@/components/ui/text-field';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
+import { exchangeOnce, type ExchangeResult } from '@/features/auth/reset-link';
+import { PASSWORD_MIN, passwordError } from '@/features/auth/validation';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
 
@@ -22,42 +20,6 @@ import { useAuthStore } from '@/stores/auth';
 // this phone's storage, so it works only on the phone that asked. Exchanging signs the user in
 // with a recovery session, and the form then sets the new password. If the app dies on the form,
 // the recovery session stays signed in and the old password still works (D-109).
-
-// Both Supabase projects require this many characters (arch §7).
-const PASSWORD_MIN = 8;
-
-type ExchangeResult = 'ok' | 'expired' | 'otherPhone' | 'offline';
-
-// auth-js deletes the verifier after any exchange, failed or not, so a second exchange of the same
-// code would find none and wrongly send the user to another phone. Each code is exchanged once per
-// launch, and a remount reuses the answer.
-const exchanges = new Map<string, Promise<ExchangeResult>>();
-
-function exchangeOnce(code: string): Promise<ExchangeResult> {
-  let pending = exchanges.get(code);
-  if (pending === undefined) {
-    pending = supabase.auth.exchangeCodeForSession(code).then(
-      ({ error }): ExchangeResult => {
-        if (error === null) {
-          return 'ok';
-        }
-        if (isAuthPKCECodeVerifierMissingError(error)) {
-          return 'otherPhone';
-        }
-        // The verifier is gone now too, so this link is spent even though the request may never
-        // have reached Supabase.
-        if (isAuthRetryableFetchError(error)) {
-          return 'offline';
-        }
-        // Already used, expired, or older than a link sent after it.
-        return 'expired';
-      },
-      (): ExchangeResult => 'expired',
-    );
-    exchanges.set(code, pending);
-  }
-  return pending;
-}
 
 const FAILURES: Record<Exclude<ExchangeResult, 'ok'>, { title: string; message: string }> = {
   expired: {
@@ -119,8 +81,9 @@ export default function ResetPasswordScreen() {
     if (busy) {
       return;
     }
-    if (password.length < PASSWORD_MIN) {
-      setFieldError(`Use at least ${PASSWORD_MIN} characters.`);
+    const tooShort = passwordError(password);
+    if (tooShort !== null) {
+      setFieldError(tooShort);
       return;
     }
     setBusy(true);
