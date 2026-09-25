@@ -69,7 +69,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73, arch:subject, arch:profile, HB §5.3, D-109 | C | P0-4, P0-6, P0-9 |
-| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17, D-88, arch:event, arch:venue, arch:sub_event, arch:membership, arch §3, D-110 | B | S-01 |
+| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17, D-88, arch:event, arch:venue, arch:sub_event, arch:membership, arch §3, D-110, D-111 | B | S-01 |
 | S-03 | Guest Link join: both invite rows added to S-02's `create_event`, the `momentlens://invite` link, token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17, arch:invite, arch:membership, D-101, D-102 | U | S-02 |
 
 **S-01 writes the first feature migration, and D-63 says what has to be in it.** The `subject` table with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. The row itself is created lazily, when the user adds a first reference or profile photo (arch:subject), so onboarding never needs one. S-01 also writes the one function that presigns `profile.avatar_key`, which returns no URL to anyone but the user once the user's subject has Do Not Publish active (D-35); every later endpoint that returns a person calls it. It builds neither the profile photo step nor the consent screen from spec §2.1.1. S-20 builds the first and S-31 the second, and S-31's gate also catches the accounts made before it (D-109). Its dependencies are P0-4, which closed only once P0-1 to P0-3 worked end to end, the tokens (P0-6) and the development build (P0-9). P0-5's rerun (issue #7) blocks S-18, not this.
@@ -91,7 +91,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17 | B | S-02, S-08 |
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5.1, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
 
-**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing. Deleting and editing follow D-100: delete only a sub-event with no photos and never the last one, and an edit moves nothing. Other phones see a Delay on their next fetch of the event, so there is no Realtime to build. The status function lives in `packages/shared-types`, one pure function the capture button and the API's scan-time check both call, with its unit tests in `apps/api`'s Jest suite.
+**S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing. Deleting and editing follow D-100: delete only a sub-event with no photos and never the last one, and an edit moves nothing. Other phones see a Delay on their next fetch of the event, so there is no Realtime to build. The status function lives in `packages/shared-types`, one pure function the capture button and the API's scan-time check both call, with its unit tests in `apps/api`'s Jest suite. Editing a sub-event also covers its venue and its verification radius, since the event carries neither (D-111).
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
@@ -133,7 +133,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification`, and switching on pre-flight's verification check | §4.5, §4.14, §4.10, D-14, D-36, D-89, arch:venue_verification | U | S-12 |
+| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification`, and switching on pre-flight's verification check | §4.5, §4.14, §4.10, D-14, D-36, D-89, arch:sub_event, arch:venue_verification | U | S-12 |
 | S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, Scan tab, **offline scan record** with its scan time | §4.5, §4.14, §2.5.1, D-17, D-85, arch:venue, arch:venue_verification | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you" | §4.5, §2.5.3, arch:venue_verification | B | S-15, S-06 |
 
