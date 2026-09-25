@@ -82,19 +82,21 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 ### `event`
 - `name`, `type` (`wedding`, `engagement`, `other`), `description`, `cover_key` (D-110)
 - No start or end of its own. The event runs from its first sub-event's start to its last sub-event's end, computed on read, at most 14 days (§4.17, D-88). So it has at least one sub-event
-- `venue_id`, `verification_radius_m` (50 to 2000, default 200, §4.3)
-- `approval_mode` (`auto`, `manual`, default `auto`, §4.4, D-110), `album_open` (false at creation, §2.1)
+- No venue and no verification radius of its own. Each sub-event has both (D-111)
+- `approval_mode` (`auto`, `manual`, default `auto`, §4.4, D-110), chosen on the wizard's first step (D-111), `album_open` (false at creation, §2.1)
 - `create_request_id`, the uuid the app sends with a create. A repeat from the same caller returns the first event (D-110)
 - One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the creator's `admin` membership in one transaction. S-03 adds the invite inserts to it (D-95, D-110)
 - `deleted_at`, `archived_at` (§4.21)
 
 ### `venue`
 - `event_id`, `name`, `lat`, `lng`, `qr_secret` (32 random bytes)
-- Every venue of an event uses the event's `verification_radius_m`. A sub-event's venue is the event's, one already added in the wizard, or a new one (D-110)
+- A sub-event's venue is one an earlier sub-event added in the wizard, or a new one. Every venue is used by at least one sub-event, so an event has at most 15 (D-110, D-111)
+- No radius. Each sub-event at the venue carries its own, so two at one hall may differ (D-111)
 - One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3). The payload carries the venue and its secret; a scan verifies the sub-event at this venue that was In Progress at the scan time (D-85)
 
 ### `sub_event`
 - `event_id`, `name`, `description`, `starts_at`, `ends_at`, `venue_id`
+- `verification_radius_m` (50 to 2000, default 200, §4.3, D-111). The GPS check for this sub-event compares against it (§4.5)
 - At most 15 per event (§4.3). A delay moves `starts_at` and `ends_at`
 - Status is computed on read and never stored: In Progress from `starts_at` until `ends_at` (§4.3, D-88). Inside the event there can be times when none is In Progress. One pure function in `packages/shared-types` computes it for the app and the API (D-105)
 - Deleted only while it has no photos, and never the event's last one. An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the event; there is no Realtime on this table (D-100)
