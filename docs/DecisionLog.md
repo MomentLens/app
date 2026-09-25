@@ -774,6 +774,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** The audit found each one unstated.
 **Cost.** `packages/shared-types` holds one function besides its schemas.
 **Amended (see D-109).** S-01 adds `@aws-sdk/s3-request-presigner`, with `@aws-sdk/client-s3`, for the avatar function, so S-12 finds both installed.
+**Amended (see D-110).** `packages/shared-types` holds a second function, the one that sorts an event into Active, Upcoming or Past.
 
 ### D-106: The RLS negative test runs in CI against the dev project
 **Decision.** Keeps D-73's access model and changes where its test runs. A workflow runs `apps/api`'s `test:rls` against the dev project on every pull request that touches `supabase/` or `apps/api/`, with the dev project's URL, publishable key and secret key as repository secrets. The stable project's secret key never reaches GitHub.
@@ -819,6 +820,29 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** S-01's read-back found each one unstated or contradicted.
 **Rejected.** Creating the profile with an API call after `signUp`, which leaves an account with no profile when the app dies in between. `getUser` on every request, a round trip to Auth each time. supabase-js's default global sign-out, which logs out the other device. Hiding a Do Not Publish user's avatar and reference photos from the user too, which protects them from nobody and leaves them managing references they cannot see. `expo-secure-store` for the session, a native package and a rebuild on every machine.
 **Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
+
+### D-110: Event rulings from S-02's read-back
+**Decision.** Amends D-105. Ukasha ruled on each of these on 2026-09-25.
+- S-02 writes the `membership` migration along with `event`, `venue` and `sub_event`, and creates the creator's `admin` row with the event (D-102). S-03 adds join requests to a table that already exists.
+- One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the Admin's membership in one transaction, as D-95 does for uploads. S-03 adds the two invite inserts to it.
+- The app sends a uuid `requestId` with every create, stored in `event.create_request_id`. A repeat from the same caller returns the first event and creates nothing. Another caller's `requestId` never returns that event.
+- `approval_mode` defaults to `auto`. The approval queue arrives with S-07 in Phase 2, so a `manual` event made before it could let nobody in.
+- The Events tab sorts an event by its span (D-88). Upcoming is before its first sub-event starts, Active runs from then until its last sub-event ends, gaps included, and Past is after that. An archived event is Past whatever its span. The list shows events where the caller's membership is `active` and hides soft-deleted ones. One pure function in `packages/shared-types` does the sorting, beside D-105's sub-event status function.
+- A sub-event's venue is the event's venue, one already added in the wizard, or a new one. Two sub-events at the same hall share one `venue` row and one QR (spec §4.3).
+- One verification radius, `event.verification_radius_m`, applies to all of an event's venues.
+- The cover is optional and is uploaded after the event exists, because its key carries the event's id (arch §3). The Admin gets a presigned PUT from `POST /events/{eventId}/cover-upload`, uploads, then sends the key to `PUT /events/{eventId}/cover`, which HEADs the object and sets `cover_key`. If the upload fails the event has no cover. S-07a replaces a cover through the same two endpoints.
+- The cover never passes through the worker, so a Do Not Publish guest in it shows unblurred to every member. Spec §6.2 defers the fix.
+- Root invariant 3's one endpoint serves media files. A cover or an avatar is presigned by the endpoint that returns its event or profile, after that endpoint's own check (arch §3), as S-01's avatar function already does.
+- The Android venue map uses Google Maps through the `react-native-maps` config plugin, with a key from a Google Cloud project Ukasha owns. The key is restricted to the app's package and signing certificate and never committed. iOS uses Apple Maps and needs no key.
+- Start and end times use `@quidone/react-native-wheel-picker` 1.7.1, which S-02 adds to `apps/mobile`. It is JavaScript only, so no machine rebuilds for it.
+- Times are `timestamptz`, shown in the phone's time zone. The 14-day cap is 336 hours from the first start to the last end. A sub-event may start in the past.
+- `event.type` is `wedding`, `engagement` or `other`. Names of events, venues and sub-events are trimmed, then 1 to 80 characters, and a description is at most 500.
+- `POST /events` checks every limit in its body, so a breach answers 400 `invalid_request`. S-02 adds no error code.
+- `venue.qr_secret` is 32 random bytes. No S-02 endpoint returns it.
+- The wizard's draft lives in memory, so killing the app loses it. S-02 builds no `GET /events/{eventId}`, and creating an event lands on a placeholder until S-08 and S-13 build the event's Home.
+**Why.** S-02's read-back found each one unstated or contradicted.
+**Rejected.** S-03 writing `membership`, which leaves S-02 no way to record its Admin or list anyone's events. Four separate supabase-js inserts, which leave an event with no Admin when the API dies between them. `manual` as the default. A new `venue` row for every sub-event with a custom venue, which prints two QRs for one hall. Address search with no map on Android, which can put the venue 100 m off the hall inside a 200 m radius. `@expo/ui`'s DatePicker, which needs separate iOS and Android code.
+**Cost.** A Google Cloud project with billing turned on, and one native rebuild on all three machines for the map plugin. One column, `event.create_request_id`. A Do Not Publish face in a cover shows to every member until spec §6.2's fix.
 
 ## Open items that are not decisions yet
 
