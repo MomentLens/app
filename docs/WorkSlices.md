@@ -69,12 +69,14 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-01 | Auth: signup, login, password reset, session, forced logout | §4.1, §2.1.1, D-63, arch §1, D-73, arch:subject, arch:profile, HB §5.3, D-109 | C | P0-4, P0-6, P0-9 |
-| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17, D-88, arch:event, arch:venue, arch:sub_event | B | S-01 |
-| S-03 | Guest Link join: both invite rows created with the event, the `momentlens://invite` link, token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17, arch:invite, arch:membership, D-101, D-102 | U | S-02 |
+| S-02 | Event create wizard and Events list (Active/Upcoming/Past) | §4.3, §2.1.2 Phase B, spec §4.17, D-88, arch:event, arch:venue, arch:sub_event, arch:membership, arch §3, D-110 | B | S-01 |
+| S-03 | Guest Link join: both invite rows added to S-02's `create_event`, the `momentlens://invite` link, token resolve, Join Confirmation, approval modes | §2.3.1 Phase A, §2.4, §4.4, arch §1, spec §4.17, arch:invite, arch:membership, D-101, D-102 | U | S-02 |
 
 **S-01 writes the first feature migration, and D-63 says what has to be in it.** The `subject` table with its nullable foreign key to the auth user is created there, not later. It is a column definition today and a migration against live rows once anyone has signed up. The row itself is created lazily, when the user adds a first reference or profile photo (arch:subject), so onboarding never needs one. S-01 also writes the one function that presigns `profile.avatar_key`, which returns no URL to anyone but the user once the user's subject has Do Not Publish active (D-35); every later endpoint that returns a person calls it. It builds neither the profile photo step nor the consent screen from spec §2.1.1. S-20 builds the first and S-31 the second, and S-31's gate also catches the accounts made before it (D-109). Its dependencies are P0-4, which closed only once P0-1 to P0-3 worked end to end, the tokens (P0-6) and the development build (P0-9). P0-5's rerun (issue #7) blocks S-18, not this.
 
-**S-02 writes the `event`, `venue` and `sub_event` migrations**, because the wizard creates all three (spec §2.1.2). The event has no dates of its own; its span comes from its sub-events (D-88). S-04 adds editing, status and Delay on top.
+**S-02 writes the `event`, `venue`, `sub_event` and `membership` migrations and creates the creator's `admin` row**, because the wizard creates all of them and the Events list reads memberships (spec §2.1.2, D-102). One SQL function, `create_event`, does every insert in one transaction (D-110). The event has no dates of its own. Its span comes from its sub-events (D-88). S-04 adds editing, status and Delay on top.
+
+**S-03 adds its two invite inserts to S-02's `create_event`**, so an event has both invites from the moment it exists (D-110). Its read-back also has to settle what a non-member sees before joining. Join Confirmation shows the cover, name, dates and venue (spec §2.3.1), while arch §1 shows an `event` to active members only.
 
 ---
 
@@ -119,7 +121,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 **S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue.
 
-**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration and the `start_upload` and `complete_upload` SQL functions (D-95), and adds `@aws-sdk/s3-request-presigner`, the dependency the team approved for it. It depends on S-03 and S-04 for membership and sub-events, not on S-11, which calls it. Its album-open check ships switched off, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
+**S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration and the `start_upload` and `complete_upload` SQL functions (D-95), and adds `@aws-sdk/s3-request-presigner`, the dependency the team approved for it. It depends on S-03 for joined members and S-04 for sub-events, not on S-11, which calls it. Its album-open check ships switched off, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
 
 **S-13 writes the `media` SELECT policy** that Realtime needs, the first one after `health_check`. It checks membership through a `security definer` function (arch §1, D-73). A human reads it before it merges.
 
