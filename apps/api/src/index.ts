@@ -5,6 +5,7 @@ import { loadEnv, r2Settings } from './config';
 import { createSupabase } from './db/supabase';
 import { createR2 } from './lib/r2';
 import { createTokenVerifier } from './middleware/auth';
+import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createFindProfile } from './services/profiles';
 
@@ -42,13 +43,17 @@ const supabase = createSupabase(config.env);
 // session, because supabase-js would then send the user's token in place of the secret key and
 // RLS would hide every row. Keeping token checks on their own client rules that out.
 const authClient = createSupabase(config.env);
+const r2 = createR2(r2Settings(config.env));
 
 createApp({
   logger,
   checkDatabase: createDatabaseCheck(supabase, logger),
   verifyToken: createTokenVerifier(authClient),
   findProfile: createFindProfile(supabase),
-  presignGet: createR2(r2Settings(config.env)).presignGet,
+  events: createEventStore(supabase),
+  presignGet: r2.presignGet,
+  presignPut: r2.presignPut,
+  objectExists: r2.objectExists,
 }).listen(config.port, (error) => {
   if (error) {
     logger.fatal(error, 'API failed to start');

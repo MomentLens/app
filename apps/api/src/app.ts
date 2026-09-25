@@ -4,14 +4,22 @@ import type { Express } from 'express';
 import helmet from 'helmet';
 import type { Logger } from 'pino';
 
+import {
+  createCoverUploadController,
+  createEventController,
+  listEventsController,
+  setEventCoverController,
+} from './controllers/events';
 import { healthController } from './controllers/health';
 import { getMyProfileController } from './controllers/profiles';
-import type { PresignGet } from './lib/r2';
+import type { ObjectExists, PresignGet, PresignPut } from './lib/r2';
 import { requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
 import { errorHandler, notFound } from './middleware/errors';
+import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
 import { profilesRouter } from './routes/profiles';
+import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { FindProfile } from './services/profiles';
 
@@ -22,7 +30,10 @@ export interface AppDeps {
   checkDatabase: DatabaseCheck;
   verifyToken: VerifyToken;
   findProfile: FindProfile;
+  events: EventStore;
   presignGet: PresignGet;
+  presignPut: PresignPut;
+  objectExists: ObjectExists;
 }
 
 // Built separately from index.ts so tests get an app without a listening port.
@@ -34,6 +45,14 @@ export function createApp(deps: AppDeps): Express {
   const auth = requireAuth(deps.verifyToken);
   app.use(healthRouter(healthController(deps.checkDatabase)));
   app.use(profilesRouter(auth, getMyProfileController(deps.findProfile, deps.presignGet)));
+  app.use(
+    eventsRouter(auth, {
+      create: createEventController(deps.events, deps.presignGet),
+      list: listEventsController(deps.events, deps.presignGet),
+      createCoverUpload: createCoverUploadController(deps.events, deps.presignPut),
+      setCover: setEventCoverController(deps.events, deps.objectExists, deps.presignGet),
+    }),
+  );
   app.use(notFound);
   // After every route and before any other error middleware, so it sees each error a route passes
   // on. It reports errors with a status of 500 or more and hands every error to the next handler,
