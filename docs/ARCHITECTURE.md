@@ -80,14 +80,17 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 - There are no auto-added references (D-83)
 
 ### `event`
-- `name`, `type`, `description`, `cover_key`
+- `name`, `type` (`wedding`, `engagement`, `other`), `description`, `cover_key` (D-110)
 - No start or end of its own. The event runs from its first sub-event's start to its last sub-event's end, computed on read, at most 14 days (§4.17, D-88). So it has at least one sub-event
 - `venue_id`, `verification_radius_m` (50 to 2000, default 200, §4.3)
-- `approval_mode` (`auto`, `manual`, §4.4), `album_open` (false at creation, §2.1)
+- `approval_mode` (`auto`, `manual`, default `auto`, §4.4, D-110), `album_open` (false at creation, §2.1)
+- `create_request_id`, the uuid the app sends with a create. A repeat from the same caller returns the first event (D-110)
+- One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the creator's `admin` membership in one transaction. S-03 adds the invite inserts to it (D-95, D-110)
 - `deleted_at`, `archived_at` (§4.21)
 
 ### `venue`
-- `event_id`, `name`, `lat`, `lng`, `qr_secret`
+- `event_id`, `name`, `lat`, `lng`, `qr_secret` (32 random bytes)
+- Every venue of an event uses the event's `verification_radius_m`. A sub-event's venue is the event's, one already added in the wizard, or a new one (D-110)
 - One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3). The payload carries the venue and its secret; a scan verifies the sub-event at this venue that was In Progress at the scan time (D-85)
 
 ### `sub_event`
@@ -180,6 +183,7 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 - After a regeneration commits, the worker deletes the objects the rows no longer point at, and never `upload_key` or `upload_thumb_key` (D-103).
 - Media files are served by the one image-serving endpoint (D-57). S-13 builds it with the public file only, and S-21 adds the subject's file and the own-variant flag (D-93). With each presigned URL it returns a cache key, built from the object key it signed plus `variant_version`, and whether the file is the requester's own variant, which drives the self-visible marker. It takes a batch of media ids (D-86).
 - Covers and profile photos are presigned by the endpoint that returns the event or the profile, after that endpoint's own check (§1). A reference photo is presigned only for its owner.
+- A cover is uploaded after its event exists. `POST /events/{eventId}/cover-upload` presigns the PUT for the event's Admin, and `PUT /events/{eventId}/cover` HEADs the object and then sets `cover_key` (D-110).
 
 ---
 
