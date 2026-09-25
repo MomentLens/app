@@ -84,8 +84,8 @@ There is no Videographer role, because there is no video. There is no Moderator 
    └── Verification radius (default 200m, adjustable 50m to 2km)
 
    Step 3 — Sub-events
-   ├── At least one and up to 15: name, start and end, venue (inherit or
-   │   custom), description
+   ├── At least one and up to 15: name, start and end, venue (the
+   │   event's, one already added here, or a new one), description
    ├── The event runs from the first start to the last end, capped at a
    │   fixed maximum (§4.17); no tier selection, no upgrade flow
    └── Auto-ordered by start time
@@ -300,6 +300,8 @@ The bottom tab bar is not one static set of tabs. It swaps between a **Global sh
 | Events | Default landing. Active / Upcoming / Past segmented control. "+" in header → Create Event Wizard, visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
 | Scan | Venue Check-In QR only (§4.5). Works standalone, since the QR payload carries its venue, and the server works out which sub-event it verifies from the scan time (D-85). |
 | Profile | Avatar → Account Settings (§4.19). |
+
+The Events tab sorts an event by its span, from its first sub-event's start to its last sub-event's end (D-88). Upcoming is before the span starts, Active is inside it, gaps between sub-events included, and Past is after it. An archived event is Past. The list holds every event where the user's membership is active, and no soft-deleted event (D-110).
 
 **Event shell**, tabs by role:
 
@@ -882,6 +884,7 @@ Reverting Do Not Publish. Face-recognition opt-out. i18n. User bio. Captioning. 
   - **The schema split happens now** even though the feature is deferred: `subject` is its own table with a nullable foreign key to the auth user (D-63).
   - **The contradiction it raises**, that the Admin gains power over somebody else's face, has its answer in D-63: every Admin power points toward privacy.
 - **Blur region rate limiting.** Each blur region applies immediately, so nothing in v1 stops one user drawing many and leaving the Admin a list to remove one at a time. The design: cap at 10 regions per user per event, mark the user each time the Admin removes one of theirs, and disable drawing for that user after two removals. A counter column and one conditional. Deferred because the abuse requires a volume of adversarial users this project will never see, not because the fix is expensive (D-64, D-83).
+- **Blurring a Do Not Publish face in the event cover.** The cover goes from the phone to R2 and never through the worker, so a subject in it shows unblurred to every member (D-110). The fix is a cover job in the worker and a versioned cover key.
 - **A web uploader for photographers**, which is what the realistic 800-frames-on-a-CF-card workflow actually needs. Lowest priority.
 - **The Moderator role** as distinct from Admin.
 - **In-app Notification Center**, drag-and-drop sub-event reordering, photo filters, the Shared Private Album with end-to-end encryption, re-authentication before Admin destructive actions, viewing own event history, adding or cancelling an unplanned sub-event, RSVP and its reminder system, near-duplicate comparison UI, exposure and closed-eye detection.
