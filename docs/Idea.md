@@ -77,20 +77,22 @@ There is no Videographer role, because there is no video. There is no Moderator 
 ```
 5. Tap "+" / "Create New Event"
 6. Event Setup Wizard:
-   Step 1 — Basic info: name, type, cover photo, description
+   Step 1, basic info: name, type, cover photo, description,
+                     Approval Mode (off for Auto-Approve All)
 
-   Step 2 — Venue
-   ├── Venue name, GPS (search or map pin)
-   └── Verification radius (default 200m, adjustable 50m to 2km)
-
-   Step 3 — Sub-events
-   ├── At least one and up to 15: name, start and end, venue (the
-   │   event's, one already added here, or a new one), description
+   Step 2, sub-events
+   ├── At least one and up to 15, each added in an "Add Sub-Event"
+   │   sheet: name, start and end, venue, verification radius
+   ├── Venue: one an earlier sub-event added here, or a new one
+   │   (search or map pin). Sub-events at one hall share its QR (§4.3)
+   ├── Verification radius per sub-event (default 200m, adjustable
+   │   50m to 2km)
    ├── The event runs from the first start to the last end, capped at a
    │   fixed maximum (§4.17); no tier selection, no upgrade flow
-   └── Auto-ordered by start time
+   ├── Auto-ordered by start time
+   └── Next stays disabled until there is one (D-111)
 
-   Step 4 — Review & confirm
+   Step 3, review & confirm
 
 7. Event created → the event's Home, as its Admin. The album is closed to uploads by default
    until the Admin explicitly opens it. Always a manual action, never
@@ -297,7 +299,7 @@ The bottom tab bar is not one static set of tabs. It swaps between a **Global sh
 
 | Tab | Purpose |
 |---|---|
-| Events | Default landing. Active / Upcoming / Past segmented control. "+" in header → Create Event Wizard, visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
+| Events | Default landing. Active / Upcoming / Past segmented control. "+" floating at the bottom right → Create Event Wizard, visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
 | Scan | Venue Check-In QR only (§4.5). Works standalone, since the QR payload carries its venue, and the server works out which sub-event it verifies from the scan time (D-85). |
 | Profile | Avatar → Account Settings (§4.19). |
 
@@ -365,7 +367,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 - **Attendees**: search, filter by role and verification status, row → detail sheet (Change Role, Force Verify, Remove from Event, Block).
 - **Invite**: Guest Link and Photographer Link cards (shortcode prominent, URL secondary, Copy, Share, Revoke & Regenerate), plus one Venue QR per venue (preview, "Download for printing," regenerate).
 - **Sub-events**: deep-links into the Schedule tab rather than duplicating it, since Admin's Delay affordance already lives there.
-- **Event Settings**: edit form (name, description, cover, venue, verification radius, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
+- **Event Settings**: edit form (name, description, cover, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). Venue and verification radius belong to each sub-event and are edited there too (D-111). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
 
 #### 2.5.8 Screens formalized in this pass
 
@@ -470,7 +472,7 @@ A lightweight substitute for a full history: event cards on the global Events li
 - Create event: name, type, cover photo, description.
 - The event runs from its first sub-event's start to its last sub-event's end, capped at a fixed maximum (§4.17). No per-event tier selection.
 - At least one and up to 15 sub-events, auto-ordered by start time.
-- Verification radius configurable from 50m to 2km, default 200m.
+- Each sub-event has its own verification radius, configurable from 50m to 2km, default 200m. The event has none (D-111).
 - Album state (open / closed) is always a manual Admin action.
 - Two role-specific invite links per event (Guest, Photographer), each a URL plus its own 6-character shortcode. No QR image. Both are revocable and regenerable.
 - One Venue Check-In QR per venue. Sub-events at the same venue share it (§4.5).
