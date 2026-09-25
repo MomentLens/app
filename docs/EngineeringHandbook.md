@@ -517,7 +517,7 @@ Also in Phase 0: **Sentry** and the **GitHub Actions keep-alive** for both Supab
 Also in Phase 0, and it is not optional: **spike InsightFace on the server.** Prove that InsightFace, `onnxruntime` and OpenCV import and run one detection on one photo. If this fails, it changes your worker plan, and you want to know in week one rather than month seven. The spike passed on an ARM64 server and on the M1 on 2026-09-15; run it again on the x86-64 server the day it is provisioned.
 
 ### 14.1 Phase 1 — walking skeleton
-Auth (sign up, log in via Supabase Auth), create an event with bare-minimum fields, join via a Guest Link, see it in a list. No QR, no camera, no AI, no offline handling, no polish. This proves the full stack end to end on the real feature set rather than a toy.
+Auth (sign up, log in via Supabase Auth), create an event through spec §2.1.2's wizard, join via a Guest Link, see it in a list. No QR, no camera, no AI, no offline handling, no polish. This proves the full stack end to end on the real feature set rather than a toy.
 
 ### 14.2 Phase 2 — event structure
 The informational schedule with the §4.3 status computation, both role-specific invite links, attendee management. Force Verify waits for Phase 4, where the gate it overrides arrives (S-17). Still mostly CRUD, and that is the point: this is where the service-layer authorization checks and their negative tests become routine before the hard parts arrive (D-73).
