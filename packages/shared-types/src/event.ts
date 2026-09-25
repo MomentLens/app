@@ -8,7 +8,10 @@ export const MAX_SUB_EVENTS = 15;
 /** The event's span, first sub-event start to last sub-event end, is at most 336 hours (D-110). */
 export const MAX_EVENT_SPAN_MS = 14 * 24 * 60 * 60 * 1000;
 
-/** The verification radius in metres, one for all of an event's venues (spec §4.3, D-110). */
+/**
+ * A sub-event's verification radius in metres. Each sub-event has its own and the event has
+ * none (spec §4.3, D-111).
+ */
 export const VERIFICATION_RADIUS_MIN_M = 50;
 export const VERIFICATION_RADIUS_MAX_M = 2000;
 export const VERIFICATION_RADIUS_DEFAULT_M = 200;
@@ -58,6 +61,14 @@ export type EventType = z.infer<typeof EventType>;
 export const MembershipRole = z.enum(['admin', 'photographer', 'guest']);
 export type MembershipRole = z.infer<typeof MembershipRole>;
 
+/**
+ * How a join request is handled (spec §4.4). `auto` lets a joiner in at once, `manual` holds them
+ * as `pending` until the Admin approves. `auto` is the default, because the approval queue arrives
+ * with S-07 and a `manual` event made before it lets nobody in (D-110).
+ */
+export const ApprovalMode = z.enum(['auto', 'manual']);
+export type ApprovalMode = z.infer<typeof ApprovalMode>;
+
 /** A venue as the wizard sends it. `venue.qr_secret` is made by `create_event`, never sent. */
 export const VenueInput = z.object({
   name: EventName,
@@ -66,13 +77,18 @@ export const VenueInput = z.object({
 });
 export type VenueInput = z.infer<typeof VenueInput>;
 
-/** A sub-event as the wizard sends it. `venueIndex` points into the request's `venues`. */
+/**
+ * A sub-event as the wizard sends it. `venueIndex` points into the request's `venues`.
+ * `verificationRadiusM` is this sub-event's own, and the GPS check for it compares against it
+ * (spec §4.5). Two sub-events at one venue may use different radii (D-111).
+ */
 export const SubEventInput = z.object({
   name: EventName,
   description: EventDescription.optional(),
   startsAt: Timestamp,
   endsAt: Timestamp,
   venueIndex: z.int().min(0),
+  verificationRadiusM: z.int().min(VERIFICATION_RADIUS_MIN_M).max(VERIFICATION_RADIUS_MAX_M),
 });
 export type SubEventInput = z.infer<typeof SubEventInput>;
 
@@ -82,9 +98,10 @@ export type SubEventInput = z.infer<typeof SubEventInput>;
  *
  * - `requestId` is a uuid the app makes once per wizard. A repeat from the same caller returns
  *   the first event and creates nothing, so a retry after a timeout never makes a second event.
- * - `venues[0]` is the event's own venue (`event.venue_id`). Every other venue is one a
- *   sub-event chose instead, and must be used by at least one sub-event, so no unused QR is
- *   ever made. Two sub-events at one hall point at one index and share its QR (spec §4.3).
+ * - The event has no venue of its own (D-111). Every venue must be used by at least one
+ *   sub-event, so no unused QR is ever made, and there are at most as many venues as
+ *   sub-events. Two sub-events at one hall point at one index and share its QR (spec §4.3).
+ * - `approvalMode` is `auto` when the app leaves it out (D-110, D-111).
  * - Every check is on the body, so any breach is a 400 `invalid_request` (D-110). A sub-event
  *   may start in the past, and sub-events may overlap (spec §5.3).
  * - The cover is not here. It is uploaded after the event exists, because its key carries the
@@ -96,11 +113,8 @@ export const CreateEventRequest = z
     name: EventName,
     type: EventType,
     description: EventDescription.optional(),
-    verificationRadiusM: z.int().min(VERIFICATION_RADIUS_MIN_M).max(VERIFICATION_RADIUS_MAX_M),
-    venues: z
-      .array(VenueInput)
-      .min(1)
-      .max(MAX_SUB_EVENTS + 1),
+    approvalMode: ApprovalMode.default('auto'),
+    venues: z.array(VenueInput).min(1).max(MAX_SUB_EVENTS),
     subEvents: z.array(SubEventInput).min(1).max(MAX_SUB_EVENTS),
   })
   .superRefine((request, ctx) => {
@@ -139,7 +153,7 @@ export const CreateEventRequest = z
     }
 
     request.venues.forEach((_, i) => {
-      if (i > 0 && !used.has(i)) {
+      if (!used.has(i)) {
         ctx.addIssue({
           code: 'custom',
           path: ['venues', i],
