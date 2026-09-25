@@ -5,6 +5,7 @@
 // the API's esbuild bundle all compile it where it is used, so nothing here may
 // depend on Node or DOM globals.
 export * from './errors';
+export * from './event';
 export * from './health';
 export * from './image';
 export * from './profile';
