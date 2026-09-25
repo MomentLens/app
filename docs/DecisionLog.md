@@ -843,6 +843,21 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** S-02's read-back found each one unstated or contradicted.
 **Rejected.** S-03 writing `membership`, which leaves S-02 no way to record its Admin or list anyone's events. Four separate supabase-js inserts, which leave an event with no Admin when the API dies between them. `manual` as the default. A new `venue` row for every sub-event with a custom venue, which prints two QRs for one hall. Address search with no map on Android, which can put the venue 100 m off the hall inside a 200 m radius. `@expo/ui`'s DatePicker, which needs separate iOS and Android code.
 **Cost.** A Google Cloud project with billing turned on, and one native rebuild on all three machines for the map plugin. One column, `event.create_request_id`. A Do Not Publish face in a cover shows to every member until spec §6.2's fix.
+**Amended (see D-111).** The event's venue and the one radius are gone. Each sub-event carries its own radius, a sub-event's venue is one an earlier sub-event added or a new one, and the wizard sets Approval Mode. The default is still `auto`.
+
+### D-111: Each sub-event has its own radius, and the wizard has three steps
+**Decision.** Amends D-110. Ukasha ruled on each of these on 2026-09-25, after S-02's API build, from the Figma draft of the wizard.
+- Each sub-event has its own verification radius, `sub_event.verification_radius_m`, 50 to 2000 m, default 200. The event has none. The GPS check compares a reading against the active sub-event's radius (spec §4.5), and verification is per sub-event (D-15), so two sub-events at one venue may use different radii. The Venue QR reads no radius (D-85).
+- The wizard has three steps: basic info, sub-events, review (spec §2.1.2). Each sub-event's venue and radius are set in the Add Sub-Event sheet on step 2.
+- An event has no venue of its own, so `event.venue_id` is dropped. A sub-event's venue is one an earlier sub-event added in the wizard, or a new one. Every venue is used by at least one sub-event, so an event has at most 15.
+- The sheet lists the venues earlier sub-events added, beside "Search or pin on map" for a new one, so two sub-events at one hall share one `venue` row and one QR (D-110).
+- Step 1 carries the Approval Mode toggle, off for `auto`. `POST /events` stores `auto` when the app leaves the mode out.
+- Event Settings (spec §2.5.7) loses venue and radius. S-04's sub-event edit changes both.
+- Step 2's Next stays disabled until the event has a sub-event, and the draft's Skip is dropped (D-88).
+- The "+" that opens the wizard floats at the bottom right of the Events tab (spec §2.5.1).
+**Why.** The Figma draft sets venue and radius per sub-event in a sheet, with no venue step. One radius for the whole event gives a small nikkah hall and a large walima lawn the same 200 m.
+**Rejected.** The radius on `venue`, which makes the sheet's slider change it for every sub-event at that venue. Keeping `event.venue_id` as the first sub-event's venue, which nothing reads. Approval Mode in the sub-event sheet, where the draft puts it, since the mode applies to the whole event.
+**Cost.** A `manual` event created before S-07 lands leaves its joiners pending with no Approve button. That hits dev builds only. The S-02 migration had already run on the dev project, so its four tables and two functions are dropped there and the edited migration pushed again. An event has no single place to show on a map.
 
 ## Open items that are not decisions yet
 
