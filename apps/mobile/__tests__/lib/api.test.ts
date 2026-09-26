@@ -381,3 +381,190 @@ describe('getMyProfile', () => {
     );
   });
 });
+
+describe('event endpoints', () => {
+  const EVENT_ID = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const UPLOAD_ID = '7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f';
+  const event = {
+    id: EVENT_ID,
+    name: "Ayesha & Omar's Wedding",
+    type: 'wedding',
+    role: 'admin',
+    cover: null,
+    startsAt: '2026-10-03T13:00:00.000Z',
+    endsAt: '2026-10-03T18:00:00.000Z',
+    archivedAt: null,
+  };
+  const createRequest = {
+    requestId: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b',
+    name: "Ayesha & Omar's Wedding",
+    type: 'wedding' as const,
+    approvalMode: 'auto' as const,
+    venues: [{ name: 'Pearl Continental', lat: 31.5546, lng: 74.3572 }],
+    subEvents: [
+      {
+        name: 'Nikkah',
+        startsAt: '2026-10-03T13:00:00.000Z',
+        endsAt: '2026-10-03T18:00:00.000Z',
+        venueIndex: 0,
+        verificationRadiusM: 200,
+      },
+    ],
+  };
+
+  function signedIn(accessToken: string): SessionResult {
+    return { data: { session: { access_token: accessToken } }, error: null };
+  }
+
+  function answersInTurn(...answers: [number, unknown][]) {
+    let call = 0;
+    return jest.fn<typeof fetch>(() => {
+      const [status, body] = answers[Math.min(call, answers.length - 1)]!;
+      call += 1;
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve(body),
+      } as unknown as Response);
+    });
+  }
+
+  function initOf(fetchMock: ReturnType<typeof answersInTurn>, call: number) {
+    return fetchMock.mock.calls[call]?.[1] ?? {};
+  }
+
+  function headersOf(fetchMock: ReturnType<typeof answersInTurn>, call: number) {
+    return (initOf(fetchMock, call).headers ?? {}) as Record<string, string>;
+  }
+
+  function errorBody(code: string) {
+    return { error: { code, message: 'refused' } };
+  }
+
+  it('POSTs the create request as JSON with the access token and returns the new event', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([201, { event }]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.createEvent(createRequest)).resolves.toEqual({ event });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.test/events');
+    expect(initOf(fetchMock, 0).method).toBe('POST');
+    expect(headersOf(fetchMock, 0)).toMatchObject({
+      Authorization: 'Bearer token-1',
+      'Content-Type': 'application/json',
+    });
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual(createRequest);
+  });
+
+  it('accepts a 200, which is the API returning the first event for a repeated requestId', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([200, { event }]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.createEvent(createRequest)).resolves.toEqual({ event });
+  });
+
+  it('resends the same body, requestId included, when it retries after a 401', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(signedIn('token-2'));
+    const fetchMock = answersInTurn([401, errorBody('no_session')], [201, { event }]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.createEvent(createRequest)).resolves.toEqual({ event });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(initOf(fetchMock, 1).method).toBe('POST');
+    expect(initOf(fetchMock, 1).body).toBe(initOf(fetchMock, 0).body);
+    expect(headersOf(fetchMock, 1).Authorization).toBe('Bearer token-2');
+  });
+
+  it('throws invalid_request for a 400, so the wizard can say the details were refused', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([400, errorBody('invalid_request')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.createEvent(createRequest).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect((error as InstanceType<Api['ApiError']>).status).toBe(400);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('invalid_request');
+  });
+
+  it('throws duplicate for a 409 and never reads an event out of it', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([409, errorBody('duplicate')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.createEvent(createRequest).catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('duplicate');
+  });
+
+  it('GETs the caller events and returns them parsed', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([200, { events: [event] }]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.listEvents()).resolves.toEqual({ events: [event] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.test/events');
+    expect(initOf(fetchMock, 0).method).toBe('GET');
+    expect(initOf(fetchMock, 0).body).toBeUndefined();
+  });
+
+  it('refuses a list whose cover has no cache key, since the app never caches under the URL', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([
+      200,
+      { events: [{ ...event, cover: { url: 'https://r2.example.test/a.jpg' } }] },
+    ]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.listEvents()).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('asks for a cover upload with a bodyless POST on the event path', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const upload = { uploadId: UPLOAD_ID, uploadUrl: 'https://r2.example.test/put?sig=1' };
+    const fetchMock = answersInTurn([200, upload]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.createCoverUpload(EVENT_ID)).resolves.toEqual(upload);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${EVENT_ID}/cover-upload`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('POST');
+    expect(initOf(fetchMock, 0).body).toBeUndefined();
+    expect(headersOf(fetchMock, 0)['Content-Type']).toBeUndefined();
+  });
+
+  it('throws wrong_role when a member who is not the Admin asks for a cover upload', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([403, errorBody('wrong_role')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.createCoverUpload(EVENT_ID).catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('wrong_role');
+  });
+
+  it('sets the cover by sending the uploadId alone, never a key or a URL (root invariant 12)', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const cover = { url: 'https://r2.example.test/get?sig=2', cacheKey: 'events/x/cover_y.jpg' };
+    const fetchMock = answersInTurn([200, { cover }]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.setEventCover(EVENT_ID, UPLOAD_ID)).resolves.toEqual({ cover });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://api.example.test/events/${EVENT_ID}/cover`);
+    expect(initOf(fetchMock, 0).method).toBe('PUT');
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual({ uploadId: UPLOAD_ID });
+  });
+
+  it('throws upload_missing when the API cannot find the uploaded cover in R2', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([409, errorBody('upload_missing')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.setEventCover(EVENT_ID, UPLOAD_ID).catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('upload_missing');
+  });
+});

@@ -1,7 +1,12 @@
 import {
+  CreateCoverUploadResponse,
+  CreateEventResponse,
   ErrorResponse,
   HealthResponse,
+  ListEventsResponse,
   ProfileResponse,
+  SetEventCoverResponse,
+  type CreateEventRequest,
   type ErrorCode,
 } from '@momentlens/shared-types';
 import {
@@ -39,12 +44,20 @@ export class ApiError extends Error {
   }
 }
 
+type Method = 'GET' | 'POST' | 'PUT';
+
 interface RequestOptions {
+  method?: Method;
+  // Sent as JSON. A request without one sends no body and no Content-Type.
+  body?: unknown;
   signal?: AbortSignal;
-  accessToken?: string;
 }
 
-async function request(path: string, { signal, accessToken }: RequestOptions = {}) {
+async function request(
+  path: string,
+  { method = 'GET', body, signal }: RequestOptions = {},
+  accessToken?: string,
+) {
   if (!API_URL) {
     throw new ApiError('EXPO_PUBLIC_API_URL is not set. Add it to apps/mobile/.env, then reload.');
   }
@@ -56,9 +69,14 @@ async function request(path: string, { signal, accessToken }: RequestOptions = {
   if (accessToken !== undefined) {
     headers.Authorization = `Bearer ${accessToken}`;
   }
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
   try {
     return await fetch(`${API_URL.replace(/\/+$/, '')}${path}`, {
+      method,
       headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,
     });
   } catch (error) {
@@ -127,14 +145,15 @@ async function refreshedAccessToken(): Promise<string> {
 }
 
 // A request on behalf of the signed-in user. On a 401 it refreshes the session once and retries
-// once (D-109). A second 401 goes back to the caller as it stands: Supabase accepted the refresh,
+// once (D-109), with the same method and body, so a create retried here carries the same
+// requestId. A second 401 goes back to the caller as it stands: Supabase accepted the refresh,
 // so the session is alive and nobody is logged out for it (S-01 card, decided at build mobile).
-async function authenticatedRequest(path: string, signal?: AbortSignal): Promise<Response> {
-  const first = await request(path, { signal, accessToken: await accessToken() });
+async function authenticatedRequest(path: string, options: RequestOptions = {}): Promise<Response> {
+  const first = await request(path, options, await accessToken());
   if (first.status !== 401) {
     return first;
   }
-  return request(path, { signal, accessToken: await refreshedAccessToken() });
+  return request(path, options, await refreshedAccessToken());
 }
 
 // A body that is not ErrorResponse still says what kind of failure it was through its status. So
@@ -187,9 +206,54 @@ export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
 
 // The caller's own profile (D-109).
 export async function getMyProfile(signal?: AbortSignal): Promise<ProfileResponse> {
-  const response = await authenticatedRequest('/profiles/me', signal);
+  const response = await authenticatedRequest('/profiles/me', { signal });
   if (response.status !== 200) {
     throw await errorFrom('GET /profiles/me', response);
   }
   return parseBody('GET /profiles/me', response, ProfileResponse);
+}
+
+// Creates the event, its venues, its sub-events and the caller's Admin membership (D-110). A 201
+// is a new event and a 200 is the first one again, because this wizard's requestId repeated; the
+// app treats both the same. There is deliberately no signal: a create the screen stops waiting
+// for may still land, and the retry with the same requestId is what finds it.
+export async function createEvent(body: CreateEventRequest): Promise<CreateEventResponse> {
+  const response = await authenticatedRequest('/events', { method: 'POST', body });
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /events', response);
+  }
+  return parseBody('POST /events', response, CreateEventResponse);
+}
+
+// Every event where the caller's membership is active (D-110), in no promised order.
+export async function listEvents(signal?: AbortSignal): Promise<ListEventsResponse> {
+  const response = await authenticatedRequest('/events', { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events', response);
+  }
+  return parseBody('GET /events', response, ListEventsResponse);
+}
+
+// A presigned PUT for a new cover, for the event's Admin only. The API builds the key; the app
+// gets an uploadId and a URL, and never sees the key (root invariant 12).
+export async function createCoverUpload(eventId: string): Promise<CreateCoverUploadResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/cover-upload`;
+  const response = await authenticatedRequest(path, { method: 'POST' });
+  if (response.status !== 200) {
+    throw await errorFrom('POST /events/{eventId}/cover-upload', response);
+  }
+  return parseBody('POST /events/{eventId}/cover-upload', response, CreateCoverUploadResponse);
+}
+
+// Sets the cover once its upload has reached R2. Only the uploadId goes back (root invariant 12).
+export async function setEventCover(
+  eventId: string,
+  uploadId: string,
+): Promise<SetEventCoverResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/cover`;
+  const response = await authenticatedRequest(path, { method: 'PUT', body: { uploadId } });
+  if (response.status !== 200) {
+    throw await errorFrom('PUT /events/{eventId}/cover', response);
+  }
+  return parseBody('PUT /events/{eventId}/cover', response, SetEventCoverResponse);
 }
