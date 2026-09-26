@@ -34,6 +34,8 @@ export function TextField({
 }: TextFieldProps) {
   const [revealed, setRevealed] = useState(false);
   const showPlaceholder = placeholder !== undefined && (value === undefined || value === '');
+  // A multiline field grows from four lines and keeps its text and placeholder at the top.
+  const multiline = input.multiline === true;
 
   return (
     <View className="gap-2">
@@ -41,15 +43,15 @@ export function TextField({
         {label}
       </Text>
       <View
-        className={`min-h-12 flex-row items-center gap-3 rounded-xl border bg-surface px-4 ${error ? 'border-danger' : 'border-border'}`}>
+        className={`min-h-12 flex-row gap-3 rounded-xl border bg-surface px-4 ${multiline ? 'items-start' : 'items-center'} ${error ? 'border-danger' : 'border-border'}`}>
         {icon ? <Icon name={icon} size={18} className="text-textMuted" /> : null}
-        <View className="flex-1 justify-center">
+        <View className={`flex-1 ${multiline ? '' : 'justify-center'}`}>
           {showPlaceholder ? (
             <View
               pointerEvents="none"
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
-              className="absolute inset-0 justify-center">
+              className={`absolute inset-0 ${multiline ? 'pt-3' : 'justify-center'}`}>
               <Text numberOfLines={1} className="font-body text-body text-textMuted">
                 {placeholder}
               </Text>
@@ -60,7 +62,8 @@ export function TextField({
             accessibilityLabel={label}
             value={value}
             secureTextEntry={secure && !revealed}
-            className="px-0 py-3 font-body text-body text-textPrimary"
+            textAlignVertical={multiline ? 'top' : undefined}
+            className={`px-0 py-3 font-body text-body text-textPrimary ${multiline ? 'min-h-24' : ''}`}
             {...input}
           />
         </View>
