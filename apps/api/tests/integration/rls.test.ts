@@ -17,8 +17,8 @@ import { afterAll, describe, expect, it, jest } from '@jest/globals';
 import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
 
-import { MAX_EVENT_SPAN_MS } from '@momentlens/shared-types';
-import type { CreateEventRequest } from '@momentlens/shared-types';
+import { MAX_EVENT_SPAN_MS, VERIFICATION_RADIUS_DEFAULT_M } from '@momentlens/shared-types';
+import type { CreateEventRequest, SubEventInput } from '@momentlens/shared-types';
 
 import { createServerClient } from '../../src/db/supabase';
 import { createTokenVerifier } from '../../src/middleware/auth';
@@ -310,37 +310,46 @@ if (project === null) {
       }
     });
 
+    // A sub-event at the slider's starting radius, unless the case sets its own (D-111).
+    function subEvent(
+      fields: Omit<SubEventInput, 'verificationRadiusM'> & { verificationRadiusM?: number },
+    ): SubEventInput {
+      return { verificationRadiusM: VERIFICATION_RADIUS_DEFAULT_M, ...fields };
+    }
+
     function request(overrides: Partial<CreateEventRequest> = {}): CreateEventRequest {
       return {
         requestId: randomUUID(),
         name: 'RLS Test Wedding',
         type: 'wedding',
         description: '',
-        verificationRadiusM: 150,
+        approvalMode: 'auto',
         venues: [
           { name: 'Pearl Continental', lat: 31.5546, lng: 74.3572 },
           { name: 'Family Home', lat: 31.52, lng: 74.35 },
         ],
         subEvents: [
-          {
+          subEvent({
             name: 'Mehndi',
             description: 'Yellow dress code',
             startsAt: iso(T0),
             endsAt: iso(T0 + 4 * HOUR),
             venueIndex: 1,
-          },
-          {
+            verificationRadiusM: 300,
+          }),
+          subEvent({
             name: 'Baraat',
             startsAt: iso(T0 + 24 * HOUR),
             endsAt: iso(T0 + 30 * HOUR),
             venueIndex: 0,
-          },
-          {
+            verificationRadiusM: 150,
+          }),
+          subEvent({
             name: 'Walima',
             startsAt: iso(T0 + 48 * HOUR),
             endsAt: iso(T0 + 52 * HOUR),
             venueIndex: 0,
-          },
+          }),
         ],
         ...overrides,
       };
@@ -393,7 +402,7 @@ if (project === null) {
       const row = await admin
         .from('event')
         .select(
-          'name, type, description, cover_key, venue_id, verification_radius_m, approval_mode, album_open, create_request_id, deleted_at, archived_at',
+          'name, type, description, cover_key, approval_mode, album_open, create_request_id, deleted_at, archived_at',
         )
         .eq('id', event.id)
         .single();
@@ -404,7 +413,6 @@ if (project === null) {
         // An empty description is stored as none.
         description: null,
         cover_key: null,
-        verification_radius_m: 150,
         approval_mode: 'auto',
         album_open: false,
         create_request_id: body.requestId,
@@ -427,8 +435,6 @@ if (project === null) {
       expect(venueRows).toHaveLength(2);
       const hotel = venueRows.find((v) => v.name === 'Pearl Continental');
       const home = venueRows.find((v) => v.name === 'Family Home');
-      // venues[0] is the event's own venue.
-      expect((row.data as { venue_id: string }).venue_id).toBe(hotel?.id);
       expect([hotel?.lat, hotel?.lng]).toEqual([31.5546, 74.3572]);
       for (const venue of venueRows) {
         // PostgREST returns bytea as \x and its hex: 32 bytes is 64 hex digits.
@@ -438,7 +444,7 @@ if (project === null) {
 
       const subEvents = await admin
         .from('sub_event')
-        .select('name, description, starts_at, ends_at, venue_id')
+        .select('name, description, starts_at, ends_at, venue_id, verification_radius_m')
         .eq('event_id', event.id);
       expect(subEvents.error).toBeNull();
       const byEvent = new Map(
@@ -447,11 +453,20 @@ if (project === null) {
       expect(byEvent.get('Mehndi')).toMatchObject({
         description: 'Yellow dress code',
         venue_id: home?.id,
+        verification_radius_m: 300,
       });
       expect(new Date(byEvent.get('Mehndi')?.starts_at as string).toISOString()).toBe(iso(T0));
-      // Two sub-events at one hall share its one venue row, and so its one QR.
-      expect(byEvent.get('Baraat')).toMatchObject({ description: null, venue_id: hotel?.id });
-      expect(byEvent.get('Walima')).toMatchObject({ venue_id: hotel?.id });
+      // Two sub-events at one hall share its one venue row, and so its one QR, and each keeps
+      // its own radius (D-111).
+      expect(byEvent.get('Baraat')).toMatchObject({
+        description: null,
+        venue_id: hotel?.id,
+        verification_radius_m: 150,
+      });
+      expect(byEvent.get('Walima')).toMatchObject({
+        venue_id: hotel?.id,
+        verification_radius_m: VERIFICATION_RADIUS_DEFAULT_M,
+      });
 
       const members = await admin
         .from('membership')
@@ -466,6 +481,14 @@ if (project === null) {
           last_viewed_at: null,
         },
       ]);
+    });
+
+    it('stores the approval mode the wizard chose', async () => {
+      const a = await createNamedUser();
+      const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+      const row = await admin.from('event').select('approval_mode').eq('id', event.id).single();
+      expect(row.error).toBeNull();
+      expect(row.data).toEqual({ approval_mode: 'manual' });
     });
 
     it('returns the first event when the same caller repeats a requestId', async () => {
@@ -548,12 +571,14 @@ if (project === null) {
         '16 sub-events',
         {
           venues: [{ name: 'Hall', lat: 31.5, lng: 74.3 }],
-          subEvents: Array.from({ length: 16 }, (_, i) => ({
-            name: `Sub-event ${i + 1}`,
-            startsAt: iso(T0 + i * HOUR),
-            endsAt: iso(T0 + i * HOUR + HOUR / 2),
-            venueIndex: 0,
-          })),
+          subEvents: Array.from({ length: 16 }, (_, i) =>
+            subEvent({
+              name: `Sub-event ${i + 1}`,
+              startsAt: iso(T0 + i * HOUR),
+              endsAt: iso(T0 + i * HOUR + HOUR / 2),
+              venueIndex: 0,
+            }),
+          ),
         },
       ],
       [
@@ -561,35 +586,94 @@ if (project === null) {
         {
           venues: [{ name: 'Hall', lat: 31.5, lng: 74.3 }],
           subEvents: [
-            { name: 'First', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 },
-            {
+            subEvent({ name: 'First', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }),
+            subEvent({
               name: 'Last',
               startsAt: iso(T0 + 2 * HOUR),
               endsAt: iso(T0 + MAX_EVENT_SPAN_MS + 1),
               venueIndex: 0,
-            },
+            }),
           ],
         },
       ],
-      ['a radius of 49 m', { verificationRadiusM: 49 }],
-      ['a radius of 2001 m', { verificationRadiusM: 2001 }],
+      ...[49, 2001, 200.5, null].map((radius): [string, Partial<CreateEventRequest>] => [
+        `a sub-event radius of ${radius} m`,
+        {
+          venues: [{ name: 'Hall', lat: 31.5, lng: 74.3 }],
+          subEvents: [
+            {
+              name: 'Nikkah',
+              startsAt: iso(T0),
+              endsAt: iso(T0 + HOUR),
+              venueIndex: 0,
+              // Cast: the contract refuses each of these before the API ever calls the function.
+              verificationRadiusM: radius as unknown as number,
+            },
+          ],
+        },
+      ]),
+      [
+        'a first venue no sub-event uses',
+        {
+          // Two sub-events for two venues, so the venue count passes and only this check fails.
+          subEvents: [
+            subEvent({ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 1 }),
+            subEvent({
+              name: 'Walima',
+              startsAt: iso(T0 + 2 * HOUR),
+              endsAt: iso(T0 + 3 * HOUR),
+              venueIndex: 1,
+            }),
+          ],
+        },
+      ],
+      [
+        'more venues than sub-events',
+        {
+          venues: [
+            { name: 'Hall', lat: 31.5, lng: 74.3 },
+            { name: 'Lawn', lat: 31.6, lng: 74.3 },
+            { name: 'Home', lat: 31.7, lng: 74.3 },
+          ],
+          subEvents: [
+            subEvent({ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }),
+            subEvent({
+              name: 'Walima',
+              startsAt: iso(T0 + 2 * HOUR),
+              endsAt: iso(T0 + 3 * HOUR),
+              venueIndex: 1,
+            }),
+          ],
+        },
+      ],
+      [
+        'an unknown approval mode',
+        { approvalMode: 'invite_only' as CreateEventRequest['approvalMode'] },
+      ],
+      ['no approval mode', { approvalMode: null as unknown as CreateEventRequest['approvalMode'] }],
       [
         'an extra venue no sub-event uses',
         {
-          subEvents: [{ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }],
+          subEvents: [
+            subEvent({ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }),
+          ],
         },
       ],
       [
         'a venue index out of range',
         {
-          subEvents: [{ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 2 }],
+          subEvents: [
+            subEvent({ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 2 }),
+          ],
         },
       ],
       [
         'a sub-event ending when it starts',
         {
           venues: [{ name: 'Hall', lat: 31.5, lng: 74.3 }],
-          subEvents: [{ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0), venueIndex: 0 }],
+          subEvents: [
+            subEvent({ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0), venueIndex: 0 }),
+          ],
         },
       ],
       ['a name with spaces around it', { name: ' Padded ' }],
@@ -628,18 +712,56 @@ if (project === null) {
       expect(twice.error?.code).toBe('23505');
     });
 
+    async function firstVenue(eventId: string): Promise<string> {
+      const venue = await admin
+        .from('venue')
+        .select('id')
+        .eq('event_id', eventId)
+        .limit(1)
+        .single();
+      expect(venue.error).toBeNull();
+      return (venue.data as { id: string }).id;
+    }
+
     it("refuses a sub-event at another event's venue", async () => {
       const a = await createNamedUser();
       const [mine, theirs] = [await createdEvent(a.id), await createdEvent(a.id)];
-      const theirVenue = await admin.from('event').select('venue_id').eq('id', theirs.id).single();
       const result = await admin.from('sub_event').insert({
         event_id: mine.id,
         name: 'Borrowed hall',
         starts_at: iso(T0),
         ends_at: iso(T0 + HOUR),
-        venue_id: (theirVenue.data as { venue_id: string }).venue_id,
+        venue_id: await firstVenue(theirs.id),
       });
       expect(result.error?.code).toBe('23503');
+    });
+
+    it('gives a sub-event written with no radius 200 m, and refuses one outside 50 to 2000', async () => {
+      const a = await createNamedUser();
+      const event = await createdEvent(a.id);
+      const venueId = await firstVenue(event.id);
+      const row = {
+        event_id: event.id,
+        name: 'Added later',
+        starts_at: iso(T0 + 60 * HOUR),
+        ends_at: iso(T0 + 61 * HOUR),
+        venue_id: venueId,
+      };
+
+      const plain = await admin
+        .from('sub_event')
+        .insert(row)
+        .select('verification_radius_m')
+        .single();
+      expect(plain.error).toBeNull();
+      expect(plain.data).toEqual({ verification_radius_m: VERIFICATION_RADIUS_DEFAULT_M });
+
+      for (const radius of [49, 2001]) {
+        const refused = await admin
+          .from('sub_event')
+          .insert({ ...row, verification_radius_m: radius });
+        expect(refused.error?.code).toBe('23514');
+      }
     });
 
     it("sets a cover only inside the event's own cover keys, and never on a deleted event", async () => {

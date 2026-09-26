@@ -13,8 +13,9 @@ import {
   ListEventsResponse,
   MAX_EVENT_SPAN_MS,
   SetEventCoverResponse,
+  VERIFICATION_RADIUS_DEFAULT_M,
 } from '@momentlens/shared-types';
-import type { CreateEventRequest, MembershipRole } from '@momentlens/shared-types';
+import type { CreateEventRequest, MembershipRole, SubEventInput } from '@momentlens/shared-types';
 
 import type { AppDeps } from '../../src/app';
 import type { VerifyToken } from '../../src/middleware/auth';
@@ -231,30 +232,53 @@ function iso(ms: number): string {
   return new Date(ms).toISOString();
 }
 
+// A sub-event at the slider's starting radius, unless the case sets its own (D-111).
+function subEvent(
+  fields: Omit<SubEventInput, 'verificationRadiusM'> & { verificationRadiusM?: number },
+): SubEventInput {
+  return { verificationRadiusM: VERIFICATION_RADIUS_DEFAULT_M, ...fields };
+}
+
 function validRequest(overrides: Partial<CreateEventRequest> = {}): CreateEventRequest {
   return {
     requestId: randomUUID(),
     name: 'Ayesha & Bilal',
     type: 'wedding',
-    verificationRadiusM: 200,
+    approvalMode: 'auto',
     venues: [
       { name: 'Pearl Continental', lat: 31.5546, lng: 74.3572 },
       { name: 'Family Home', lat: 31.52, lng: 74.35 },
     ],
     subEvents: [
-      { name: 'Mehndi', startsAt: iso(T0), endsAt: iso(T0 + 4 * HOUR), venueIndex: 1 },
-      { name: 'Baraat', startsAt: iso(T0 + 24 * HOUR), endsAt: iso(T0 + 30 * HOUR), venueIndex: 0 },
+      subEvent({ name: 'Mehndi', startsAt: iso(T0), endsAt: iso(T0 + 4 * HOUR), venueIndex: 1 }),
+      subEvent({
+        name: 'Baraat',
+        startsAt: iso(T0 + 24 * HOUR),
+        endsAt: iso(T0 + 30 * HOUR),
+        venueIndex: 0,
+      }),
     ],
     ...overrides,
   };
 }
 
 function subEvents(count: number) {
+  return Array.from({ length: count }, (_, i) =>
+    subEvent({
+      name: `Sub-event ${i + 1}`,
+      startsAt: iso(T0 + i * HOUR),
+      endsAt: iso(T0 + i * HOUR + HOUR / 2),
+      venueIndex: 0,
+    }),
+  );
+}
+
+// One venue per sub-event, sub-event i at venue i.
+function venues(count: number) {
   return Array.from({ length: count }, (_, i) => ({
-    name: `Sub-event ${i + 1}`,
-    startsAt: iso(T0 + i * HOUR),
-    endsAt: iso(T0 + i * HOUR + HOUR / 2),
-    venueIndex: 0,
+    name: `Venue ${i + 1}`,
+    lat: 31.5 + i / 100,
+    lng: 74.3,
   }));
 }
 
@@ -349,51 +373,103 @@ describe('POST /events', () => {
         'a span one millisecond over 336 hours',
         validRequest({
           subEvents: [
-            { name: 'First', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 },
-            {
+            subEvent({ name: 'First', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }),
+            subEvent({
               name: 'Last',
               startsAt: iso(T0 + 2 * HOUR),
               endsAt: iso(T0 + MAX_EVENT_SPAN_MS + 1),
               venueIndex: 1,
-            },
+            }),
           ],
         }),
       ],
       [
         'a sub-event ending when it starts',
         validRequest({
-          subEvents: [{ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0), venueIndex: 0 }],
+          subEvents: [
+            subEvent({ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0), venueIndex: 0 }),
+          ],
           venues: [validRequest().venues[0]!],
         }),
       ],
       [
         'a sub-event ending before it starts',
         validRequest({
-          subEvents: [{ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 - 1), venueIndex: 0 }],
+          subEvents: [
+            subEvent({ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 - 1), venueIndex: 0 }),
+          ],
           venues: [validRequest().venues[0]!],
         }),
       ],
-      ['a radius of 49 m', validRequest({ verificationRadiusM: 49 })],
-      ['a radius of 2001 m', validRequest({ verificationRadiusM: 2001 })],
-      ['a fractional radius', validRequest({ verificationRadiusM: 200.5 })],
+      ...[49, 2001, 200.5].map((radius): [string, unknown] => [
+        `a sub-event radius of ${radius} m`,
+        validRequest({
+          subEvents: [
+            subEvent({ name: 'Mehndi', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 1 }),
+            subEvent({
+              name: 'Baraat',
+              startsAt: iso(T0 + 24 * HOUR),
+              endsAt: iso(T0 + 30 * HOUR),
+              venueIndex: 0,
+              verificationRadiusM: radius,
+            }),
+          ],
+        }),
+      ]),
+      [
+        // What a client written for D-110's contract sends: one radius for the event, none on
+        // its sub-events.
+        'a radius on the event and none on its sub-event',
+        {
+          ...validRequest({ venues: [validRequest().venues[0]!] }),
+          verificationRadiusM: 200,
+          subEvents: [{ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }],
+        },
+      ],
+      ['an unknown approval mode', { ...validRequest(), approvalMode: 'invite_only' }],
+      ['a null approval mode', { ...validRequest(), approvalMode: null }],
       [
         'a venue index out of range',
         validRequest({
-          subEvents: [{ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 2 }],
+          subEvents: [
+            subEvent({ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 2 }),
+          ],
         }),
       ],
       [
         'a negative venue index',
         validRequest({
           subEvents: [
-            { name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: -1 },
+            subEvent({ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: -1 }),
           ],
         }),
       ],
       [
+        // The event has no venue of its own, so venues[0] needs a sub-event too (D-111).
+        'a first venue no sub-event uses',
+        validRequest({
+          // Two sub-events for two venues, so the venue count passes and only this check fails.
+          subEvents: [
+            subEvent({ name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 1 }),
+            subEvent({
+              name: 'Walima',
+              startsAt: iso(T0 + 2 * HOUR),
+              endsAt: iso(T0 + 3 * HOUR),
+              venueIndex: 1,
+            }),
+          ],
+        }),
+      ],
+      [
+        '16 venues for 15 sub-events',
+        validRequest({ subEvents: subEvents(15), venues: venues(16) }),
+      ],
+      [
         'an extra venue no sub-event uses',
         validRequest({
-          subEvents: [{ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }],
+          subEvents: [
+            subEvent({ name: 'Walima', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }),
+          ],
         }),
       ],
       ['no venues', validRequest({ venues: [] })],
@@ -407,12 +483,12 @@ describe('POST /events', () => {
         'a time with an offset instead of Z',
         validRequest({
           subEvents: [
-            {
+            subEvent({
               name: 'Mehndi',
               startsAt: '2026-12-10T19:00:00.000+05:00',
               endsAt: iso(T0 + HOUR),
               venueIndex: 0,
-            },
+            }),
           ],
           venues: [validRequest().venues[0]!],
         }),
@@ -459,28 +535,48 @@ describe('POST /events', () => {
       'a span of exactly 336 hours',
       validRequest({
         subEvents: [
-          { name: 'First', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 },
-          {
+          subEvent({ name: 'First', startsAt: iso(T0), endsAt: iso(T0 + HOUR), venueIndex: 0 }),
+          subEvent({
             name: 'Last',
             startsAt: iso(T0 + 2 * HOUR),
             endsAt: iso(T0 + MAX_EVENT_SPAN_MS),
             venueIndex: 1,
-          },
+          }),
         ],
       }),
     ],
-    ['a radius of 50 m', validRequest({ verificationRadiusM: 50 })],
-    ['a radius of 2000 m', validRequest({ verificationRadiusM: 2000 })],
+    ...[50, 2000].map((radius): [string, CreateEventRequest] => [
+      `a sub-event radius of ${radius} m`,
+      validRequest({
+        subEvents: [
+          subEvent({
+            name: 'Nikkah',
+            startsAt: iso(T0),
+            endsAt: iso(T0 + HOUR),
+            venueIndex: 0,
+            verificationRadiusM: radius,
+          }),
+        ],
+        venues: [validRequest().venues[0]!],
+      }),
+    ]),
+    [
+      '15 sub-events at 15 venues',
+      validRequest({
+        subEvents: subEvents(15).map((s, i) => ({ ...s, venueIndex: i })),
+        venues: venues(15),
+      }),
+    ],
     [
       'a sub-event that started in the past',
       validRequest({
         subEvents: [
-          {
+          subEvent({
             name: 'Dholki',
             startsAt: iso(Date.now() - 3 * HOUR),
             endsAt: iso(Date.now() + HOUR),
             venueIndex: 0,
-          },
+          }),
         ],
         venues: [validRequest().venues[0]!],
       }),
@@ -489,8 +585,18 @@ describe('POST /events', () => {
       'overlapping sub-events at one venue',
       validRequest({
         subEvents: [
-          { name: 'Nikkah', startsAt: iso(T0), endsAt: iso(T0 + 2 * HOUR), venueIndex: 0 },
-          { name: 'Rukhsati', startsAt: iso(T0 + HOUR), endsAt: iso(T0 + 3 * HOUR), venueIndex: 0 },
+          subEvent({
+            name: 'Nikkah',
+            startsAt: iso(T0),
+            endsAt: iso(T0 + 2 * HOUR),
+            venueIndex: 0,
+          }),
+          subEvent({
+            name: 'Rukhsati',
+            startsAt: iso(T0 + HOUR),
+            endsAt: iso(T0 + 3 * HOUR),
+            venueIndex: 0,
+          }),
         ],
         venues: [validRequest().venues[0]!],
       }),
@@ -506,10 +612,54 @@ describe('POST /events', () => {
       ...request,
       coverKey: `events/${randomUUID()}/cover_${randomUUID()}.jpg`,
       qrSecret: 'chosen-by-the-client',
-      approvalMode: 'manual',
       userId: B,
+      // D-110's event-wide radius and event venue, which D-111 removed.
+      verificationRadiusM: 2000,
+      venueId: randomUUID(),
     });
     expect(store.creates).toEqual([{ userId: A, request }]);
+  });
+
+  it("passes each sub-event's own radius to the store", async () => {
+    const request = validRequest({
+      subEvents: [
+        subEvent({
+          name: 'Nikkah',
+          startsAt: iso(T0),
+          endsAt: iso(T0 + 2 * HOUR),
+          venueIndex: 0,
+          verificationRadiusM: 150,
+        }),
+        subEvent({
+          name: 'Walima',
+          startsAt: iso(T0 + 24 * HOUR),
+          endsAt: iso(T0 + 28 * HOUR),
+          venueIndex: 0,
+          verificationRadiusM: 600,
+        }),
+      ],
+      venues: [validRequest().venues[0]!],
+    });
+    const response = await send('POST', '/events', 'token-a', request);
+    expect(response.status).toBe(201);
+    expect(store.creates[0]?.request.subEvents.map((s) => s.verificationRadiusM)).toEqual([
+      150, 600,
+    ]);
+  });
+
+  it('passes a manual approval mode to the store', async () => {
+    const request = validRequest({ approvalMode: 'manual' });
+    const response = await send('POST', '/events', 'token-a', request);
+    expect(response.status).toBe(201);
+    expect(store.creates[0]?.request.approvalMode).toBe('manual');
+  });
+
+  it('passes auto to the store when the body leaves the approval mode out', async () => {
+    const body: Record<string, unknown> = { ...validRequest() };
+    delete body.approvalMode;
+    const response = await send('POST', '/events', 'token-a', body);
+    expect(response.status).toBe(201);
+    expect(store.creates[0]?.request.approvalMode).toBe('auto');
   });
 });
 
