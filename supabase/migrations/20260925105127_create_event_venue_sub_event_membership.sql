@@ -18,12 +18,10 @@ create table public.event (
   description text,
   -- events/{event_id}/cover_{upload_id}.jpg, built by the API's one cover key function (arch §3).
   cover_key text,
-  -- The event's own venue, the wizard's venues[0]. The foreign key is added below, once venue
-  -- exists, and waits for the commit, because create_event inserts the event before its venues.
-  venue_id uuid not null,
-  -- One radius for every venue of the event (D-110).
-  verification_radius_m integer not null default 200,
-  -- auto until S-07 builds the approval queue, so no event made before it lets nobody in (D-110).
+  -- No venue_id and no verification_radius_m here. Each sub-event has both (D-111).
+
+  -- The wizard's step 1 toggle picks the mode. The default stays auto, because S-07 builds the
+  -- approval queue and a manual event made before it lets nobody in (D-110, D-111).
   approval_mode text not null default 'auto',
   album_open boolean not null default false,
   -- The uuid the app sends once per wizard. Unique across all events, so a retry finds the event
@@ -50,7 +48,6 @@ create table public.event (
       || '/cover_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$'
     )
   ),
-  constraint event_verification_radius_m_check check (verification_radius_m between 50 and 2000),
   constraint event_approval_mode_check check (approval_mode in ('auto', 'manual')),
   constraint event_create_request_id_key unique (create_request_id)
 );
@@ -73,21 +70,14 @@ create table public.venue (
   constraint venue_lat_check check (lat between -90 and 90),
   constraint venue_lng_check check (lng between -180 and 180),
   constraint venue_qr_secret_check check (octet_length(qr_secret) = 32),
-  -- The target of the two foreign keys below that keep a venue inside its own event.
+  -- The target of sub_event's venue foreign key, which keeps a venue inside its own event.
   constraint venue_id_event_id_key unique (id, event_id)
 );
 
 comment on table public.venue is
-  'A place an event or its sub-events happen, with one Check-In QR (spec §4.3, D-110). RLS on, no policy.';
+  'A place where sub-events of one event happen, with one Check-In QR and no radius (spec §4.3, D-110, D-111). RLS on, no policy.';
 
 create index venue_event_id_idx on public.venue (event_id);
-
--- The event's venue must be one of its own. Deferred to the commit, since create_event inserts the
--- event first and its venues after.
-alter table public.event
-  add constraint event_venue_id_fkey foreign key (venue_id, id)
-  references public.venue (id, event_id)
-  deferrable initially deferred;
 
 create table public.sub_event (
   id uuid primary key default gen_random_uuid(),
@@ -97,6 +87,9 @@ create table public.sub_event (
   starts_at timestamptz not null,
   ends_at timestamptz not null,
   venue_id uuid not null,
+  -- This sub-event's own radius. The GPS check for it compares a reading against it, so two
+  -- sub-events at one venue may differ (spec §4.5, D-111).
+  verification_radius_m integer not null default 200,
   created_at timestamptz not null default now(),
   constraint sub_event_name_check check (
     name = public.trim_whitespace(name) and char_length(name) between 1 and 80
@@ -106,6 +99,7 @@ create table public.sub_event (
   ),
   -- In Progress runs from starts_at until ends_at (spec §4.3), so it needs a moment to run in.
   constraint sub_event_time_check check (ends_at > starts_at),
+  constraint sub_event_verification_radius_m_check check (verification_radius_m between 50 and 2000),
   -- A sub-event's venue belongs to the same event, so its QR never verifies another event.
   constraint sub_event_venue_id_fkey foreign key (venue_id, event_id)
     references public.venue (id, event_id)
@@ -201,10 +195,11 @@ grant execute on function public.list_my_events(uuid) to service_role;
 -- one transaction, so no event exists without its Admin (D-95, D-102, D-110). S-03 adds the invite
 -- inserts here.
 --
--- p_venues is a JSON array of {name, lat, lng}. The first is the event's own venue; every other
--- must be used by a sub-event. p_sub_events is a JSON array of {name, description, starts_at,
--- ends_at, venue_index}, where venue_index points into p_venues from 0. The API sends only values
--- CreateEventRequest parsed, so every refusal here is a bug in the API and reaches the app as a 500.
+-- p_venues is a JSON array of {name, lat, lng}, and every one must be used by a sub-event, since the
+-- event has no venue of its own (D-111). p_sub_events is a JSON array of {name, description,
+-- starts_at, ends_at, venue_index, verification_radius_m}, where venue_index points into p_venues
+-- from 0. p_approval_mode is auto or manual. The API sends only values CreateEventRequest parsed,
+-- so every refusal here is a bug in the API and reaches the app as a 500.
 --
 -- Returns one row, and `outcome` says which:
 --   created   this call made the event; the rest of the row is its summary, as list_my_events
@@ -224,7 +219,7 @@ create function public.create_event(
   p_name text,
   p_type text,
   p_description text,
-  p_verification_radius_m integer,
+  p_approval_mode text,
   p_venues jsonb,
   p_sub_events jsonb
 )
@@ -264,8 +259,9 @@ begin
     raise exception 'An event has 1 to 15 sub-events, got %', v_sub_event_count
       using errcode = 'check_violation';
   end if;
-  if v_venue_count not between 1 and v_sub_event_count + 1 then
-    raise exception 'An event has 1 to % venues, got %', v_sub_event_count + 1, v_venue_count
+  -- Every venue is used by a sub-event, so there are at most as many venues as sub-events.
+  if v_venue_count not between 1 and v_sub_event_count then
+    raise exception 'An event has 1 to % venues, got %', v_sub_event_count, v_venue_count
       using errcode = 'check_violation';
   end if;
   if exists (
@@ -279,14 +275,14 @@ begin
   -- An unused venue would get a QR that verifies nothing.
   if exists (
     select 1
-    from generate_series(1, v_venue_count - 1) as i
+    from generate_series(0, v_venue_count - 1) as i
     where not exists (
       select 1
       from jsonb_array_elements(p_sub_events) as s (value)
       where (s.value ->> 'venue_index')::integer = i
     )
   ) then
-    raise exception 'Every venue after the first must be used by a sub-event'
+    raise exception 'Every venue must be used by a sub-event'
       using errcode = 'check_violation';
   end if;
   -- MAX_EVENT_SPAN_MS in packages/shared-types: 336 hours, first start to last end (D-110).
@@ -300,15 +296,13 @@ begin
 
   v_venue_ids := array(select gen_random_uuid() from generate_series(1, v_venue_count));
 
-  insert into public.event
-    (id, name, type, description, venue_id, verification_radius_m, create_request_id)
+  insert into public.event (id, name, type, description, approval_mode, create_request_id)
   values (
     v_event_id,
     p_name,
     p_type,
     nullif(p_description, ''),
-    v_venue_ids[1],
-    p_verification_radius_m,
+    p_approval_mode,
     p_request_id
   )
   on conflict (create_request_id) do nothing;
@@ -345,14 +339,16 @@ begin
     (v.value ->> 'lng')::double precision
   from jsonb_array_elements(p_venues) with ordinality as v (value, ord);
 
-  insert into public.sub_event (event_id, name, description, starts_at, ends_at, venue_id)
+  insert into public.sub_event
+    (event_id, name, description, starts_at, ends_at, venue_id, verification_radius_m)
   select
     v_event_id,
     s.value ->> 'name',
     nullif(s.value ->> 'description', ''),
     (s.value ->> 'starts_at')::timestamptz,
     (s.value ->> 'ends_at')::timestamptz,
-    v_venue_ids[(s.value ->> 'venue_index')::integer + 1]
+    v_venue_ids[(s.value ->> 'venue_index')::integer + 1],
+    (s.value ->> 'verification_radius_m')::integer
   from jsonb_array_elements(p_sub_events) as s (value);
 
   insert into public.membership (event_id, user_id, role, status)
@@ -365,7 +361,7 @@ begin
 end;
 $$;
 
-revoke execute on function public.create_event(uuid, uuid, text, text, text, integer, jsonb, jsonb)
+revoke execute on function public.create_event(uuid, uuid, text, text, text, text, jsonb, jsonb)
   from public, anon, authenticated;
-grant execute on function public.create_event(uuid, uuid, text, text, text, integer, jsonb, jsonb)
+grant execute on function public.create_event(uuid, uuid, text, text, text, text, jsonb, jsonb)
   to service_role;
