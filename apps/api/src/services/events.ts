@@ -111,7 +111,7 @@ export function createEventParams(userId: string, request: CreateEventRequest) {
     p_name: request.name,
     p_type: request.type,
     p_description: request.description ?? null,
-    p_verification_radius_m: request.verificationRadiusM,
+    p_approval_mode: request.approvalMode,
     p_venues: request.venues.map((venue) => ({
       name: venue.name,
       lat: venue.lat,
@@ -123,6 +123,7 @@ export function createEventParams(userId: string, request: CreateEventRequest) {
       starts_at: subEvent.startsAt,
       ends_at: subEvent.endsAt,
       venue_index: subEvent.venueIndex,
+      verification_radius_m: subEvent.verificationRadiusM,
     })),
   };
 }
