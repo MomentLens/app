@@ -594,6 +594,8 @@ The photos are the product. The chrome around them should recede, not compete.
 
 **Motion.** Purposeful, not decorative. Three worth doing well because they are cheap and high-impact: shutter press feedback (scale plus haptic via `expo-haptics`), a staggered fade-in for photos arriving via Realtime in the album grid, and a custom pull-to-refresh. Use Reanimated worklets (§16). Do not hand-roll screen transitions; Expo Router's native stack transitions already feel platform-correct for free.
 
+**Each platform sets the sizes.** The Figma frames set layout and direction, not measurements. Size and place everything to Apple's Human Interface Guidelines on iOS and to Material 3 on Android: type from the per-platform tokens in `apps/mobile/tailwind.config.js`, touch targets of at least 44pt on iOS and 48dp on Android, each platform's bar heights, and the native pattern where the two differ, such as the iOS 26 tab bar button against Android's FAB (D-112). When a frame and a guideline disagree on size, follow the guideline.
+
 **Do not neglect the unglamorous states.** A disproportionate amount of perceived polish comes from empty albums, loading states, offline banners, and errors. It is easy for a first-time team to skip because it is less fun than the main screens, and it is exactly the gap a demo audience notices.
 
 **Dark mode, done once.** Define color tokens once and reference them everywhere. Never hardcode a hex in a component. Retrofitting dark mode onto scattered hardcoded colors is real, avoidable pain.

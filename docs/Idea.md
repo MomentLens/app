@@ -299,7 +299,7 @@ The bottom tab bar is not one static set of tabs. It swaps between a **Global sh
 
 | Tab | Purpose |
 |---|---|
-| Events | Default landing. Active / Upcoming / Past segmented control. "+" floating at the bottom right → Create Event Wizard, visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
+| Events | Default landing. Active / Upcoming / Past segmented control. "+" → Create Event Wizard: from iOS 26 the round button at the trailing end of the tab bar, on every Global shell tab, and on Android a Material 3 FAB at the bottom right of Events (D-112). Visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
 | Scan | Venue Check-In QR only (§4.5). Works standalone, since the QR payload carries its venue, and the server works out which sub-event it verifies from the scan time (D-85). |
 | Profile | Avatar → Account Settings (§4.19). |
 
