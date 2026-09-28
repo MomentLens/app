@@ -17,6 +17,7 @@ import { showEventsTab, useEventsTab } from '@/features/events/tab-store';
 import { TimingTabs } from '@/features/events/timing-tabs';
 import { useEvents } from '@/features/events/use-events';
 import { useTimingNow } from '@/features/events/use-timing-now';
+import { usePullRefresh } from '@/hooks/use-pull-refresh';
 import { useAuthStore } from '@/stores/auth';
 
 const EMPTY_TAB: Record<EventTiming, { title: string; body: string }> = {
@@ -39,6 +40,7 @@ export function EventsScreen() {
   const userId = useAuthStore((state) => state.userId);
   const tab = useEventsTab((state) => state.tab);
   const events = useEvents();
+  const pull = usePullRefresh(events.refetch);
   const now = useTimingNow(events.data?.events);
   const groups = useMemo(
     () => (events.data ? groupByTiming(events.data.events, now) : null),
@@ -75,10 +77,7 @@ export function EventsScreen() {
           contentContainerClassName="flex-grow gap-3 px-4 pt-1"
           contentContainerStyle={{ paddingBottom: insets.bottom + BottomTabInset + 96 }}
           refreshControl={
-            <RefreshControl
-              refreshing={events.isRefetching}
-              onRefresh={() => void events.refetch()}
-            />
+            <RefreshControl refreshing={pull.refreshing} onRefresh={pull.onRefresh} />
           }>
           {events.isError && events.data ? (
             <FormMessage message="The list could not be refreshed. It shows what was loaded before." />
