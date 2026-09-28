@@ -879,6 +879,20 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Holding every pull request until a teammate is free.
 **Cost.** A mistake that only a second person would catch can reach `main`. `/code-review` knows the code but not the team's intent. The branch protection on `main` requires no approvals and no status checks, so both halves of this rule, the review and the green CI run, are kept by habit, not by GitHub.
 
+### D-114: S-02's build rulings, and deleting an Admin's account
+**Decision.** Ukasha ruled on the first seven on 2026-09-25, during S-02's API build, and they sat on S-02's slice card in #37 until now. The last is from 2026-09-29.
+- An `event.create_request_id` belongs to the account that made the event. Another account sending the same `requestId` gets 409 `duplicate`, and nothing about that event.
+- A repeated create whose event was soft-deleted since answers 404.
+- A valid token for an account deleted since it was issued answers 401 `no_session` on `POST /events`, as `GET /profiles/me` does, so the app shows Forced Logout.
+- An empty event or sub-event description is stored as null.
+- `PUT /events/{eventId}/cover` replaces `cover_key` and deletes nothing. The old cover's object stays in R2 until a slice decides to clean it up.
+- A cover has no size limit.
+- The database does not yet stop an update that changes the Admin's role. The slice that builds role changes adds that guard.
+- Deleting an account deletes its memberships, the Admin's row included, so every event it ran is left with no Admin (D-102). Accounts are deleted by the team on request (spec §4.19). Until a slice builds a handover, the team first deletes each event the account runs, or hands it to another member by hand, and only then deletes the account.
+**Why.** S-02's build found each one unstated, and `docs/ARCHITECTURE.md` recorded the first seven against an issue number that `doc why` cannot follow.
+**Rejected.** Leaving them on the slice card, where only S-02's issue records them. A database rule that refuses to delete an account that is still an event's Admin, which costs a trigger to guard a step the team takes by hand a few times before the demo.
+**Cost.** A replaced cover leaves an orphaned object in R2, and a large cover costs upload time and storage. An account deleted without the manual step leaves Admin-less events that only a hand-written query can repair.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
