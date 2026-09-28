@@ -1,5 +1,5 @@
 import WheelPicker, { withVirtualized, type PickerItem } from '@quidone/react-native-wheel-picker';
-import { useMemo, type Context } from 'react';
+import { useMemo, type Context, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { Icon } from '@/components/ui/icon';
@@ -25,8 +25,18 @@ const DayWheel = withVirtualized(WheelPicker);
 // scrolls itself, so it windows fine inside the sheet's ScrollView. Resetting the context around
 // it, as React Native's own Modal does for its content, drops that false warning; nothing else
 // reads it. Nesting the wheel in a FlatList instead, as the warning suggests, would render it as a
-// plain View that cannot scroll. The static is missing from React Native's TypeScript types.
-const ScrollViewContext = (ScrollView as unknown as { Context: Context<null> }).Context;
+// plain View that cannot scroll. The static is missing from React Native's TypeScript types, so
+// it is read as optional. If a React Native upgrade drops it, the wheel still renders and only the
+// warning comes back.
+const ScrollViewContext = (ScrollView as unknown as { Context?: Context<null> }).Context;
+
+function OwnScroller({ children }: { children: ReactNode }) {
+  return ScrollViewContext ? (
+    <ScrollViewContext.Provider value={null}>{children}</ScrollViewContext.Provider>
+  ) : (
+    children
+  );
+}
 
 const ITEM_HEIGHT = 36;
 const VISIBLE_ITEMS = 5;
@@ -124,7 +134,7 @@ export function DateTimeField({
             className="absolute inset-x-2 rounded-lg bg-textPrimary/5"
           />
           <View className="flex-[2.4]">
-            <ScrollViewContext.Provider value={null}>
+            <OwnScroller>
               <DayWheel
                 data={days}
                 value={parts.day}
@@ -135,7 +145,7 @@ export function DateTimeField({
                 renderOverlay={renderOverlay}
                 enableScrollByTapOnItem
               />
-            </ScrollViewContext.Provider>
+            </OwnScroller>
           </View>
           <View className="flex-1">
             <WheelPicker
