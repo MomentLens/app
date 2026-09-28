@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { Icon } from '@/components/ui/icon';
-import { TextLink } from '@/components/ui/text-link';
 import { prepareCover } from '@/features/events/cover';
 import type { DraftCover } from '@/features/events/draft';
 import { FieldError, FieldLabel } from '@/features/events/wizard-frame';
@@ -82,12 +81,56 @@ export function CoverField({ cover, onChange }: CoverFieldProps) {
         )}
       </Pressable>
       {cover ? (
-        <View className="flex-row gap-4">
-          <TextLink label="Change" onPress={() => void pick()} disabled={preparing} />
-          <TextLink label="Remove" tone="muted" onPress={() => onChange(null)} />
+        <View className="flex-row gap-2">
+          <CoverAction
+            label="Change"
+            accessibilityLabel="Change cover photo"
+            onPress={() => void pick()}
+            disabled={preparing}
+          />
+          <CoverAction
+            label="Remove"
+            accessibilityLabel="Remove cover photo"
+            tone="muted"
+            onPress={() => onChange(null)}
+          />
         </View>
       ) : null}
       <FieldError message={problem} />
     </View>
+  );
+}
+
+interface CoverActionProps {
+  label: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+  tone?: 'accent' | 'muted';
+  disabled?: boolean;
+}
+
+// Change and Remove under the photo. They read as links, like TextLink, but stand on their own, so
+// each gets a full target: 44pt tall on iOS, 48dp on Android (D-112). TextLink stays a Text so it
+// can sit inside a sentence, and a Text has no hit slop.
+function CoverAction({
+  label,
+  accessibilityLabel,
+  onPress,
+  tone = 'accent',
+  disabled = false,
+}: CoverActionProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      className={`justify-center px-2 ios:min-h-11 android:min-h-12 ${disabled ? 'opacity-60' : ''}`}>
+      <Text
+        className={`font-caption text-caption underline ${tone === 'accent' ? 'text-accentText' : 'text-textSecondary'}`}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
