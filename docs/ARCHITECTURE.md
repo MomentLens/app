@@ -9,7 +9,7 @@
 - Anything undecided is marked **Open**. Ask Ukasha instead of filling it in.
 - Ukasha reviews every PR that touches this file.
 
-**Status, 2026-09-24.** Two migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. The other is S-01's, for `profile` and `subject`. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
+**Status, 2026-09-28.** Three migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. S-01's is for `profile` and `subject`, and S-02's for `event`, `venue`, `sub_event` and `membership`. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
 
 ---
 
@@ -47,7 +47,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 
 ## 2. Tables
 
-Planned, not migrated, except `health_check`, `profile` and `subject`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
+Planned, not migrated, except `health_check`, `profile`, `subject`, `event`, `venue`, `sub_event` and `membership`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
 
 ### `profile`
 One row per auth user. `user_id` is the primary key, so the table has no `id`. Migration `supabase/migrations/20260924101332_create_profile_and_subject.sql`.
@@ -80,31 +80,42 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 - There are no auto-added references (D-83)
 
 ### `event`
+Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`, which also creates `venue`, `sub_event` and `membership`.
 - `name`, `type` (`wedding`, `engagement`, `other`), `description`, `cover_key` (D-110)
+- `event_name_check` trims with `public.trim_whitespace` and allows 1 to 80 code points, as `profile_full_name_check` does. `event_description_check` allows null or 1 to 500, and `create_event` stores an empty description as null. The same two checks sit on `venue.name`, `sub_event.name` and `sub_event.description`
+- `event_cover_key_check` accepts only `events/{event_id}/cover_{upload_id}.jpg` for the row's own event (§3). The API presigns the key for every active member, so no other file can be shown to them as the cover
 - No start or end of its own. The event runs from its first sub-event's start to its last sub-event's end, computed on read, at most 14 days (§4.17, D-88). So it has at least one sub-event
 - No venue and no verification radius of its own. Each sub-event has both (D-111)
 - `approval_mode` (`auto`, `manual`, default `auto`, §4.4, D-110), chosen on the wizard's first step (D-111), `album_open` (false at creation, §2.1)
-- `create_request_id`, the uuid the app sends with a create. A repeat from the same caller returns the first event (D-110)
-- One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the creator's `admin` membership in one transaction. S-03 adds the invite inserts to it (D-95, D-110)
+- `create_request_id`, the uuid the app sends with a create, unique across all events. A repeat from the same caller returns the first event and writes nothing. Another caller's repeat gets 409 `duplicate` and nothing about that event. A repeat whose event was soft-deleted since gets 404 (D-110; Ukasha ruled the last two on 2026-09-25, slice card in #37)
+- One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the creator's `admin` membership in one transaction. S-03 adds the invite inserts to it (D-95, D-110). It checks the sub-event count, the venue indexes, that every venue is used, and the 336-hour span again, so a refusal there is an API bug and answers 500
+- `list_my_events(p_user_id)` serves `GET /events`: every event where the user's membership is `active`, soft-deleted ones left out, with the user's role and the span from the sub-events (D-110). An event with no sub-events would come back with a null span, and the API's parse refuses it
+- Both functions take the user as a parameter, so `execute` is granted to `service_role` only. They run as `security invoker`
+- `PUT /events/{eventId}/cover` replaces `cover_key` and deletes nothing, so a replaced cover's object stays in R2 (Ukasha on 2026-09-25, slice card in #37)
 - `deleted_at`, `archived_at` (§4.21)
+- RLS and grants the same as `profile`, on all four of this migration's tables. S-31 adds `event`'s `SELECT` policy for Realtime (§1)
 
 ### `venue`
 - `event_id`, `name`, `lat`, `lng`, `qr_secret` (32 random bytes)
+- `qr_secret` is `bytea`, filled by `gen_random_bytes(32)` and held at 32 bytes by a check. No S-02 endpoint returns it (D-110). `lat` and `lng` are checked to -90..90 and -180..180
+- `(id, event_id)` is unique so `sub_event` can point at it, which keeps a sub-event's venue inside the sub-event's own event
 - A sub-event's venue is one an earlier sub-event added in the wizard, or a new one. Every venue is used by at least one sub-event, so an event has at most 15 (D-110, D-111)
 - No radius. Each sub-event at the venue carries its own, so two at one hall may differ (D-111)
 - One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3). The payload carries the venue and its secret; a scan verifies the sub-event at this venue that was In Progress at the scan time (D-85)
 
 ### `sub_event`
 - `event_id`, `name`, `description`, `starts_at`, `ends_at`, `venue_id`
-- `verification_radius_m` (50 to 2000, default 200, §4.3, D-111). The GPS check for this sub-event compares against it (§4.5)
+- `sub_event_time_check` requires `ends_at` after `starts_at`. The foreign key is `(venue_id, event_id)` to `venue (id, event_id)`, so a venue's QR never verifies a sub-event of another event
+- `verification_radius_m` (50 to 2000, default 200, §4.3, D-111), an integer. The GPS check for this sub-event compares against it (§4.5)
 - At most 15 per event (§4.3). A delay moves `starts_at` and `ends_at`
 - Status is computed on read and never stored: In Progress from `starts_at` until `ends_at` (§4.3, D-88). Inside the event there can be times when none is In Progress. One pure function in `packages/shared-types` computes it for the app and the API (D-105)
 - Deleted only while it has no photos, and never the event's last one. An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the event; there is no Realtime on this table (D-100)
 
 ### `membership`
-- `event_id`, `user_id`, unique together
+- `event_id`, `user_id`, unique together. `user_id` is `ON DELETE CASCADE` to `auth.users`
 - `role` (`admin`, `photographer`, `guest`), `status` (`pending`, `active`, `blocked`, `removed`)
 - Exactly one `admin` row per event, its creator's. A role change moves someone between `guest` and `photographer` only (D-102)
+- The database holds part of that. A partial unique index, `membership_one_admin_idx`, allows at most one `admin` row per event, and `membership_admin_active_check` keeps it `active`. Only `create_event` writes it. Nothing in the database yet stops an update changing the Admin's role; the slice that builds role changes adds that guard (Ukasha on 2026-09-25, slice card in #37)
 - `admin_verified_at` (Force Verify, D-15), `last_viewed_at` (the "new since last visit" dot, §2.5)
 - A join request is a `pending` row. Approve sets `active`, reject or cancel deletes the row, block sets `blocked` (§4.4). At most 150 `active` guest rows per event; the Admin and Photographers do not count (§4.17, D-102)
 - Remove from Event sets `removed`: the person sees Access Removed, their uploads stay, and a live invite lets them join again. A `blocked` person cannot rejoin (D-102)
