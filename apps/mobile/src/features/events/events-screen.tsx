@@ -1,24 +1,36 @@
 import type { EventTiming } from '@momentlens/shared-types';
 import { useRouter } from 'expo-router';
 import { useMemo } from 'react';
-import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AppHeader } from '@/components/ui/app-header';
+import { AppHeader, HEADER_AVATAR_SIZE } from '@/components/ui/app-header';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { Fab } from '@/components/ui/fab';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
 import { BottomTabInset } from '@/constants/theme';
-import { startDraft } from '@/features/events/draft';
 import { EventCard } from '@/features/events/event-card';
 import { groupByTiming } from '@/features/events/list';
 import { showEventsTab, useEventsTab } from '@/features/events/tab-store';
 import { TimingTabs } from '@/features/events/timing-tabs';
+import { useCreateEvent } from '@/features/events/use-create-event';
 import { useEvents } from '@/features/events/use-events';
 import { useTimingNow } from '@/features/events/use-timing-now';
 import { usePullRefresh } from '@/hooks/use-pull-refresh';
-import { useAuthStore } from '@/stores/auth';
+import { CREATE_IN_TAB_BAR } from '@/lib/platform';
+
+// The FAB's 56 points and the 16 below it, which the end of the list scrolls clear of.
+const FAB_CLEARANCE = 56 + 16;
 
 const EMPTY_TAB: Record<EventTiming, { title: string; body: string }> = {
   active: {
@@ -37,21 +49,20 @@ const EMPTY_TAB: Record<EventTiming, { title: string; body: string }> = {
 export function EventsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const userId = useAuthStore((state) => state.userId);
   const tab = useEventsTab((state) => state.tab);
   const events = useEvents();
   const pull = usePullRefresh(events.refetch);
+  const createEvent = useCreateEvent();
   const now = useTimingNow(events.data?.events);
   const groups = useMemo(
     () => (events.data ? groupByTiming(events.data.events, now) : null),
     [events.data, now],
   );
 
-  function createEvent() {
-    if (userId === null) return;
-    startDraft(userId);
-    router.push('/events/new');
-  }
+  // iOS's tab bar lies over the content, so the list and the FAB start above it. Android's sits
+  // below the content, which already ends at the bar.
+  const overTabBar = Platform.OS === 'ios' ? insets.bottom + BottomTabInset : 0;
+  const fabBottom = overTabBar + 16;
 
   return (
     <View className="flex-1 bg-background">
@@ -66,7 +77,7 @@ export function EventsScreen() {
                 accessibilityLabel="Profile"
                 hitSlop={8}
                 onPress={() => router.navigate('/profile')}>
-                <Avatar size={32} />
+                <Avatar size={HEADER_AVATAR_SIZE} />
               </Pressable>
             }
           />
@@ -75,7 +86,9 @@ export function EventsScreen() {
 
         <ScrollView
           contentContainerClassName="flex-grow gap-3 px-4 pt-1"
-          contentContainerStyle={{ paddingBottom: insets.bottom + BottomTabInset + 96 }}
+          contentContainerStyle={{
+            paddingBottom: fabBottom + (CREATE_IN_TAB_BAR ? 0 : FAB_CLEARANCE),
+          }}
           refreshControl={
             <RefreshControl refreshing={pull.refreshing} onRefresh={pull.onRefresh} />
           }>
@@ -127,14 +140,9 @@ export function EventsScreen() {
           )}
         </ScrollView>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Create an event"
-          onPress={createEvent}
-          style={{ bottom: insets.bottom + BottomTabInset + 16 }}
-          className="absolute right-5 h-14 w-14 items-center justify-center rounded-full bg-accent shadow-md active:bg-accentPressed">
-          <Icon name="plus" size={24} className="text-textPrimary dark:text-background" />
-        </Pressable>
+        {CREATE_IN_TAB_BAR ? null : (
+          <Fab icon="plus" label="Create an event" onPress={createEvent} bottom={fabBottom} />
+        )}
       </SafeAreaView>
     </View>
   );

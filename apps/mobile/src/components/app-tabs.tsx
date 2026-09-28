@@ -1,34 +1,57 @@
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useColorScheme } from 'react-native';
+import { Platform } from 'react-native';
 
-import { Colors } from '@/constants/theme';
+import { useCreateEvent } from '@/features/events/use-create-event';
+import { useTokenColor } from '@/hooks/use-token-color';
+import { CREATE_IN_TAB_BAR } from '@/lib/platform';
 
+// The Global shell's tab bar, each platform's own (D-112). iOS draws SF Symbols and, from iOS 26,
+// Liquid Glass, so it gets no background of its own there. Unselected items take the label color
+// as iOS 26's do, and the selected one the gold. Android draws Material Symbols on Material 3's
+// navigation bar: the surface token behind, a gold-tinted pill under the selected item.
 export default function AppTabs() {
-  const scheme = useColorScheme();
-  const colors = Colors[scheme === 'unspecified' ? 'light' : scheme];
+  const createEvent = useCreateEvent();
+  const surface = useTokenColor('surface');
+  const indicator = useTokenColor('accentTint');
+  const primary = useTokenColor('textPrimary');
+  const secondary = useTokenColor('textSecondary');
+  const gold = useTokenColor('accentText');
+
+  const idle = Platform.OS === 'ios' ? primary : secondary;
+  const selected = Platform.OS === 'ios' ? gold : primary;
 
   return (
     <NativeTabs
-      backgroundColor={colors.background}
-      indicatorColor={colors.backgroundElement}
-      // Without it iOS tints the selected icon system blue, off the app's palette.
-      iconColor={{ selected: colors.text }}
-      labelStyle={{ selected: { color: colors.text } }}>
+      backgroundColor={CREATE_IN_TAB_BAR ? undefined : surface}
+      indicatorColor={indicator}
+      iconColor={{ default: idle, selected }}
+      labelStyle={{ default: { color: idle }, selected: { color: selected } }}>
       <NativeTabs.Trigger name="index">
         <NativeTabs.Trigger.Label>Events</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/home.png')}
-          renderingMode="template"
-        />
+        <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} md="home" />
       </NativeTabs.Trigger>
 
       <NativeTabs.Trigger name="profile">
         <NativeTabs.Trigger.Label>Profile</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon
-          src={require('@/assets/images/tabIcons/profile.png')}
-          renderingMode="template"
+          sf={{ default: 'person.crop.circle', selected: 'person.crop.circle.fill' }}
+          md="account_circle"
         />
       </NativeTabs.Trigger>
+
+      {/* Create Event, as the round button iOS 26 sets apart at the bar's trailing end. It is
+          disabled, so pressing it never selects its empty route; the press still arrives, and
+          opens the wizard instead (lib/platform.ts). */}
+      {CREATE_IN_TAB_BAR ? (
+        <NativeTabs.Trigger
+          name="create"
+          role="search"
+          disabled
+          accessibilityLabel="Create an event"
+          listeners={{ tabPress: createEvent }}>
+          <NativeTabs.Trigger.Icon sf="plus" />
+        </NativeTabs.Trigger>
+      ) : null}
     </NativeTabs>
   );
 }
