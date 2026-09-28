@@ -35,8 +35,8 @@ export function AuthScreen({
     <View className="flex-1 bg-background">
       {/* SafeAreaView is not a React Native core component, so its layout stays in style. */}
       <SafeAreaView style={{ flex: 1 }}>
-        {/* Padding on Android too: edge to edge, Android no longer shrinks the window for the
-            keyboard (features/events/wizard-frame.tsx). */}
+        {/* Padding on Android too. Drawing edge to edge, Android no longer shrinks the window for
+            the keyboard (features/events/wizard-frame.tsx). */}
         <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
           <View className="px-6">
             <BrandHeader onBack={onBack} />

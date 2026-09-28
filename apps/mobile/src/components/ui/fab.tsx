@@ -12,8 +12,8 @@ interface FabProps {
   bottom: number;
 }
 
-// Material 3's FAB on Android: a 56dp square with 16dp corners, a 24dp icon, 16dp in from the edge,
-// at elevation level 3, with a ripple (D-112). iOS before 26 gets the same button as a circle with
+// Material 3's FAB on Android is a 56dp square with 16dp corners and a 24dp icon, 16dp in from the
+// edge, at elevation level 3, with a ripple (D-112). iOS before 26 gets the same button as a circle with
 // a soft shadow, the shape iOS apps use; iOS 26 has the tab bar's button instead (lib/platform.ts).
 //
 // The gold takes dark content in both modes, as the primary Button does, since white on it fails

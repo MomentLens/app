@@ -96,7 +96,7 @@ module.exports = {
         // Footnote, Caption 1. Android column: Display Small, Headline Medium, Title Large, Body
         // Large, Body Medium, a medium button's label, Label Large, Body Small, Label Small.
         display: sized('34px', '36px'),
-        h1: sized('28px', '28px'),
+        h1: '28px',
         h2: sized('20px', '22px'),
         body: sized('17px', '16px'),
         bodySecondary: sized('15px', '14px'),

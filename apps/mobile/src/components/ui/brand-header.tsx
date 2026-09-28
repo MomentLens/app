@@ -8,7 +8,7 @@ interface BrandHeaderProps {
   onBack?: () => void;
 }
 
-// The bar at the top of every signed-out screen: the wordmark, centred, with an optional back
+// The bar at the top of every signed-out screen, with the wordmark centred and an optional back
 // chevron. Same height and sizes as the signed-in AppHeader.
 export function BrandHeader({ onBack }: BrandHeaderProps) {
   return (
