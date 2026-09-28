@@ -51,7 +51,16 @@ export function CoverField({ cover, onChange }: CoverFieldProps) {
         accessibilityState={{ busy: preparing }}
         disabled={preparing}
         onPress={() => void pick()}
-        className={`h-40 items-center justify-center gap-2 overflow-hidden rounded-xl bg-surface active:bg-surfaceMuted ${cover ? '' : 'border border-dashed border-borderStrong'}`}>
+        className="h-40 items-center justify-center gap-2 overflow-hidden rounded-xl bg-surface active:bg-surfaceMuted">
+        {/* The dashed outline is a view of its own that comes and goes. Dropping a dashed border
+            from the box itself once a photo was picked left the photo undrawn on Android, while
+            the same photo showed everywhere else. */}
+        {cover ? null : (
+          <View
+            pointerEvents="none"
+            className="absolute inset-0 rounded-xl border border-dashed border-borderStrong"
+          />
+        )}
         {cover ? (
           <Image
             source={{ uri: cover.uri }}
