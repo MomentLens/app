@@ -1,6 +1,12 @@
+import { Redirect } from 'expo-router';
+
 // The route behind iOS 26's Create Event button in the tab bar (components/app-tabs.tsx). That tab
-// is disabled, so this screen is never shown; its press opens the wizard. Other platforms name no
-// trigger for it, and native tabs cannot reach a route without one.
+// is disabled, so a press never selects it; the press opens the wizard instead.
+//
+// Only a link to /create could still focus it. On iOS 26 that lands here and goes on to Events.
+// Elsewhere no trigger names the route, so native tabs cannot show it. A development build stops
+// with their "focused tab cannot be displayed" error, and a release build shows Events. Nothing
+// in the app links here.
 export default function CreateTab() {
-  return null;
+  return <Redirect href="/" />;
 }
