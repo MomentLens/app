@@ -9,7 +9,7 @@
 - Anything undecided is marked **Open**. Ask Ukasha instead of filling it in.
 - Ukasha reviews every PR that touches this file.
 
-**Status, 2026-09-28.** Three migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. S-01's is for `profile` and `subject`, and S-02's for `event`, `venue`, `sub_event` and `membership`. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
+**Status, 2026-09-29.** Four migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. S-01's is for `profile` and `subject`, and S-02's for `event`, `venue`, `sub_event` and `membership`. The fourth adds no table; it backfills `profile` for accounts older than S-01's trigger. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
 
 ---
 
@@ -53,8 +53,8 @@ Planned, not migrated, except `health_check`, `profile`, `subject`, `event`, `ve
 One row per auth user. `user_id` is the primary key, so the table has no `id`. Migration `supabase/migrations/20260924101332_create_profile_and_subject.sql`.
 - `full_name`, `avatar_key` (§4.2)
 - Created by a trigger on `auth.users` from the signup's `full_name`, trimmed and 1 to 80 characters, so every account has one. `ON DELETE CASCADE` to `auth.users` (D-109)
-- The trigger, `create_profile_on_signup`, runs `create_profile_for_new_user()` as `security definer`. A missing or non-string name, or one the check below rejects, rolls back the insert into `auth.users`, so a failed signup leaves no account. Nothing reads the name from the signup metadata again, because a user can rewrite their own metadata. After signup the row is the only source of the name
-- Accounts created before the trigger existed got their profile from `supabase/migrations/20260928202314_backfill_profiles.sql`, named from their signup's `full_name` as the trigger would have. It refuses to run, writing nothing, if such an account has no usable name
+- The trigger, `create_profile_on_signup`, runs `create_profile_for_new_user()` as `security definer`. A missing or non-string name, or one the check below rejects, rolls back the insert into `auth.users`, so a failed signup leaves no account. Nothing reads the name from the metadata again, because a user can rewrite their own metadata. After signup the row is the only source of the name. The one exception is the backfill below, which ran once
+- Live accounts created before the trigger existed got their profile from `supabase/migrations/20260928202314_backfill_profiles.sql`. It names each from its `full_name` metadata as that stood when the migration ran, trimmed as the trigger trims it, so the name may differ from the one given at signup. It leaves out anonymous users and accounts Auth soft-deleted, and it refuses to run, writing nothing, if any other account without a profile has no usable name. `apps/api/tests/integration/rls.test.ts` checks that every live account has a profile
 - `profile_full_name_check` trims with `public.trim_whitespace`, which strips what JavaScript's `trim()` strips, and allows 1 to 80 code points. A stored name is then one that `FullName` in `packages/shared-types` accepts unchanged
 - `profile_avatar_key_check` accepts only `users/{user_id}/avatar_{upload_id}.jpg` for the row's own user (§3). No other file can be stored, and so presigned, as someone's avatar
 - `notify_approval`, `notify_album` for the two push channels (§4.16, §4.19). The sender checks them before sending. "Upload over Mobile Data" and the default Viewfinder mode are not here; they live on the phone (D-105). Both default to true (D-109)
