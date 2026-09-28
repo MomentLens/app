@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { KeyboardAvoidingView, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader, type HeaderAction } from '@/components/ui/app-header';
@@ -17,7 +17,7 @@ interface WizardFrameProps {
 
 // The frame the three Create Event steps share, laid out as in the Figma wizard frames: the header,
 // a three-part progress bar, "STEP n OF 3", the title, the content, and the step's button pinned at
-// the bottom (spec §2.1.2, D-111). The content scrolls clear of the keyboard with Expo's settings,
+// the bottom (spec §2.1.2, D-111). The content scrolls clear of the keyboard on both platforms,
 // as the auth screens do.
 export function WizardFrame({ step, title, back, footer, children }: WizardFrameProps) {
   // The insets come from the root provider rather than a SafeAreaView, which measures zero inside
@@ -32,9 +32,10 @@ export function WizardFrame({ step, title, back, footer, children }: WizardFrame
         paddingLeft: insets.left,
         paddingRight: insets.right,
       }}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}>
+      {/* Padding on Android too. The app draws edge to edge there, so Android no longer shrinks
+          the window for the keyboard, and with no behavior the keyboard covered the lower fields
+          and left nothing to scroll. */}
+      <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
         <View className="gap-4 px-4">
           <AppHeader left={back} />
           <View
