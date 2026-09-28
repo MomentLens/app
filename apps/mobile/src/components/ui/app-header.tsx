@@ -58,8 +58,8 @@ export function Wordmark() {
   );
 }
 
-// The bar at the top of every signed-in screen: an action on the left, the wordmark in the middle,
-// and the avatar or nothing on the right. The Figma frames set the layout; the sizes are each
+// The bar at the top of every signed-in screen, with an action on the left, the wordmark in the
+// middle, and the avatar or nothing on the right. The Figma frames set the layout; the sizes are each
 // platform's.
 export function AppHeader({ left, right }: AppHeaderProps) {
   return (

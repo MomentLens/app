@@ -8,7 +8,7 @@ import { CREATE_IN_TAB_BAR } from '@/lib/platform';
 // The Global shell's tab bar, each platform's own (D-112). iOS draws SF Symbols and, from iOS 26,
 // Liquid Glass, so it gets no background of its own there. Unselected items take the label color
 // as iOS 26's do, and the selected one the gold. Android draws Material Symbols on Material 3's
-// navigation bar: the surface token behind, a gold-tinted pill under the selected item.
+// navigation bar, with the surface token behind and a gold-tinted pill under the selected item.
 export default function AppTabs() {
   const createEvent = useCreateEvent();
   const surface = useTokenColor('surface');
