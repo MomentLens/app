@@ -20,6 +20,13 @@
  * same role, e.g. className="font-h1 text-h1".
  */
 
+const { platformSelect } = require('nativewind/theme');
+
+// One size per platform, resolved when the style is read on the phone. iOS takes Apple's default
+// Dynamic Type sizes and Android the Material 3 type scale, so body text reads at the size each
+// platform's own apps use (D-112).
+const sized = (ios, android) => platformSelect({ ios, android, default: android });
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   darkMode: 'class', // toggled explicitly via nativewind's colorScheme API —
@@ -77,21 +84,27 @@ module.exports = {
         fieldLabel: ['Manrope_500Medium'], // Field label
         caption: ['Manrope_400Regular'], // Caption / timestamp
         micro: ['Manrope_600SemiBold'], // Micro / badge
+        wordmark: ['Manrope_600SemiBold'], // The MOMENTLENS wordmark in the header
       },
 
       fontSize: {
         // Line-height is not finalized yet — left at the RN/font default.
         // Add it here as [size, { lineHeight: '...' }] once decided; don't
         // guess a number into this file.
-        display: '32px',
-        h1: '24px',
-        h2: '18px',
-        body: '15px',
-        bodySecondary: '14px',
-        buttonLabel: '15px',
-        fieldLabel: '13px',
-        caption: '12px',
-        micro: '11px',
+        //
+        // iOS column: Large Title, Title 1, Title 3, Body, Subheadline, Headline, Subheadline,
+        // Footnote, Caption 1. Android column: Display Small, Headline Medium, Title Large, Body
+        // Large, Body Medium, a medium button's label, Label Large, Body Small, Label Small.
+        display: sized('34px', '36px'),
+        h1: sized('28px', '28px'),
+        h2: sized('20px', '22px'),
+        body: sized('17px', '16px'),
+        bodySecondary: sized('15px', '14px'),
+        buttonLabel: sized('17px', '16px'),
+        fieldLabel: sized('15px', '14px'),
+        caption: sized('13px', '12px'),
+        micro: sized('12px', '11px'),
+        wordmark: sized('15px', '16px'),
       },
     },
   },

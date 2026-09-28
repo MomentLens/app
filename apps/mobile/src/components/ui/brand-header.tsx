@@ -1,5 +1,6 @@
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
 
+import { HEADER_BAR, HEADER_ICON_SIZE, Wordmark } from '@/components/ui/app-header';
 import { Icon } from '@/components/ui/icon';
 
 interface BrandHeaderProps {
@@ -7,31 +8,22 @@ interface BrandHeaderProps {
   onBack?: () => void;
 }
 
-// The strip at the top of every signed-out screen in the Figma frames: the aperture mark and the
-// wordmark, centred, with an optional back chevron.
+// The bar at the top of every signed-out screen: the wordmark, centred, with an optional back
+// chevron. Same height and sizes as the signed-in AppHeader.
 export function BrandHeader({ onBack }: BrandHeaderProps) {
   return (
-    <View className="h-11 flex-row items-center justify-center">
+    <View className={`flex-row items-center justify-center ${HEADER_BAR}`}>
       {onBack ? (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Back"
           hitSlop={12}
           onPress={onBack}
-          className="absolute left-0 h-11 w-11 justify-center">
-          <Icon name="chevron-left" size={22} className="text-textPrimary" />
+          className="absolute left-0 justify-center ios:h-11 ios:w-11 android:h-12 android:w-12">
+          <Icon name="chevron-left" size={HEADER_ICON_SIZE} className="text-textPrimary" />
         </Pressable>
       ) : null}
-      <View
-        accessible
-        accessibilityRole="header"
-        accessibilityLabel="MomentLens"
-        className="flex-row items-center gap-1.5">
-        <Icon name="aperture" size={16} className="text-accent" />
-        <Text className="font-micro text-micro uppercase tracking-widest text-textPrimary">
-          MomentLens
-        </Text>
-      </View>
+      <Wordmark />
     </View>
   );
 }
