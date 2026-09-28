@@ -33,7 +33,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 - [ ] Works on a physical device, not only a simulator, if it touches camera, GPS, or the queue (Handbook §10)
 - [ ] Unit test for any pure logic in it (Handbook §11.2)
 - [ ] Dark mode uses tokens, no hardcoded hex
-- [ ] Reviewed by one other person (Handbook §12)
+- [ ] Reviewed by one other person (Handbook §12), or `/code-review` run on every PR while D-113's exception holds
 - [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, written by the done stage as its own commit, with Ukasha reviewing that change (D-75, D-107)
 
 ## Ownership
@@ -42,7 +42,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 
 Two constraints drive this. Ukasha is on the M1, the fastest machine the team has measured for face processing (D-78), so the Python worker is his by default. And he did the planning, owns the docs, and will otherwise become the person everyone waits on, so the album and capture surfaces deliberately go elsewhere.
 
-Owner means *builds it*. Review ownership is separate: every PR needs one of the other two, per Handbook §12.
+Owner means *builds it*. Review ownership is separate. Every PR needs one of the other two, per Handbook §12, except while D-113's exception holds.
 
 ---
 
