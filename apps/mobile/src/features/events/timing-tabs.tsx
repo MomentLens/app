@@ -12,6 +12,10 @@ interface TimingTabsProps {
   onChange: (value: EventTiming) => void;
 }
 
+// Each segment is drawn 36pt tall on iOS and 40dp on Android, Material 3's segmented button, and
+// reaches 4 past its edges into the track's padding, so the target is 44pt or 48dp (D-112).
+const SEGMENT_SLOP = { top: 4, bottom: 4 };
+
 // The Events tab's Active / Upcoming / Past control (spec §2.5.1), a pill track as in the Figma
 // frame. A screen reader reads it as three tabs with the chosen one selected.
 export function TimingTabs({ value, onChange }: TimingTabsProps) {
@@ -25,7 +29,8 @@ export function TimingTabs({ value, onChange }: TimingTabsProps) {
             accessibilityRole="tab"
             accessibilityState={{ selected }}
             onPress={() => onChange(tab.value)}
-            className={`min-h-9 flex-1 items-center justify-center rounded-full ${selected ? 'bg-accentTint' : ''}`}>
+            hitSlop={SEGMENT_SLOP}
+            className={`flex-1 items-center justify-center rounded-full ios:min-h-9 android:min-h-10 ${selected ? 'bg-accentTint' : ''}`}>
             <Text
               className={`font-fieldLabel text-fieldLabel ${selected ? 'text-accentText' : 'text-textSecondary'}`}>
               {tab.label}
