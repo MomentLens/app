@@ -191,6 +191,45 @@ if (project === null) {
       },
     );
 
+    // The trigger covers every account made since S-01's migration, and the backfill every live one
+    // from before it (supabase/migrations/20260928202314_backfill_profiles.sql). GET /profiles/me
+    // answers an account with no profile 401, so one that slips through looks like a broken
+    // session. Other test runs may create or delete accounts meanwhile, so an account missing a
+    // profile is read again before it counts.
+    it('gives every live account a profile, the ones older than the trigger included', async () => {
+      const live: string[] = [];
+      for (let page = 1; ; page += 1) {
+        const result = await admin.auth.admin.listUsers({ page, perPage: 1000 });
+        expect(result.error).toBeNull();
+        const users = result.data.users;
+        live.push(
+          ...users.filter((user) => !user.is_anonymous && !user.deleted_at).map((user) => user.id),
+        );
+        if (users.length < 1000) break;
+      }
+
+      const withProfile = new Set<string>();
+      for (let start = 0; start < live.length; start += 100) {
+        const result = await admin
+          .from('profile')
+          .select('user_id')
+          .in('user_id', live.slice(start, start + 100));
+        expect(result.error).toBeNull();
+        for (const id of (result.data ?? []).map((row: { user_id: string }) => row.user_id)) {
+          withProfile.add(id);
+        }
+      }
+
+      const missing: string[] = [];
+      for (const id of live.filter((userId) => !withProfile.has(userId))) {
+        const user = await admin.auth.admin.getUserById(id);
+        if (user.data.user && !user.data.user.deleted_at && (await readProfile(id)) === null) {
+          missing.push(id);
+        }
+      }
+      expect(missing).toEqual([]);
+    });
+
     it('keeps one subject per user, and any number with no user', async () => {
       const user = await createNamedUser();
       expect((await admin.from('subject').insert({ user_id: user.id })).error).toBeNull();
