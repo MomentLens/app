@@ -413,7 +413,7 @@ main ← always deployable
 
 **PRs, even at this size.** The value is not process for its own sake. It is insurance against the bus-factor problem: if only the author has ever read a piece of code, that is a real risk when they are unavailable during exam week and their area breaks. A quick review spreads enough context that the team is not hostage to one person's availability.
 
-**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. `main` takes changes only through pull requests, and the team's rule is one review and a green CI run before merging (D-107). Not to gatekeep. To keep any area from becoming a black box.
+**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. `main` takes changes only through pull requests, and the team's rule is one review and a green CI run before merging (D-107). While the other two are away, Ukasha merges after `/code-review` and a green CI run instead (D-113). Not to gatekeep. To keep any area from becoming a black box.
 
 **Conventional commits** (`feat:`, `fix:`, `chore:`). Makes `git log` useful when you are trying to remember why something changed three weeks ago. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits. PR titles and descriptions carry no tool attribution either, such as a "Generated with Claude Code" line.
 
@@ -594,7 +594,7 @@ The photos are the product. The chrome around them should recede, not compete.
 
 **Motion.** Purposeful, not decorative. Three worth doing well because they are cheap and high-impact: shutter press feedback (scale plus haptic via `expo-haptics`), a staggered fade-in for photos arriving via Realtime in the album grid, and a custom pull-to-refresh. Use Reanimated worklets (§16). Do not hand-roll screen transitions; Expo Router's native stack transitions already feel platform-correct for free.
 
-**Each platform sets the sizes.** The Figma frames set layout and direction, not measurements. Size and place everything to Apple's Human Interface Guidelines on iOS and to Material 3 on Android: type from the per-platform tokens in `apps/mobile/tailwind.config.js`, touch targets of at least 44pt on iOS and 48dp on Android, each platform's bar heights, and the native pattern where the two differ, such as the iOS 26 tab bar button against Android's FAB (D-112). When a frame and a guideline disagree on size, follow the guideline.
+**Each platform sets the sizes.** The Figma frames set layout and direction, not measurements. Size and place everything to Apple's Human Interface Guidelines on iOS and to Material 3 on Android: type from the per-platform tokens in `apps/mobile/tailwind.config.js`, touch targets of at least 44pt on iOS and 48dp on Android, each platform's bar heights, and the native pattern where the two differ, such as the iOS 26 tab bar button against Android's FAB for Create Event. The camera button on My Media floats on both platforms (D-112). When a frame and a guideline disagree on size, follow the guideline.
 
 **Do not neglect the unglamorous states.** A disproportionate amount of perceived polish comes from empty albums, loading states, offline banners, and errors. It is easy for a first-time team to skip because it is less fun than the main screens, and it is exactly the gap a demo audience notices.
 
@@ -835,6 +835,6 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 2. **`/slice S-12`** in a fresh session. Read the read-back, starting with what the docs get wrong and the decisions list. **You decide:** answer every decision, fix the docs in their own PR if needed, then say go. The agent writes the card into the issue. `/clear`.
 3. **`/slice S-12 schema`.** Review the schema PR. **You decide:** merge it. `/clear`.
 4. **`/slice S-12 build api`**, `/clear`, then **`/slice S-12 build mobile`**, in the card's order. Answer every question yourself; never tell the agent to guess. **You decide:** run the phone check if the card says one is needed. The last package opens the PR. `/clear`.
-5. **`/slice S-12 done`.** **You decide:** get one teammate's review, read any of the four human-read surfaces yourself, and send `ARCHITECTURE.md` changes to Ukasha. Merge, and close the issue.
+5. **`/slice S-12 done`.** **You decide:** get one teammate's review, or while D-113's exception holds run `/code-review`, read any of the four human-read surfaces yourself, and send `ARCHITECTURE.md` changes to Ukasha. Merge, and close the issue.
 
 Never carry a stage's session into the next, never paste a log into a session, and never let an agent answer its own question.

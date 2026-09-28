@@ -863,11 +863,12 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 
 ### D-112: Platform conventions set sizes, and Create Event joins the iOS tab bar
 **Decision.** Amends D-111. Ukasha ruled on each of these on 2026-09-29, after S-02's build.
-- The Figma frames set layout and direction. Sizes and placement follow each platform: Apple's Human Interface Guidelines on iOS and Material 3 on Android (hb §15).
+- The Figma frames set layout and direction. Sizes and placement follow Apple's Human Interface Guidelines on iOS and Material 3 on Android (hb §15).
 - The type tokens in `apps/mobile/tailwind.config.js` resolve per platform. iOS takes Apple's default Dynamic Type sizes, body 17. Android takes the Material 3 type scale, body 16.
 - Headers take each platform's bar: 44pt with 44pt buttons on iOS, 64dp with 48dp buttons on Android.
-- The Global shell's tab bar draws SF Symbols and keeps Liquid Glass on iOS, and Material Symbols on Android, in the token colors.
-- From iOS 26, Create Event is the round button iOS sets apart at the trailing end of the tab bar: a search-role item that opens the wizard instead of selecting a tab. It shows on every Global shell tab. On Android it is Material 3's FAB on the Events tab, a 56dp square with 16dp corners, 16dp in from the edge. iOS before 26 keeps a floating circle.
+- The Global shell's tab bar draws SF Symbols on iOS, keeping Liquid Glass from iOS 26, and Material Symbols on Android, in the token colors.
+- From iOS 26, Create Event is the round button iOS sets apart at the trailing end of the tab bar. It is a search-role item that opens the wizard instead of selecting a tab, and it shows on every Global shell tab. On Android it is Material 3's FAB on the Events tab, a 56dp square with 16dp corners, 16dp in from the edge. iOS before 26 keeps a floating circle.
+- The Event shell's camera button stays a floating button on My Media on both platforms (spec §2.5.4). It belongs to that one screen, and iOS 26's tab bar slot is Apple's Search slot, borrowed once already for Create Event.
 **Why.** The team copied the Figma frames closely and the result looked small and flat on both phones: an 11-point wordmark, a flat round "+", and 15-point body text on both platforms. None of the three is a designer, so each platform's own guidelines decide size.
 **Rejected.** One set of sizes for both platforms, which reads as foreign on at least one of them. A custom floating "+" on iOS 26, beside a tab bar that has a native slot for it.
 **Cost.** The iOS slot is the one Apple's own apps use for Search, so the "+" borrows it. Every existing screen changed size, so each needs a look on both platforms.
@@ -876,7 +877,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Decision.** Amends D-107. Ukasha ruled on 2026-09-29. While the other two developers are unavailable, Ukasha merges a pull request without a teammate's review once `/code-review` has run on it and CI passes. The four human-read surfaces still get Ukasha's own read (D-68). The exception ends when either teammate is available again.
 **Why.** Nobody else can review for now, and waiting would stall every slice. S-02's five pull requests, #39 to #43, had already merged with no review.
 **Rejected.** Holding every pull request until a teammate is free.
-**Cost.** A mistake that only a second person would catch can reach `main`. `/code-review` knows the code but not the team's intent. The branch protection on `main` requires no approvals, so this rule is enforced by habit, not by GitHub.
+**Cost.** A mistake that only a second person would catch can reach `main`. `/code-review` knows the code but not the team's intent. The branch protection on `main` requires no approvals and no status checks, so both halves of this rule, the review and the green CI run, are kept by habit, not by GitHub.
 
 ## Open items that are not decisions yet
 
