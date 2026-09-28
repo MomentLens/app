@@ -1,6 +1,6 @@
 import WheelPicker, { withVirtualized, type PickerItem } from '@quidone/react-native-wheel-picker';
-import { useMemo } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useMemo, type Context } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { Icon } from '@/components/ui/icon';
 import { formatDateTime } from '@/features/events/format';
@@ -19,6 +19,14 @@ import { FieldError, FieldLabel } from '@/features/events/wizard-frame';
 
 // The day wheel holds two years of days, so only the rows near the visible ones are rendered.
 const DayWheel = withVirtualized(WheelPicker);
+
+// A ScrollView tells the lists inside it that they sit in a vertical scroller, and in development a
+// FlatList that hears so warns that it cannot window its rows. The day wheel has a fixed height and
+// scrolls itself, so it windows fine inside the sheet's ScrollView. Resetting the context around
+// it, as React Native's own Modal does for its content, drops that false warning; nothing else
+// reads it. Nesting the wheel in a FlatList instead, as the warning suggests, would render it as a
+// plain View that cannot scroll. The static is missing from React Native's TypeScript types.
+const ScrollViewContext = (ScrollView as unknown as { Context: Context<null> }).Context;
 
 const ITEM_HEIGHT = 36;
 const VISIBLE_ITEMS = 5;
@@ -116,16 +124,18 @@ export function DateTimeField({
             className="absolute inset-x-2 rounded-lg bg-textPrimary/5"
           />
           <View className="flex-[2.4]">
-            <DayWheel
-              data={days}
-              value={parts.day}
-              onValueChanged={({ item }) => change({ day: item.value })}
-              itemHeight={ITEM_HEIGHT}
-              visibleItemCount={VISIBLE_ITEMS}
-              renderItem={renderItem}
-              renderOverlay={renderOverlay}
-              enableScrollByTapOnItem
-            />
+            <ScrollViewContext.Provider value={null}>
+              <DayWheel
+                data={days}
+                value={parts.day}
+                onValueChanged={({ item }) => change({ day: item.value })}
+                itemHeight={ITEM_HEIGHT}
+                visibleItemCount={VISIBLE_ITEMS}
+                renderItem={renderItem}
+                renderOverlay={renderOverlay}
+                enableScrollByTapOnItem
+              />
+            </ScrollViewContext.Provider>
           </View>
           <View className="flex-1">
             <WheelPicker
