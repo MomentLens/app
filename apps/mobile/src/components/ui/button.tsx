@@ -2,7 +2,8 @@ import { ActivityIndicator, Pressable, Text } from 'react-native';
 
 import { Icon, type IconName } from '@/components/ui/icon';
 
-type Variant = 'primary' | 'secondary' | 'quiet';
+// quiet is a text button; destructive is the same for an action that gives something up.
+type Variant = 'primary' | 'secondary' | 'quiet' | 'destructive';
 
 interface ButtonProps {
   label: string;
@@ -23,12 +24,14 @@ const CONTAINER: Record<Variant, string> = {
   primary: 'rounded-full bg-accent px-6 py-3 active:bg-accentPressed',
   secondary: 'rounded-full border border-borderStrong bg-surface px-6 py-3 active:bg-surfaceMuted',
   quiet: 'px-2 py-2',
+  destructive: 'px-2 py-2',
 };
 
 const LABEL: Record<Variant, string> = {
   primary: 'text-textPrimary dark:text-background',
   secondary: 'text-textPrimary',
   quiet: 'text-accentText',
+  destructive: 'text-danger',
 };
 
 export function Button({
