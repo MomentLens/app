@@ -34,7 +34,9 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 |---|---|
 | `media` | Active members of the event, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (§4.10, D-55). Update and delete by the uploader and the event's Admin. **Also an RLS policy.** Soft-deleted rows stay visible to it so Realtime delivers the deletion; the API's queries exclude them and the app drops a row when an update sets `deleted_at`. A row without `uploaded_at` is shown to nobody (D-82) |
 | `event` | Active members. **Also an RLS policy**, so opening and closing the album reaches every phone live |
-| `membership` | A user sees their own rows; the Admin sees every row for their events (Handbook §5) |
+| Invite preview | Anyone holding a live token or shortcode, with or without a session: the role, the event's name, span, venue names and cover. No member, no venue position and no `qr_secret`. A signed-in caller also gets their own membership in that event (D-115) |
+| `invite` | The event's Admin, through S-05's share screen. A lookup returns the preview above, never the row (D-115) |
+| `membership` | A user sees their own rows, with the event's name on a pending one (D-115); the Admin sees every row for their events (Handbook §5) |
 | `face`, `dnp_subject` | Only through the viewer-scoped rule (root invariant 4). A Do Not Publish subject learns they are in a photo; no other viewer learns who is. A Photographer gets no `face` rows, for their own photos too (§4.10, D-08) |
 | `face_reference` | The owner, and only their photos, with or without Do Not Publish (D-109). Embeddings never leave the database and the worker (Handbook §5) |
 | `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see; its drawer or the Admin removes it. Only the Admin lists them, with who drew each, in the Review Queue (D-83) |
@@ -84,13 +86,13 @@ The identity that reference photos and Do Not Publish attach to, split from the 
 Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`, which also creates `venue`, `sub_event` and `membership`.
 - `name`, `type` (`wedding`, `engagement`, `other`), `description`, `cover_key` (D-110)
 - `event_name_check` trims with `public.trim_whitespace` and allows 1 to 80 code points, as `profile_full_name_check` does. `event_description_check` allows null or 1 to 500, and `create_event` stores an empty description as null. The same two checks sit on `venue.name`, `sub_event.name` and `sub_event.description`
-- `event_cover_key_check` accepts only `events/{event_id}/cover_{upload_id}.jpg` for the row's own event (§3). The API presigns the key for every active member, so no other file can be shown to them as the cover
+- `event_cover_key_check` accepts only `events/{event_id}/cover_{upload_id}.jpg` for the row's own event (§3). The API presigns the key for every active member and for anyone holding a live invite, on its preview (D-115), so no other file can be shown to them as the cover
 - No start or end of its own. The event runs from its first sub-event's start to its last sub-event's end, computed on read, at most 14 days (§4.17, D-88). So it has at least one sub-event
 - No venue and no verification radius of its own. Each sub-event has both (D-111)
 - `approval_mode` (`auto`, `manual`, default `auto`, §4.4, D-110), chosen on the wizard's first step (D-111), `album_open` (false at creation, §2.1)
 - `create_request_id`, the uuid the app sends with a create, unique across all events. A repeat from the same caller returns the first event and writes nothing. Another caller's repeat gets 409 `duplicate` and nothing about that event. A repeat whose event was soft-deleted since gets 404 (D-110, D-114)
 - One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the creator's `admin` membership in one transaction. S-03 adds the invite inserts to it (D-95, D-110). It checks the sub-event count, the venue indexes, that every venue is used, and the 336-hour span again, so a refusal of that kind is an API bug and answers 500. The one refusal that is not a bug is the membership foreign key failing for an account deleted since its token was issued, which the API answers 401 `no_session` (D-114)
-- `list_my_events(p_user_id)` serves `GET /events`. It returns every event where the user's membership is `active`, soft-deleted ones left out, with the user's role and the span from the sub-events (D-110). `membership_user_id_status_idx` on `(user_id, status)` keeps it indexed. An event with no sub-events would come back with a null span, and the API's parse refuses it
+- `list_my_events(p_user_id)` serves `GET /events`. It returns every event where the user's membership is `active`, soft-deleted ones left out, with the user's role and the span from the sub-events (D-110). `membership_user_id_status_idx` on `(user_id, status)` keeps it indexed. An event with no sub-events would come back with a null span, and the API's parse refuses it. `GET /events` also returns the caller's `pending` rows as join requests, each with the event's name and the role (D-115)
 - Both functions take the user as a parameter, so `execute` is granted to `service_role` only. They run as `security invoker`
 - `PUT /events/{eventId}/cover` replaces `cover_key` and deletes nothing, so a replaced cover's object stays in R2. A cover has no size limit (D-114)
 - `deleted_at`, `archived_at` (§4.21)
@@ -124,6 +126,9 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - **Open.** Deleting an account deletes its memberships, so every event it was the Admin of is left with no Admin. No slice builds a handover yet. Until one does, the team deletes each such event, or hands it to another member by hand, before deleting the account (D-114)
 - `admin_verified_at` (Force Verify, D-15), `last_viewed_at` (the "new since last visit" dot, §2.5)
 - A join request is a `pending` row. Approve sets `active`, reject or cancel deletes the row, block sets `blocked` (§4.4). At most 150 `active` guest rows per event; the Admin and Photographers do not count (§4.17, D-102)
+- One SQL function, `join_event`, called with `rpc`, is the only way in through an invite. In one transaction it locks the event row, checks the invite is live, refuses a `blocked` caller, refuses the 151st `active` guest, then inserts the row or updates a `removed` one, `active` or `pending` by the event's approval mode (D-95, D-115). A member's repeat returns their row unchanged. A rejoin takes the role of the link it used and clears `admin_verified_at`. S-25 adds the `reprocess` enqueue inside it (D-84)
+- `requested_at`, set on every join and rejoin, is the join time the Pending Approvals queue shows (spec §2.1.3, D-115). `created_at` would show a returning person their first join
+- Cancel Request deletes the caller's row only while it is `pending`, so a cancel that loses a race with an approve leaves the member `active` (D-115)
 - Remove from Event sets `removed`: the person sees Access Removed, their uploads stay, and a live invite lets them join again. A `blocked` person cannot rejoin (D-102)
 
 ### `invite`
@@ -131,6 +136,12 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - Revoke and regenerate sets `revoked_at` and inserts a new row (§4.4)
 - An invite is dead once `revoked_at` is set or its event is deleted or archived, and that is what the Join Error screen calls expired. There is no time limit
 - The link is `momentlens://invite/{token}` (D-101)
+- `token` is 32 random bytes from `gen_random_bytes`, base64url, 43 characters, unique (D-115)
+- `shortcode` is 6 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, which leaves out 0, O, 1, I and L. It is stored uppercase and is unique across every row, revoked ones included, so a reissued code never sends an old share to another event. Entry ignores case and spaces (D-115)
+- A partial unique index on `(event_id, role)` where `revoked_at` is null keeps one live invite per role
+- `create_event` inserts both when it creates the event, and S-03's migration backfills both for every event made before it (D-110, D-115)
+- The app sends a token or shortcode in the request body, never the path, because hb §5.3 puts only uuids in a path and nginx logs every path (D-115)
+- Lookups have no rate limit (D-115)
 
 ### `venue_verification`
 The spec's `VenueVerification`, renamed to the naming convention.
