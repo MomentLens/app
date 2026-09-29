@@ -1,7 +1,9 @@
-// The negative tests for RLS on health_check, profile, subject, event, venue, sub_event and
-// membership (D-73, docs/ARCHITECTURE.md §1), and the tests that need a real database or real
-// Auth: the trigger that creates a profile, the cascades, getClaims on a token the project signed
-// (D-109), and create_event and list_my_events through the API's event store (D-110). It needs a
+// The negative tests for RLS on health_check, profile, subject, event, venue, sub_event,
+// membership and invite (D-73, docs/ARCHITECTURE.md §1), and the tests that need a real database or
+// real Auth: the trigger that creates a profile, the cascades, getClaims on a token the project
+// signed (D-109), create_event and list_my_events through the API's event store (D-110), and
+// resolve_invite, join_event, the cancel and the join request list through the API's stores
+// (D-115). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
 // dev project from the environment. Each test makes its own accounts under @momentlens.me and
 // deletes them after, and deletes the events it made. No email is sent, because the accounts are
@@ -11,19 +13,30 @@
 // REQUIRE_SUPABASE, so a missing value fails there instead of skipping. Plain `pnpm test` skips
 // this file. CI runs test:rls in .github/workflows/rls.yml with the dev project's keys as
 // repository secrets (D-106).
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it, jest } from '@jest/globals';
 import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
 
-import { MAX_EVENT_SPAN_MS, VERIFICATION_RADIUS_DEFAULT_M } from '@momentlens/shared-types';
+import {
+  InviteToken,
+  MAX_EVENT_SPAN_MS,
+  SHORTCODE_ALPHABET,
+  VERIFICATION_RADIUS_DEFAULT_M,
+} from '@momentlens/shared-types';
 import type { CreateEventRequest, SubEventInput } from '@momentlens/shared-types';
 
 import { createServerClient } from '../../src/db/supabase';
 import { createTokenVerifier } from '../../src/middleware/auth';
 import { createEventParams, createEventStore } from '../../src/services/events';
 import { createDatabaseCheck } from '../../src/services/health';
+import {
+  createInviteStore,
+  joinEventParams,
+  MAX_ACTIVE_GUESTS,
+  resolveInviteParams,
+} from '../../src/services/invites';
 import { createFindProfile } from '../../src/services/profiles';
 
 // A test here makes up to about 20 requests in sequence to the dev project in Frankfurt, two of
@@ -834,8 +847,16 @@ if (project === null) {
     });
 
     it('shows the publishable key and a signed-in member no rows, and lets neither write or call a function', async () => {
-      const a = await createNamedUser();
+      const [a, b] = [await createNamedUser(), await createNamedUser()];
       const event = await createdEvent(a.id);
+      const invite = await admin
+        .from('invite')
+        .select('token, shortcode')
+        .eq('event_id', event.id)
+        .eq('role', 'guest')
+        .single();
+      expect(invite.error).toBeNull();
+      const { token, shortcode } = invite.data as { token: string; shortcode: string };
       const clients = [
         createServerClient(project.url, project.publishableKey),
         // The event's own Admin, who still reads nothing directly (root invariant 14).
@@ -843,7 +864,7 @@ if (project === null) {
       ];
 
       for (const client of clients) {
-        for (const table of ['event', 'venue', 'sub_event', 'membership'] as const) {
+        for (const table of ['event', 'venue', 'sub_event', 'membership', 'invite'] as const) {
           const read = await client.from(table).select('*');
           expect(read.error).toBeNull();
           expect(read.data).toEqual([]);
@@ -853,7 +874,18 @@ if (project === null) {
         await client.from('venue').update({ name: 'Changed' }).eq('event_id', event.id);
         await client.from('sub_event').update({ name: 'Changed' }).eq('event_id', event.id);
         await client.from('membership').update({ role: 'guest' }).eq('event_id', event.id);
-        for (const table of ['sub_event', 'venue', 'membership', 'event'] as const) {
+        await client
+          .from('invite')
+          .update({ revoked_at: new Date().toISOString() })
+          .eq('event_id', event.id);
+        await client.from('invite').insert({
+          event_id: event.id,
+          role: 'photographer',
+          token: randomBytes(32).toString('base64url'),
+          shortcode: 'AB3K7X',
+          revoked_at: new Date().toISOString(),
+        });
+        for (const table of ['invite', 'sub_event', 'venue', 'membership', 'event'] as const) {
           const column = table === 'event' ? 'id' : 'event_id';
           await client.from(table).delete().eq(column, event.id);
         }
@@ -871,6 +903,19 @@ if (project === null) {
         const listCall = await client.rpc('list_my_events', { p_user_id: a.id });
         expect(listCall.error).not.toBeNull();
         expect(listCall.data).toBeNull();
+        // join_event takes the user as a parameter, so a caller who could run it could put anyone
+        // into any event, past the cap. resolve_invite would read anyone's membership.
+        const joinCall = await client.rpc(
+          'join_event',
+          joinEventParams(b.id, { token }, MAX_ACTIVE_GUESTS),
+        );
+        expect(joinCall.error).not.toBeNull();
+        const resolveCall = await client.rpc(
+          'resolve_invite',
+          resolveInviteParams({ token }, a.id),
+        );
+        expect(resolveCall.error).not.toBeNull();
+        expect(resolveCall.data).toBeNull();
       }
 
       await expect(store.listForMember(a.id)).resolves.toEqual([event]);
@@ -880,11 +925,557 @@ if (project === null) {
         ),
       );
       expect(counts.map((c) => c.count)).toEqual([2, 3, 1]);
+      const live = await admin
+        .from('invite')
+        .select('role, token, shortcode')
+        .eq('event_id', event.id)
+        .is('revoked_at', null);
+      expect(live.data).toHaveLength(2);
+      expect(live.data).toContainEqual({ role: 'guest', token, shortcode });
+      const all = await admin
+        .from('invite')
+        .select('id', { count: 'exact', head: true })
+        .eq('event_id', event.id);
+      expect(all.count).toBe(2);
       const names = await admin.from('venue').select('name').eq('event_id', event.id);
       expect((names.data ?? []).map((v: { name: string }) => v.name).sort()).toEqual([
         'Family Home',
         'Pearl Continental',
       ]);
+    });
+
+    describe('invite, join_event and join requests', () => {
+      const invites = createInviteStore(admin);
+
+      interface InviteRow {
+        id: string;
+        role: string;
+        token: string;
+        shortcode: string;
+      }
+
+      interface MembershipRow {
+        role: string;
+        status: string;
+        admin_verified_at: string | null;
+        requested_at: string;
+      }
+
+      function newToken(): string {
+        return randomBytes(32).toString('base64url');
+      }
+
+      function newCode(): string {
+        return Array.from(randomBytes(6), (byte) => SHORTCODE_ALPHABET[byte % 31]).join('');
+      }
+
+      // The event's one live Guest invite and one live Photographer invite.
+      async function liveInvites(eventId: string) {
+        const result = await admin
+          .from('invite')
+          .select('id, role, token, shortcode')
+          .eq('event_id', eventId)
+          .is('revoked_at', null);
+        expect(result.error).toBeNull();
+        const rows = (result.data ?? []) as InviteRow[];
+        const guest = rows.find((r) => r.role === 'guest');
+        const photographer = rows.find((r) => r.role === 'photographer');
+        if (rows.length !== 2 || guest === undefined || photographer === undefined) {
+          throw new Error(`expected one live invite per role, got ${JSON.stringify(rows)}`);
+        }
+        return { guest, photographer };
+      }
+
+      async function membershipRow(eventId: string, userId: string): Promise<MembershipRow | null> {
+        const result = await admin
+          .from('membership')
+          .select('role, status, admin_verified_at, requested_at')
+          .eq('event_id', eventId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        expect(result.error).toBeNull();
+        return result.data;
+      }
+
+      async function setEvent(eventId: string, fields: Record<string, unknown>) {
+        const result = await admin.from('event').update(fields).eq('id', eventId);
+        expect(result.error).toBeNull();
+      }
+
+      async function activeGuests(eventId: string) {
+        const result = await admin
+          .from('membership')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId)
+          .eq('role', 'guest')
+          .eq('status', 'active');
+        expect(result.error).toBeNull();
+        return result.count;
+      }
+
+      it('gives each new event one live Guest and one Photographer invite, and a repeat adds none', async () => {
+        const a = await createNamedUser();
+        const body = request();
+        const event = await createdEvent(a.id, body);
+        const { guest, photographer } = await liveInvites(event.id);
+        for (const invite of [guest, photographer]) {
+          expect(InviteToken.safeParse(invite.token).success).toBe(true);
+          expect(invite.shortcode).toMatch(new RegExp(`^[${SHORTCODE_ALPHABET}]{6}$`));
+        }
+        expect(guest.token).not.toBe(photographer.token);
+        expect(guest.shortcode).not.toBe(photographer.shortcode);
+
+        await expect(create(a.id, body)).resolves.toMatchObject({ outcome: 'repeated' });
+        const all = await admin
+          .from('invite')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', event.id);
+        expect(all.count).toBe(2);
+      });
+
+      it('keeps one live invite per role, and every token and code unique, revoked ones included', async () => {
+        const a = await createNamedUser();
+        const [event, other] = [await createdEvent(a.id), await createdEvent(a.id)];
+        const { guest } = await liveInvites(event.id);
+
+        const second = await admin
+          .from('invite')
+          .insert({ event_id: event.id, role: 'guest', token: newToken(), shortcode: newCode() });
+        expect(second.error?.code).toBe('23505');
+
+        // Revoke and regenerate, as S-05's share screen will (arch:invite).
+        const revokedAt = new Date().toISOString();
+        await admin.from('invite').update({ revoked_at: revokedAt }).eq('id', guest.id);
+        const regenerated = await admin
+          .from('invite')
+          .insert({ event_id: event.id, role: 'guest', token: newToken(), shortcode: newCode() });
+        expect(regenerated.error).toBeNull();
+
+        // A revoked code or token is never issued again, to this event or another.
+        for (const taken of [
+          { token: guest.token, shortcode: newCode() },
+          { token: newToken(), shortcode: guest.shortcode },
+        ]) {
+          const reused = await admin
+            .from('invite')
+            .insert({ event_id: other.id, role: 'guest', revoked_at: revokedAt, ...taken });
+          expect(reused.error?.code).toBe('23505');
+        }
+
+        for (const bad of [
+          { role: 'admin', token: newToken(), shortcode: newCode() },
+          { role: 'guest', token: newToken().slice(1), shortcode: newCode() },
+          { role: 'guest', token: `${newToken().slice(1)}+`, shortcode: newCode() },
+          { role: 'guest', token: newToken(), shortcode: newCode().toLowerCase() },
+          { role: 'guest', token: newToken(), shortcode: 'AB3K7O' },
+          { role: 'guest', token: newToken(), shortcode: 'AB3K7' },
+        ]) {
+          const refused = await admin
+            .from('invite')
+            .insert({ event_id: other.id, revoked_at: revokedAt, ...bad });
+          expect(refused.error?.code).toBe('23514');
+        }
+      });
+
+      it('has a Guest and a Photographer invite for every event, the ones older than S-03 included', async () => {
+        const [eventRows, inviteRows] = await Promise.all([
+          admin.from('event').select('id'),
+          admin.from('invite').select('event_id, role'),
+        ]);
+        expect(eventRows.error).toBeNull();
+        expect(inviteRows.error).toBeNull();
+        const issued = new Set(
+          ((inviteRows.data ?? []) as { event_id: string; role: string }[]).map(
+            (i) => `${i.event_id}:${i.role}`,
+          ),
+        );
+        const missing = ((eventRows.data ?? []) as { id: string }[]).filter(
+          (e) => !issued.has(`${e.id}:guest`) || !issued.has(`${e.id}:photographer`),
+        );
+        expect(missing).toEqual([]);
+      });
+
+      it('previews a live invite by token and by code, venue names in the order their first sub-event starts', async () => {
+        const [a, b] = [await createNamedUser(), await createNamedUser()];
+        const event = await createdEvent(a.id);
+        const { guest, photographer } = await liveInvites(event.id);
+        // Mehndi at Family Home starts first. Pearl Continental holds two sub-events and is named once.
+        const preview = {
+          role: 'guest',
+          event: {
+            id: event.id,
+            name: 'RLS Test Wedding',
+            coverKey: null,
+            startsAt: iso(T0),
+            endsAt: iso(T0 + 52 * HOUR),
+            venueNames: ['Family Home', 'Pearl Continental'],
+          },
+          membership: null,
+        };
+        await expect(invites.resolve({ token: guest.token }, null)).resolves.toEqual(preview);
+        await expect(invites.resolve({ code: guest.shortcode }, b.id)).resolves.toEqual(preview);
+        await expect(invites.resolve({ token: photographer.token }, a.id)).resolves.toEqual({
+          ...preview,
+          role: 'photographer',
+          membership: { role: 'admin', status: 'active' },
+        });
+
+        const key = `events/${event.id}/cover_${randomUUID()}.jpg`;
+        await setEvent(event.id, { cover_key: key });
+        await expect(invites.resolve({ token: guest.token }, null)).resolves.toMatchObject({
+          event: { coverKey: key },
+        });
+      });
+
+      it('treats an unknown, revoked, deleted-event or archived-event invite as dead, for a lookup and a join alike', async () => {
+        const [a, b] = [await createNamedUser(), await createNamedUser()];
+        const unknown = { token: newToken() };
+        await expect(invites.resolve(unknown, b.id)).resolves.toBeNull();
+        await expect(invites.join(b.id, unknown, MAX_ACTIVE_GUESTS)).resolves.toEqual({
+          outcome: 'dead',
+        });
+
+        const revoked = await createdEvent(a.id);
+        const revokedInvites = await liveInvites(revoked.id);
+        await admin
+          .from('invite')
+          .update({ revoked_at: new Date().toISOString() })
+          .eq('id', revokedInvites.guest.id);
+
+        const deleted = await createdEvent(a.id);
+        await setEvent(deleted.id, { deleted_at: new Date().toISOString() });
+        const archived = await createdEvent(a.id);
+        await setEvent(archived.id, { archived_at: new Date().toISOString() });
+
+        const dead = [
+          { eventId: revoked.id, invite: revokedInvites.guest },
+          { eventId: deleted.id, invite: (await liveInvites(deleted.id)).guest },
+          { eventId: archived.id, invite: (await liveInvites(archived.id)).photographer },
+        ];
+        for (const { eventId, invite } of dead) {
+          for (const lookup of [{ token: invite.token }, { code: invite.shortcode }]) {
+            // The event's own Admin gets nothing either.
+            await expect(invites.resolve(lookup, a.id)).resolves.toBeNull();
+            await expect(invites.join(b.id, lookup, MAX_ACTIVE_GUESTS)).resolves.toEqual({
+              outcome: 'dead',
+            });
+          }
+          await expect(membershipRow(eventId, b.id)).resolves.toBeNull();
+        }
+
+        // Revoking the Guest Link leaves the Photographer Link live.
+        await expect(
+          invites.resolve({ token: revokedInvites.photographer.token }, null),
+        ).resolves.toMatchObject({ role: 'photographer' });
+      });
+
+      it('lets a past event that is not archived be joined', async () => {
+        const [a, b] = [await createNamedUser(), await createNamedUser()];
+        const now = Date.now();
+        const event = await createdEvent(
+          a.id,
+          request({
+            venues: [{ name: 'Pearl Continental', lat: 31.5546, lng: 74.3572 }],
+            subEvents: [
+              subEvent({
+                name: 'Walima',
+                startsAt: iso(now - 48 * HOUR),
+                endsAt: iso(now - 44 * HOUR),
+                venueIndex: 0,
+              }),
+            ],
+          }),
+        );
+        const { guest } = await liveInvites(event.id);
+        await expect(
+          invites.join(b.id, { token: guest.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({ outcome: 'created', membership: { role: 'guest', status: 'active' } });
+      });
+
+      it("joins an auto event as active and a manual one as pending, with the link's role", async () => {
+        const [a, g, p] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const auto = await createdEvent(a.id);
+        const manual = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        const autoInvites = await liveInvites(auto.id);
+        const manualInvites = await liveInvites(manual.id);
+
+        await expect(
+          invites.join(g.id, { token: autoInvites.guest.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({ outcome: 'created', membership: { role: 'guest', status: 'active' } });
+        await expect(
+          invites.join(p.id, { code: autoInvites.photographer.shortcode }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({
+          outcome: 'created',
+          membership: { role: 'photographer', status: 'active' },
+        });
+        await expect(
+          invites.join(g.id, { token: manualInvites.guest.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({
+          outcome: 'created',
+          membership: { role: 'guest', status: 'pending' },
+        });
+
+        const row = await membershipRow(manual.id, g.id);
+        expect(row).toMatchObject({ role: 'guest', status: 'pending', admin_verified_at: null });
+        const requestedAt = Date.parse(row?.requested_at ?? '');
+        expect(Math.abs(requestedAt - Date.now())).toBeLessThan(5 * 60 * 1000);
+
+        await expect(store.listForMember(g.id)).resolves.toEqual([{ ...auto, role: 'guest' }]);
+        await expect(store.listJoinRequests(g.id)).resolves.toEqual([
+          {
+            eventId: manual.id,
+            eventName: 'RLS Test Wedding',
+            role: 'guest',
+            requestedAt: new Date(requestedAt).toISOString(),
+          },
+        ]);
+      });
+
+      it("returns a member's row unchanged on a repeat, whichever link they open", async () => {
+        const [a, p, r] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(a.id);
+        const { guest, photographer } = await liveInvites(event.id);
+        await addMember(event.id, p.id, 'photographer', 'active');
+
+        await expect(
+          invites.join(a.id, { token: guest.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({ outcome: 'member', membership: { role: 'admin', status: 'active' } });
+        await expect(
+          invites.join(p.id, { token: guest.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({
+          outcome: 'member',
+          membership: { role: 'photographer', status: 'active' },
+        });
+
+        await setEvent(event.id, { approval_mode: 'manual' });
+        await invites.join(r.id, { token: guest.token }, MAX_ACTIVE_GUESTS);
+        const requested = await membershipRow(event.id, r.id);
+        await setEvent(event.id, { approval_mode: 'auto' });
+        await expect(
+          invites.join(r.id, { token: photographer.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({ outcome: 'member', membership: { role: 'guest', status: 'pending' } });
+        await expect(membershipRow(event.id, r.id)).resolves.toEqual(requested);
+        await expect(membershipRow(event.id, a.id)).resolves.toMatchObject({ role: 'admin' });
+        await expect(membershipRow(event.id, p.id)).resolves.toMatchObject({
+          role: 'photographer',
+        });
+      });
+
+      it('refuses a blocked person, and leaves their row as it was', async () => {
+        const [a, b] = [await createNamedUser(), await createNamedUser()];
+        const event = await createdEvent(a.id);
+        const { guest, photographer } = await liveInvites(event.id);
+        const inserted = await admin.from('membership').insert({
+          event_id: event.id,
+          user_id: b.id,
+          role: 'guest',
+          status: 'blocked',
+          admin_verified_at: '2026-12-10T15:00:00.000Z',
+        });
+        expect(inserted.error).toBeNull();
+        const before = await membershipRow(event.id, b.id);
+
+        for (const lookup of [{ token: guest.token }, { code: photographer.shortcode }]) {
+          await expect(invites.join(b.id, lookup, MAX_ACTIVE_GUESTS)).resolves.toEqual({
+            outcome: 'blocked',
+          });
+        }
+        await expect(membershipRow(event.id, b.id)).resolves.toEqual(before);
+        await expect(invites.resolve({ token: guest.token }, b.id)).resolves.toMatchObject({
+          membership: { role: 'guest', status: 'blocked' },
+        });
+      });
+
+      it("lets a removed person rejoin by the approval mode, with the link's role and Force Verify cleared", async () => {
+        const [a, b] = [await createNamedUser(), await createNamedUser()];
+        const event = await createdEvent(a.id);
+        const { guest, photographer } = await liveInvites(event.id);
+        const inserted = await admin.from('membership').insert({
+          event_id: event.id,
+          user_id: b.id,
+          role: 'guest',
+          status: 'removed',
+          admin_verified_at: '2026-12-10T15:00:00.000Z',
+          requested_at: '2026-01-01T00:00:00.000Z',
+        });
+        expect(inserted.error).toBeNull();
+
+        await expect(
+          invites.join(b.id, { token: photographer.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({
+          outcome: 'rejoined',
+          membership: { role: 'photographer', status: 'active' },
+        });
+        const rejoined = await membershipRow(event.id, b.id);
+        expect(rejoined).toMatchObject({
+          role: 'photographer',
+          status: 'active',
+          admin_verified_at: null,
+        });
+        expect(Date.parse(rejoined?.requested_at ?? '')).toBeGreaterThan(
+          Date.parse('2026-01-01T00:00:00.000Z'),
+        );
+
+        await admin
+          .from('membership')
+          .update({ status: 'removed' })
+          .eq('event_id', event.id)
+          .eq('user_id', b.id);
+        await setEvent(event.id, { approval_mode: 'manual' });
+        await expect(
+          invites.join(b.id, { code: guest.shortcode }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({
+          outcome: 'rejoined',
+          membership: { role: 'guest', status: 'pending' },
+        });
+      });
+
+      it('counts only active Guests toward the cap, and never caps a Photographer or a request', async () => {
+        const [a, g1, x, g2, g3, p] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(a.id);
+        const { guest, photographer } = await liveInvites(event.id);
+        await addMember(event.id, g1.id, 'guest', 'active');
+        await addMember(event.id, x.id, 'guest', 'pending');
+
+        // A cap of 2: the Admin and the pending request do not count, so one place is left.
+        await expect(invites.join(g2.id, { token: guest.token }, 2)).resolves.toMatchObject({
+          outcome: 'created',
+        });
+        await expect(invites.join(g3.id, { token: guest.token }, 2)).resolves.toEqual({
+          outcome: 'full',
+        });
+        await expect(membershipRow(event.id, g3.id)).resolves.toBeNull();
+        await expect(invites.join(p.id, { token: photographer.token }, 2)).resolves.toEqual({
+          outcome: 'created',
+          membership: { role: 'photographer', status: 'active' },
+        });
+
+        // A manual event takes a request past the cap, which applies at approval (spec §4.17).
+        await setEvent(event.id, { approval_mode: 'manual' });
+        await expect(invites.join(g3.id, { token: guest.token }, 2)).resolves.toEqual({
+          outcome: 'created',
+          membership: { role: 'guest', status: 'pending' },
+        });
+        await expect(activeGuests(event.id)).resolves.toBe(2);
+      });
+
+      it('lets exactly one of two joins in when one place is left', async () => {
+        const [a, g1, g2, g3] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(a.id);
+        const { guest } = await liveInvites(event.id);
+        await addMember(event.id, g1.id, 'guest', 'active');
+
+        const results = await Promise.all([
+          invites.join(g2.id, { token: guest.token }, 2),
+          invites.join(g3.id, { code: guest.shortcode }, 2),
+        ]);
+        expect(results.map((r) => r.outcome).sort()).toEqual(['created', 'full']);
+        await expect(activeGuests(event.id)).resolves.toBe(2);
+      });
+
+      it('answers no_account for a user id with no account, and joins nothing', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const { guest } = await liveInvites(event.id);
+        await expect(
+          invites.join(randomUUID(), { token: guest.token }, MAX_ACTIVE_GUESTS),
+        ).resolves.toEqual({ outcome: 'no_account' });
+        const count = await admin
+          .from('membership')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', event.id);
+        expect(count.count).toBe(1);
+      });
+
+      it("cancels only the caller's own pending request, and leaves any other row alone", async () => {
+        const [a, b, c] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const first = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        const second = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        const firstGuest = (await liveInvites(first.id)).guest;
+        await invites.join(b.id, { token: firstGuest.token }, MAX_ACTIVE_GUESTS);
+        await invites.join(c.id, { token: firstGuest.token }, MAX_ACTIVE_GUESTS);
+        await invites.join(
+          b.id,
+          { token: (await liveInvites(second.id)).guest.token },
+          MAX_ACTIVE_GUESTS,
+        );
+
+        await expect(invites.cancelJoinRequest(first.id, b.id)).resolves.toBeNull();
+        await expect(membershipRow(first.id, b.id)).resolves.toBeNull();
+        await expect(membershipRow(first.id, c.id)).resolves.toMatchObject({ status: 'pending' });
+        await expect(membershipRow(second.id, b.id)).resolves.toMatchObject({ status: 'pending' });
+        await expect(invites.cancelJoinRequest(first.id, b.id)).resolves.toBeNull();
+
+        await expect(invites.cancelJoinRequest(first.id, a.id)).resolves.toEqual({
+          role: 'admin',
+          status: 'active',
+        });
+
+        // The Admin approved before the cancel arrived: the member stays.
+        await admin
+          .from('membership')
+          .update({ status: 'active' })
+          .eq('event_id', first.id)
+          .eq('user_id', c.id);
+        await expect(invites.cancelJoinRequest(first.id, c.id)).resolves.toEqual({
+          role: 'guest',
+          status: 'active',
+        });
+        await expect(membershipRow(first.id, c.id)).resolves.toMatchObject({ status: 'active' });
+        await expect(invites.cancelJoinRequest(randomUUID(), b.id)).resolves.toBeNull();
+      });
+
+      it("lists the caller's own pending requests, and no active, blocked, removed or deleted one", async () => {
+        const [a, b] = [await createNamedUser(), await createNamedUser()];
+        const [pending, active, blocked, removed, deleted] = [
+          await createdEvent(a.id, request({ name: 'Pending One' })),
+          await createdEvent(a.id),
+          await createdEvent(a.id),
+          await createdEvent(a.id),
+          await createdEvent(a.id),
+        ];
+        await addMember(pending.id, b.id, 'photographer', 'pending');
+        await addMember(active.id, b.id, 'guest', 'active');
+        await addMember(blocked.id, b.id, 'guest', 'blocked');
+        await addMember(removed.id, b.id, 'guest', 'removed');
+        await addMember(deleted.id, b.id, 'guest', 'pending');
+        await setEvent(deleted.id, { deleted_at: new Date().toISOString() });
+
+        const row = await membershipRow(pending.id, b.id);
+        await expect(store.listJoinRequests(b.id)).resolves.toEqual([
+          {
+            eventId: pending.id,
+            eventName: 'Pending One',
+            role: 'photographer',
+            requestedAt: new Date(row?.requested_at ?? '').toISOString(),
+          },
+        ]);
+        await expect(store.listJoinRequests(a.id)).resolves.toEqual([]);
+      });
     });
   });
 }
