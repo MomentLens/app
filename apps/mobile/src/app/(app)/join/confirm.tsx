@@ -2,7 +2,7 @@ import type { PresignedImage, ResolveInviteResponse } from '@momentlens/shared-t
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 import { Redirect, useNavigation, useRouter } from 'expo-router';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -70,8 +70,14 @@ function JoinConfirmation({ invite }: { invite: PendingInvite }) {
 
   // Join Error and Join Blocked sit at the root, outside this group, so going there replaces the
   // group. The invite is dropped first rather than left to beforeRemove, which a screen nested in
-  // a replaced group is not promised.
+  // a replaced group is not promised. Once is enough: a render before the group goes must not
+  // replace Join Error with itself.
+  const left = useRef(false);
   function toRootScreen(href: '/join-error' | '/join-blocked') {
+    if (left.current) {
+      return;
+    }
+    left.current = true;
     clearPendingInvite();
     router.replace(
       href === '/join-blocked'
