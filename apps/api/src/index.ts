@@ -7,6 +7,7 @@ import { createR2 } from './lib/r2';
 import { createTokenVerifier } from './middleware/auth';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
+import { createInviteStore } from './services/invites';
 import { createFindProfile } from './services/profiles';
 
 const DEFAULT_PORT = 3000;
@@ -51,6 +52,7 @@ createApp({
   verifyToken: createTokenVerifier(authClient),
   findProfile: createFindProfile(supabase),
   events: createEventStore(supabase),
+  invites: createInviteStore(supabase),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,

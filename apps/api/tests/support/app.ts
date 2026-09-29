@@ -7,6 +7,7 @@ import { createApp } from '../../src/app';
 import type { AppDeps } from '../../src/app';
 import { createR2 } from '../../src/lib/r2';
 import type { EventStore } from '../../src/services/events';
+import type { InviteStore } from '../../src/services/invites';
 
 // R2 settings that presign for real, with no network and no account. A URL signed with them
 // fails at R2, which no test sends it to.
@@ -26,6 +27,13 @@ const noEvents: EventStore = {
   setCover: () => Promise.resolve(false),
 };
 
+// An invite store where every invite is dead and no one has a join request.
+const noInvites: InviteStore = {
+  resolve: () => Promise.resolve(null),
+  join: () => Promise.resolve({ outcome: 'dead' }),
+  cancelJoinRequest: () => Promise.resolve(null),
+};
+
 // Dependencies for createApp that need no Supabase project. Each test overrides what it checks.
 // The token check rejects every token unless a test passes a real one, and R2 holds no objects.
 export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
@@ -36,6 +44,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     verifyToken: () => Promise.resolve(null),
     findProfile: () => Promise.resolve(null),
     events: noEvents,
+    invites: noInvites,
     presignGet: r2.presignGet,
     presignPut: r2.presignPut,
     objectExists: () => Promise.resolve(false),
