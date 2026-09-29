@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 
+import { clearPendingInvite } from '@/features/join/pending-invite';
 import { queryClient } from '@/lib/query-client';
 import { removeStoredSession, storedSessionUserId, supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
@@ -24,8 +25,11 @@ export async function clearAccountCaches(): Promise<void> {
 }
 
 // The user's own logout, which goes to Login. It signs out this device only, so the account's
-// other device stays signed in (D-109, spec §4.1), and resolves once the caches are clear.
+// other device stays signed in (D-109, spec §4.1), and resolves once the caches are clear. It
+// drops an invite opened and not yet joined too, so the next person on the phone is not handed it
+// (D-115).
 export async function logout(): Promise<void> {
+  clearPendingInvite();
   chosenLogoutInProgress = true;
   try {
     // auth-js removes the stored session and sends SIGNED_OUT even when it cannot reach Supabase
