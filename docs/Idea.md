@@ -268,11 +268,12 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
 
 2. "Join with Invite Link" → Manual Join Entry screen:
    ├── Paste an invite URL, or enter a 6-character invite code manually
-   │   (inline validation on the field if the code matches nothing). Guest
+   │   (inline validation on the field if the code matches no live invite,
+   │   mistyped or revoked alike). Guest
    │   and Photographer codes are distinct; the code itself determines the
    │   role, and the user is told which role before they join.
    └── Token resolves →
-       ├── Invalid / expired / revoked → Join Error screen
+       ├── A link that is invalid, expired or revoked → Join Error screen
        ├── Valid, and the user is blocked from this event → Join Blocked
        │   screen (D-102, D-115)
        ├── Valid, and user already belongs to this event → skips straight to
@@ -381,7 +382,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 |---|---|---|
 | Join Confirmation | Valid invite token, new to event | Read-only preview before the join action fires; shows the role being joined as. |
 | Pending Approval | Approval Mode = manual | A waiting state, not a spinner. Has a Cancel Request option. Reached again from its card on the Events list (D-115). |
-| Join Error | Expired or revoked token | Reserved for dead tokens. A mistyped shortcode gets inline field validation on Manual Join Entry instead. |
+| Join Error | Expired or revoked token | Reserved for dead links. A typed shortcode that matches no live invite, mistyped or revoked, gets inline field validation on Manual Join Entry instead. |
 | Join Blocked | A blocked person opens a live invite (D-102) | Tells them the organizer blocked them from this event. No join action (D-115). |
 | Forced Logout / Access Removed | The Supabase session ends, or the user is removed or blocked from an event mid-session (§4.1) | Prevents a silent bounce to Login reading as a bug. Access Removed returns to the Events list; only a dead session logs out. |
 | Consent re-gate | Privacy Policy version bump (§4.18) | Blocking full-screen re-consent on next launch, before anything else renders. |
