@@ -845,6 +845,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** S-03 writing `membership`, which leaves S-02 no way to record its Admin or list anyone's events. Four separate supabase-js inserts, which leave an event with no Admin when the API dies between them. `manual` as the default. A new `venue` row for every sub-event with a custom venue, which prints two QRs for one hall. Address search with no map on Android, which can put the venue 100 m off the hall inside a 200 m radius. `@expo/ui`'s DatePicker, which needs separate iOS and Android code.
 **Cost.** A Google Cloud project with billing turned on, and one native rebuild on all three machines for the map plugin. One column, `event.create_request_id`. A Do Not Publish face in a cover shows to every member until spec §6.2's fix.
 **Amended (see D-111).** The event's venue and the one radius are gone. Each sub-event carries its own radius, a sub-event's venue is one an earlier sub-event added or a new one, and the wizard sets Approval Mode. The default is still `auto`.
+**Amended (see D-115).** `GET /events` also returns the caller's pending join requests. A Do Not Publish face in a cover now reaches anyone holding a live invite, not only members.
 
 ### D-111: Each sub-event has its own radius, and the wizard has three steps
 **Decision.** Amends D-110. Ukasha ruled on each of these on 2026-09-25, after S-02's API build, from the Figma draft of the wizard.
@@ -892,6 +893,28 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** S-02's build found each one unstated, and `docs/ARCHITECTURE.md` recorded the first seven against an issue number that `doc why` cannot follow.
 **Rejected.** Leaving them on the slice card, where only S-02's issue records them. A database rule that refuses to delete an account that is still an event's Admin, which costs a trigger to guard a step the team takes by hand a few times before the demo.
 **Cost.** A replaced cover leaves an orphaned object in R2, and a large cover costs upload time and storage. An account deleted without the manual step leaves Admin-less events that only a hand-written query can repair.
+
+### D-115: Join rulings from S-03's read-back
+**Decision.** Amends D-110. Ukasha ruled on the first six on 2026-09-29 and let the routine calls stand.
+- An invite lookup answers with or without a session and shows everyone the same preview: the role, the event's name, its span, its venue names in sub-event order, and its cover, presigned. It carries no member, no venue position and no `qr_secret`. A signed-in caller also gets their own membership in that event, and the app routes on it: `active` to Event Home, `pending` to Pending Approval, `blocked` to Join Blocked, none or `removed` to Join Confirmation.
+- The cover shows on the preview because the Admin picks it for the people they invite, and would leave out anyone who should not be in it. D-110's unblurred Do Not Publish face in a cover now reaches anyone holding a live invite, until spec §6.2's fix.
+- Invite lookups have no rate limit. Only the team calls the API while it is built, so a limit protects nothing yet, and shipping the MVP comes first.
+- `GET /events` also returns the caller's `pending` join requests, with the event's name and the role. The Events tab shows each as a card that opens Pending Approval. Pending Approval refetches on foreground and every 30 seconds, opens Event Home once the row is `active`, and returns to the Events list once the row is gone. The Approval Alerts push arrives in Phase 6 (hb §14.6).
+- S-03 joins through either link, with the role the invite row carries (spec §2.2, §4.4).
+- A blocked person is told. A lookup routes them to a Join Blocked screen, and a join answers 403 `blocked`, which the app shows as Join Blocked, never as Join Error or Access Removed. S-03's schema PR adds the code to hb §5.3.
+- Until S-05 builds the share screen, testers read tokens and codes from the dev project's table editor and open a link with `adb shell am start -d` or `xcrun simctl openurl`.
+- Routine calls:
+  - A join into a full event answers 422 `event_full`, and Join Confirmation says so inline.
+  - arch:invite holds the token and shortcode formats, their uniqueness and one live invite per role. arch:membership holds `join_event`, rejoins, `requested_at` and Cancel Request.
+  - The app sends a token or code in the request body.
+  - The app keeps an opened invite in MMKV until the join, a dismissal or a logout, so killing it during signup loses nothing.
+  - Join Confirmation names the signed-in account, because the demo hands phones around (spec §9).
+  - A "Join with code" action on the Events tab opens Manual Join Entry for a user who already has events.
+  - S-03's migration replaces `create_event` to add both invite inserts on its create path only, after the repeat check, and backfills both invites for every existing event.
+**Why.** S-03's read-back found each one unstated or contradicted. The signup banner and Manual Join Entry need the event before a session exists (spec §2.3.1, §2.4), while arch §1 showed an `event` to active members only. Spec §5.1 sent a blocked person to a screen reserved for dead tokens, and hb §5.3 turns a plain 403 into Access Removed. D-110 listed no pending membership, so a pending user who closed the app had no way back to Cancel Request. An event has no venue of its own (D-111). Nothing named the transaction that holds the 150 cap when two people join at once.
+**Rejected.** A signed-out preview with only the name and role. Answering a blocked person 404 with Join Error's "expired or revoked" copy, which tells them something false. nginx `limit_req` on lookups. Keeping the pending request on the phone only, which a second device or a reinstall loses.
+**Cost.** Anyone holding or guessing a live code learns an event's name, dates, venue names and cover without an account, and nothing slows a guesser. A blocked person learns they were blocked. One error code, one screen, one column and a field on `ListEventsResponse`.
+**Reopen if.** The API's logs show invite lookups the team did not make. Then add the rate limit.
 
 ## Open items that are not decisions yet
 
