@@ -12,6 +12,7 @@ const STATUS: Record<ErrorCode, number> = {
   not_member: 403,
   wrong_role: 403,
   not_uploader: 403,
+  blocked: 403,
   not_found: 404,
   duplicate: 409,
   album_closed: 409,
