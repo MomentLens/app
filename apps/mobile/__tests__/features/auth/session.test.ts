@@ -61,6 +61,11 @@ const mockImage = {
 };
 jest.mock('expo-image', () => ({ Image: mockImage }));
 
+const mockClearPendingInvite = jest.fn();
+jest.mock('@/features/join/pending-invite', () => ({
+  clearPendingInvite: mockClearPendingInvite,
+}));
+
 function sessionFor(userId: string): Session {
   return {
     access_token: `access-${userId}`,
@@ -209,6 +214,33 @@ describe('logout', () => {
     await app.logout();
 
     expectCachesCleared();
+  });
+
+  it('drops an invite opened and not yet joined, so the next person is not handed it (D-115)', async () => {
+    const app = start({ userIdAtLaunch: 'user-a' });
+    await settle();
+    jest.clearAllMocks();
+
+    await app.logout();
+
+    expect(mockClearPendingInvite).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the invite when the session ends on its own, so logging back in still offers it', async () => {
+    start({ userIdAtLaunch: 'user-a' });
+    await settle();
+    jest.clearAllMocks();
+
+    await mockState.listener?.('SIGNED_OUT', null);
+
+    expect(mockClearPendingInvite).not.toHaveBeenCalled();
+  });
+
+  it('keeps the invite through a launch with nobody signed in, which is a kill during signup', async () => {
+    start({ userIdAtLaunch: null });
+    await settle();
+
+    expect(mockClearPendingInvite).not.toHaveBeenCalled();
   });
 
   it('logs out offline even when signOut leaves the session in storage', async () => {
