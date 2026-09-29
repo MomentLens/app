@@ -1,4 +1,9 @@
-import type { EventSummary, ListEventsResponse, PresignedImage } from '@momentlens/shared-types';
+import type {
+  EventSummary,
+  JoinRequest,
+  ListEventsResponse,
+  PresignedImage,
+} from '@momentlens/shared-types';
 import { useQuery } from '@tanstack/react-query';
 
 import { ApiError, listEvents } from '@/lib/api';
@@ -6,14 +11,20 @@ import { queryClient } from '@/lib/query-client';
 
 export const EVENTS_QUERY_KEY = ['events'] as const;
 
+interface UseEventsOptions {
+  // Pending Approval polls the list for its request (D-115). Nothing else sets one.
+  refetchInterval?: number;
+}
+
 // GET /events as server state (apps/mobile/CLAUDE.md). api.ts has already refreshed and retried
 // once by the time a 401 reaches here, so it is not retried again.
-export function useEvents() {
+export function useEvents({ refetchInterval }: UseEventsOptions = {}) {
   return useQuery({
     queryKey: EVENTS_QUERY_KEY,
     queryFn: ({ signal }) => listEvents(signal),
     retry: (failureCount, error) =>
       !(error instanceof ApiError && error.status === 401) && failureCount < 1,
+    refetchInterval,
   });
 }
 
@@ -35,4 +46,31 @@ export function rememberCover(eventId: string, cover: PresignedImage): void {
     const event = list?.events.find((existing) => existing.id === eventId);
     return event ? withEvent(list, { ...event, cover }) : list;
   });
+}
+
+// Puts a join that came back pending into the list straight away, so Pending Approval finds its
+// request before the refetch lands, and the Events tab shows its card when the person goes back.
+export function rememberJoinRequest(request: JoinRequest): void {
+  queryClient.setQueryData<ListEventsResponse>(EVENTS_QUERY_KEY, (list) => ({
+    events: list?.events ?? [],
+    joinRequests: [
+      ...(list?.joinRequests ?? []).filter((existing) => existing.eventId !== request.eventId),
+      request,
+    ],
+  }));
+  void queryClient.invalidateQueries({ queryKey: EVENTS_QUERY_KEY });
+}
+
+// Takes a cancelled request off the list straight away, so the Events tab does not show its card
+// until the refetch lands.
+export function forgetJoinRequest(eventId: string): void {
+  queryClient.setQueryData<ListEventsResponse>(EVENTS_QUERY_KEY, (list) =>
+    list
+      ? {
+          ...list,
+          joinRequests: list.joinRequests.filter((request) => request.eventId !== eventId),
+        }
+      : list,
+  );
+  void queryClient.invalidateQueries({ queryKey: EVENTS_QUERY_KEY });
 }

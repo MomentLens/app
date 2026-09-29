@@ -72,7 +72,9 @@ export default function EventPlaceholder() {
                 </Text>
               </View>
             </>
-          ) : events.isPending ? (
+          ) : events.isPending || events.isFetching ? (
+            // isFetching too: a join or a link lands here while the list that has the event is
+            // still on its way, and the cached one would read as "not available".
             <View className="flex-1 items-center justify-center">
               <ActivityIndicator className="text-accent" />
             </View>
