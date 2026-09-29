@@ -68,15 +68,41 @@ export function createTokenVerifier(supabase: Supabase): VerifyToken {
 // "Bearer <token>". The scheme is case-insensitive (RFC 6750 §2.1).
 const BEARER = /^bearer +(\S+)$/i;
 
+// The user an Authorization header names, or null when it names no valid session.
+async function userFrom(verify: VerifyToken, header: string | undefined): Promise<AuthUser | null> {
+  const match = BEARER.exec(header ?? '');
+  return match?.[1] === undefined ? null : verify(match[1]);
+}
+
 // Every authenticated route runs this first. It answers 401 no_session unless the request carries
 // a valid access token, and otherwise sets req.user, the one source of the caller's identity.
 // Nothing downstream checks identity again, and nothing reads a user id from the request itself.
 export function requireAuth(verify: VerifyToken): RequestHandler {
   return async (req, _res, next) => {
-    const match = BEARER.exec(req.headers.authorization ?? '');
-    const user = match?.[1] === undefined ? null : await verify(match[1]);
+    const user = await userFrom(verify, req.headers.authorization);
     if (user === null) {
       throw new ApiError('no_session', 'Missing, invalid or expired access token');
+    }
+    req.user = user;
+    next();
+  };
+}
+
+// For a route that answers with or without a session, POST /invites/resolve (D-115). No
+// Authorization header means signed out, and sets req.user to null. A header that is there but
+// names no valid session answers 401 no_session, as requireAuth does: an expired session must not
+// quietly get the signed-out answer, because the app routes on the membership it would leave out.
+export function optionalAuth(verify: VerifyToken): RequestHandler {
+  return async (req, _res, next) => {
+    const header = req.headers.authorization;
+    if (header === undefined) {
+      req.user = null;
+      next();
+      return;
+    }
+    const user = await userFrom(verify, header);
+    if (user === null) {
+      throw new ApiError('no_session', 'Invalid or expired access token');
     }
     req.user = user;
     next();
@@ -86,8 +112,17 @@ export function requireAuth(verify: VerifyToken): RequestHandler {
 // The caller on a route behind requireAuth. Throws when requireAuth did not run, which is a
 // wiring mistake and answers 500 rather than serving the route to nobody in particular.
 export function authenticatedUser(req: Request): AuthUser {
-  if (req.user === undefined) {
+  if (req.user === undefined || req.user === null) {
     throw new Error(`requireAuth did not run before ${req.method} ${req.path}`);
+  }
+  return req.user;
+}
+
+// The caller on a route behind optionalAuth, or null when signed out. Throws when optionalAuth did
+// not run, for the same reason authenticatedUser does.
+export function sessionUser(req: Request): AuthUser | null {
+  if (req.user === undefined) {
+    throw new Error(`optionalAuth did not run before ${req.method} ${req.path}`);
   }
   return req.user;
 }
