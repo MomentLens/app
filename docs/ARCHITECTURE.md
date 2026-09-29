@@ -49,7 +49,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 
 ## 2. Tables
 
-Planned, not migrated, except `health_check`, `profile`, `subject`, `event`, `venue`, `sub_event` and `membership`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
+Planned, not migrated, except `health_check`, `profile`, `subject`, `event`, `venue`, `sub_event`, `membership` and `invite`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
 
 ### `profile`
 One row per auth user. `user_id` is the primary key, so the table has no `id`. Migration `supabase/migrations/20260924101332_create_profile_and_subject.sql`.
@@ -91,7 +91,7 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - No venue and no verification radius of its own. Each sub-event has both (D-111)
 - `approval_mode` (`auto`, `manual`, default `auto`, §4.4, D-110), chosen on the wizard's first step (D-111), `album_open` (false at creation, §2.1)
 - `create_request_id`, the uuid the app sends with a create, unique across all events. A repeat from the same caller returns the first event and writes nothing. Another caller's repeat gets 409 `duplicate` and nothing about that event. A repeat whose event was soft-deleted since gets 404 (D-110, D-114)
-- One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events and the creator's `admin` membership in one transaction. S-03 adds the invite inserts to it (D-95, D-110). It checks the sub-event count, the venue indexes, that every venue is used, and the 336-hour span again, so a refusal of that kind is an API bug and answers 500. The one refusal that is not a bug is the membership foreign key failing for an account deleted since its token was issued, which the API answers 401 `no_session` (D-114)
+- One SQL function, `create_event`, called with `rpc`, inserts the event, its venues, its sub-events, the creator's `admin` membership and the event's two invites in one transaction (D-95, D-110). `supabase/migrations/20260929184331_invite_and_join.sql` replaced it to add the invites, after the repeat check, so a repeated `create_request_id` issues none (D-115). It checks the sub-event count, the venue indexes, that every venue is used, and the 336-hour span again, so a refusal of that kind is an API bug and answers 500. The one refusal that is not a bug is the membership foreign key failing for an account deleted since its token was issued, which the API answers 401 `no_session` (D-114)
 - `list_my_events(p_user_id)` serves `GET /events`. It returns every event where the user's membership is `active`, soft-deleted ones left out, with the user's role and the span from the sub-events (D-110). `membership_user_id_status_idx` on `(user_id, status)` keeps it indexed. An event with no sub-events would come back with a null span, and the API's parse refuses it. `GET /events` also returns the caller's `pending` rows as join requests, each with the event's name and the role (D-115)
 - Both functions take the user as a parameter, so `execute` is granted to `service_role` only. They run as `security invoker`
 - `PUT /events/{eventId}/cover` replaces `cover_key` and deletes nothing, so a replaced cover's object stays in R2. A cover has no size limit (D-114)
@@ -118,28 +118,35 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - Deleted only while it has no photos, and never the event's last one. An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the event; there is no Realtime on this table (D-100)
 
 ### `membership`
-Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`.
+Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`. `requested_at` comes from `supabase/migrations/20260929184331_invite_and_join.sql`.
 - `event_id`, `user_id`, unique together. `user_id` is `ON DELETE CASCADE` to `auth.users`
 - `role` (`admin`, `photographer`, `guest`), `status` (`pending`, `active`, `blocked`, `removed`)
 - Exactly one `admin` row per event, its creator's. A role change moves someone between `guest` and `photographer` only (D-102)
 - The database holds part of that. A partial unique index, `membership_one_admin_idx`, allows at most one `admin` row per event, and `membership_admin_active_check` keeps it `active`. Only `create_event` writes it. Nothing in the database yet stops an update changing the Admin's role; the slice that builds role changes adds that guard (D-114)
 - **Open.** Deleting an account deletes its memberships, so every event it was the Admin of is left with no Admin. No slice builds a handover yet. Until one does, the team deletes each such event, or hands it to another member by hand, before deleting the account (D-114)
 - `admin_verified_at` (Force Verify, D-15), `last_viewed_at` (the "new since last visit" dot, §2.5)
-- A join request is a `pending` row. Approve sets `active`, reject or cancel deletes the row, block sets `blocked` (§4.4). At most 150 `active` guest rows per event; the Admin and Photographers do not count (§4.17, D-102)
+- A join request is a `pending` row. Approve sets `active`, reject or cancel deletes the row, block sets `blocked` (§4.4). At most 150 `active` guest rows per event; the Admin and Photographers do not count (§4.17, D-102). A join to a `manual` event is let in as `pending` past 150, and the cap applies when S-07 approves it (spec §4.17)
 - One SQL function, `join_event`, called with `rpc`, is the only way in through an invite. In one transaction it locks the event row, checks the invite is live, refuses a `blocked` caller, refuses the 151st `active` guest, then inserts the row or updates a `removed` one, `active` or `pending` by the event's approval mode (D-95, D-115). A member's repeat returns their row unchanged. A rejoin takes the role of the link it used and clears `admin_verified_at`. S-25 adds the `reprocess` enqueue inside it (D-84)
-- `requested_at`, set on every join and rejoin, is the join time the Pending Approvals queue shows (spec §2.1.3, D-115). `created_at` would show a returning person their first join
+- `join_event(p_user_id, p_token, p_shortcode, p_max_guests)` takes the cap as an argument. The API passes `MAX_ACTIVE_GUESTS`, 150, from `apps/api/src/services/invites.ts`, and `rls.test.ts` passes a small one to test the last place. It answers with an `outcome`: `created`, `rejoined`, `member`, `dead`, `blocked` or `full`
+- `join_event` takes `FOR NO KEY UPDATE` on the event row before it counts, so two joins never both take the last place. The lock waits on any update of the event, a delete or an archive included, and lets inserts that reference the event carry on. **S-07's approval, and anything else that makes a Guest `active`, must take the same lock before it counts**, or an approve and a join can both take the last place
+- `requested_at` (`not null`, default `now()`), set on every join and rejoin, is the join time the Pending Approvals queue shows (spec §2.1.3, D-115). `created_at` would show a returning person their first join. Rows older than the migration took their `created_at`
 - Cancel Request deletes the caller's row only while it is `pending`, so a cancel that loses a race with an approve leaves the member `active` (D-115)
 - Remove from Event sets `removed`: the person sees Access Removed, their uploads stay, and a live invite lets them join again. A `blocked` person cannot rejoin (D-102)
 
 ### `invite`
+Migration `supabase/migrations/20260929184331_invite_and_join.sql`.
 - `event_id`, `role` (`guest`, `photographer`), `token`, `shortcode` (6 characters), `revoked_at`
+- `event_id` is `ON DELETE CASCADE` to `event`, so the hard delete after soft deletion (§4.21) takes revoked invites too. `invite_event_id_idx` indexes it
 - Revoke and regenerate sets `revoked_at` and inserts a new row (§4.4)
 - An invite is dead once `revoked_at` is set or its event is deleted or archived, and that is what the Join Error screen calls expired. There is no time limit
 - The link is `momentlens://invite/{token}` (D-101)
 - `token` is 32 random bytes from `gen_random_bytes`, base64url, 43 characters, unique (D-115)
 - `shortcode` is 6 characters from `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, which leaves out 0, O, 1, I and L. It is stored uppercase and is unique across every row, revoked ones included, so a reissued code never sends an old share to another event. Entry ignores case and spaces (D-115)
-- A partial unique index on `(event_id, role)` where `revoked_at` is null keeps one live invite per role
-- `create_event` inserts both when it creates the event, and S-03's migration backfills both for every event made before it (D-110, D-115)
+- A partial unique index, `invite_one_live_idx`, on `(event_id, role)` where `revoked_at` is null keeps one live invite per role
+- `create_event` inserts both when it creates the event, through `issue_invite(p_event_id, p_role)`. A new token or code can match one already issued, so `issue_invite` draws again, up to 10 times, and fails the create after that. A clash with `invite_one_live_idx` is not retried: S-05's regenerate must revoke the old row first (D-110, D-115)
+- S-03's migration backfilled both for every event made before it, deleted and archived ones included, so a restored event comes back joinable
+- `resolve_invite(p_token, p_shortcode, p_user_id)` serves `POST /invites/resolve`. It returns the preview in §1 and `p_user_id`'s own role and status in the event, or no row for a dead invite. It matches a shortcode as stored, so the API strips spaces and uppercases with `normalizeShortcode` from `packages/shared-types` first (D-115)
+- RLS is on with no policy. `anon` and `authenticated` keep `SELECT` and read no rows, as on every other table. `resolve_invite`, `join_event` and `issue_invite` take the user or the event as a parameter and check no caller, so `execute` on them and on `new_invite_token` and `new_invite_shortcode` is granted to `service_role` only. `apps/api/tests/integration/rls.test.ts` checks the table refusals and those of `resolve_invite` and `join_event`
 - The app sends a token or shortcode in the request body, never the path, because hb §5.3 puts only uuids in a path and nginx logs every path (D-115)
 - Lookups have no rate limit (D-115)
 
