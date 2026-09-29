@@ -11,16 +11,23 @@ import {
   setEventCoverController,
 } from './controllers/events';
 import { healthController } from './controllers/health';
+import {
+  cancelJoinRequestController,
+  joinEventController,
+  resolveInviteController,
+} from './controllers/invites';
 import { getMyProfileController } from './controllers/profiles';
 import type { ObjectExists, PresignGet, PresignPut } from './lib/r2';
-import { requireAuth } from './middleware/auth';
+import { optionalAuth, requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
 import { errorHandler, notFound } from './middleware/errors';
 import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
+import { invitesRouter } from './routes/invites';
 import { profilesRouter } from './routes/profiles';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
+import type { InviteStore } from './services/invites';
 import type { FindProfile } from './services/profiles';
 
 // What the app needs from outside. index.ts builds the real ones from the environment, and tests
@@ -31,6 +38,7 @@ export interface AppDeps {
   verifyToken: VerifyToken;
   findProfile: FindProfile;
   events: EventStore;
+  invites: InviteStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
@@ -51,6 +59,13 @@ export function createApp(deps: AppDeps): Express {
       list: listEventsController(deps.events, deps.presignGet),
       createCoverUpload: createCoverUploadController(deps.events, deps.presignPut),
       setCover: setEventCoverController(deps.events, deps.objectExists, deps.presignGet),
+      cancelJoinRequest: cancelJoinRequestController(deps.invites),
+    }),
+  );
+  app.use(
+    invitesRouter(optionalAuth(deps.verifyToken), auth, {
+      resolve: resolveInviteController(deps.invites, deps.presignGet),
+      join: joinEventController(deps.invites),
     }),
   );
   app.use(notFound);

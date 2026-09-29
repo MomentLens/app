@@ -8,6 +8,7 @@ export interface EventHandlers {
   list: RequestHandler;
   createCoverUpload: RequestHandler;
   setCover: RequestHandler;
+  cancelJoinRequest: RequestHandler;
 }
 
 // requireAuth runs on each route, before the body is read, so an unauthenticated request is
@@ -18,5 +19,6 @@ export function eventsRouter(auth: RequestHandler, handlers: EventHandlers): Rou
   router.get('/events', auth, handlers.list);
   router.post('/events/:eventId/cover-upload', auth, handlers.createCoverUpload);
   router.put('/events/:eventId/cover', auth, jsonBody, handlers.setCover);
+  router.delete('/events/:eventId/join-request', auth, handlers.cancelJoinRequest);
   return router;
 }
