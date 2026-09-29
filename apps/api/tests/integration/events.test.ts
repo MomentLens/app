@@ -1,6 +1,7 @@
-// POST /events, GET /events and the two cover endpoints (D-110, arch §3). The event store is an
-// in-memory fake keyed by user, so these tests check what the API does with each answer the store
-// gives. rls.test.ts runs the real store, create_event and list_my_events against the dev project.
+// POST /events, GET /events and the two cover endpoints (D-110, D-115, arch §3). The event store is
+// an in-memory fake keyed by user, so these tests check what the API does with each answer the
+// store gives. rls.test.ts runs the real store, create_event, list_my_events and the join request
+// list against the dev project.
 // URLs are signed by the real R2 presigner with test credentials.
 import { randomUUID } from 'node:crypto';
 
@@ -17,6 +18,7 @@ import {
 } from '@momentlens/shared-types';
 import type {
   CreateEventRequest,
+  JoinRequest,
   MembershipRole,
   MembershipStatus,
   SubEventInput,
@@ -61,8 +63,12 @@ interface FakeEvent {
   qrSecret: string;
 }
 
-// Answers as create_event and list_my_events do: a repeat from the creator returns the first event,
-// anyone else's is taken, a soft-deleted event is gone, and a list holds active memberships only.
+// When every seeded join request was made. The real store reads membership.requested_at.
+const REQUESTED_AT = '2026-12-01T10:00:00.000Z';
+
+// Answers as create_event, list_my_events and the join request list do: a repeat from the creator
+// returns the first event, anyone else's is taken, a soft-deleted event is gone, a list holds active
+// memberships only, and the join requests are the caller's own pending rows.
 class FakeEvents implements EventStore {
   readonly events = new Map<string, FakeEvent>();
   readonly creates: { userId: string; request: CreateEventRequest }[] = [];
@@ -143,6 +149,17 @@ class FakeEvents implements EventStore {
       [...this.events.values()]
         .filter((e) => !e.deleted && e.members.get(userId)?.status === 'active')
         .map((e) => this.record(e, userId)),
+    );
+  }
+
+  listJoinRequests(userId: string): Promise<JoinRequest[]> {
+    if (this.failWith) return Promise.reject(this.failWith);
+    return Promise.resolve(
+      [...this.events.values()].flatMap((e) => {
+        const member = e.members.get(userId);
+        if (e.deleted || member?.status !== 'pending' || member.role === 'admin') return [];
+        return [{ eventId: e.id, eventName: e.name, role: member.role, requestedAt: REQUESTED_AT }];
+      }),
     );
   }
 
@@ -706,6 +723,60 @@ describe('GET /events', () => {
       expect(events).toEqual([]);
     },
   );
+
+  it("lists the caller's own pending requests with the event's name and the role, and nobody else's", async () => {
+    const asGuest = store.seed(
+      { [B]: ['admin', 'active'], [A]: ['guest', 'pending'] },
+      { name: 'Mehndi Night' },
+    );
+    const asPhotographer = store.seed(
+      { [B]: ['admin', 'active'], [A]: ['photographer', 'pending'] },
+      { name: 'Walima' },
+    );
+    // A is this event's Admin, and B's request to it is not A's own.
+    const administered = store.seed({ [A]: ['admin', 'active'], [B]: ['guest', 'pending'] });
+    store.seed({ [B]: ['admin', 'active'] }, { name: 'Only B' });
+
+    const response = await send('GET', '/events', 'token-a');
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    const { events, joinRequests } = ListEventsResponse.parse(JSON.parse(text));
+    expect(events.map((e) => e.id)).toEqual([administered.id]);
+    const byName = (a: JoinRequest, b: JoinRequest) => a.eventName.localeCompare(b.eventName);
+    expect([...joinRequests].sort(byName)).toEqual([
+      { eventId: asGuest.id, eventName: 'Mehndi Night', role: 'guest', requestedAt: REQUESTED_AT },
+      {
+        eventId: asPhotographer.id,
+        eventName: 'Walima',
+        role: 'photographer',
+        requestedAt: REQUESTED_AT,
+      },
+    ]);
+    expect(text).not.toContain(B);
+    expect(text).not.toContain('Only B');
+
+    const forB = ListEventsResponse.parse(await (await send('GET', '/events', 'token-b')).json());
+    expect(forB.joinRequests.map((r) => r.eventId)).toEqual([administered.id]);
+  });
+
+  it.each(['active', 'blocked', 'removed'] as const)(
+    'lists no join request for a %s membership',
+    async (status) => {
+      store.seed({ [B]: ['admin', 'active'], [A]: ['guest', status] });
+      const { joinRequests } = ListEventsResponse.parse(
+        await (await send('GET', '/events', 'token-a')).json(),
+      );
+      expect(joinRequests).toEqual([]);
+    },
+  );
+
+  it('leaves out a request to a soft-deleted event', async () => {
+    store.seed({ [B]: ['admin', 'active'], [A]: ['guest', 'pending'] }, { deleted: true });
+    const { joinRequests } = ListEventsResponse.parse(
+      await (await send('GET', '/events', 'token-a')).json(),
+    );
+    expect(joinRequests).toEqual([]);
+  });
 
   it('leaves out a soft-deleted event', async () => {
     store.seed({ [A]: ['admin', 'active'] }, { deleted: true });

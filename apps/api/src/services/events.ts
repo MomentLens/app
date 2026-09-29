@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { EventType, MembershipRole, MembershipStatus } from '@momentlens/shared-types';
+import { EventType, InviteRole, MembershipRole, MembershipStatus } from '@momentlens/shared-types';
 import type {
   CreateCoverUploadResponse,
   CreateEventRequest,
   EventSummary,
+  JoinRequest,
+  ListEventsResponse,
   PresignedImage,
   SetEventCoverResponse,
 } from '@momentlens/shared-types';
@@ -41,12 +43,14 @@ export interface EventAccess {
   membership: { role: MembershipRole; status: MembershipStatus } | null;
 }
 
-// Every read and write of event, venue, sub_event and membership that S-02 makes. It checks
-// nothing about who asks; the functions below do.
+// Every read and write of event, venue, sub_event and membership that S-02 makes, and S-03's list
+// of join requests. It checks nothing about who asks; the functions below do.
 export interface EventStore {
   create(userId: string, request: CreateEventRequest): Promise<CreateEventResult>;
   // Every event where the user's membership is active, soft-deleted events left out (D-110).
   listForMember(userId: string): Promise<EventRecord[]>;
+  // Every one of the user's own pending memberships, soft-deleted events left out (D-115).
+  listJoinRequests(userId: string): Promise<JoinRequest[]>;
   // Null when no event has this id.
   findAccess(eventId: string, userId: string): Promise<EventAccess | null>;
   // False when the event does not exist or is soft-deleted, and then nothing was written.
@@ -55,7 +59,7 @@ export interface EventStore {
 
 // Postgres prints a timestamptz with microseconds and +00:00. The contract wants toISOString's
 // form, and an unreadable value is a bug to fail on, not one to send.
-function toTimestamp(value: string): string {
+export function toTimestamp(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw new Error(`Unreadable timestamp from Postgres: ${value}`);
@@ -94,6 +98,14 @@ const CreateEventRow = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.enum(['taken', 'gone']) }),
 ]);
 
+// A pending membership with its event, from the embedded select in listJoinRequests. The event's
+// deleted_at is read back to prove the inner join's filter held.
+const JoinRequestRow = z.object({
+  role: InviteRole,
+  requested_at: z.string().transform(toTimestamp),
+  event: z.object({ id: z.uuid(), name: z.string(), deleted_at: z.null() }),
+});
+
 const AccessRows = {
   event: z.object({ deleted_at: z.string().nullable() }),
   membership: z.object({ role: MembershipRole, status: MembershipStatus }),
@@ -126,7 +138,7 @@ export function createEventParams(userId: string, request: CreateEventRequest) {
 }
 
 // Postgres foreign_key_violation on membership.user_id: the caller's account no longer exists.
-function isMissingAccount(error: { code?: string; message?: string }): boolean {
+export function isMissingAccount(error: { code?: string; message?: string }): boolean {
   return error.code === '23503' && (error.message ?? '').includes('membership_user_id_fkey');
 }
 
@@ -167,6 +179,29 @@ export function createEventStore(supabase: Supabase): EventStore {
         .array(EventRow)
         .parse(result.data as unknown)
         .map(toRecord);
+    },
+
+    async listJoinRequests(userId) {
+      // The (user_id, status) index finds the rows. The inner join drops a row whose event is
+      // soft-deleted, where a plain embed would return it with a null event.
+      const result = await supabase
+        .from('membership')
+        .select('role, requested_at, event!inner(id, name, deleted_at)')
+        .eq('user_id', userId)
+        .eq('status', 'pending')
+        .is('event.deleted_at', null);
+      if (result.error) {
+        throw result.error;
+      }
+      return z
+        .array(JoinRequestRow)
+        .parse(result.data as unknown)
+        .map((row) => ({
+          eventId: row.event.id,
+          eventName: row.event.name,
+          role: row.role,
+          requestedAt: row.requested_at,
+        }));
     },
 
     async findAccess(eventId, userId) {
@@ -212,10 +247,12 @@ export function createEventStore(supabase: Supabase): EventStore {
 }
 
 // The one function that presigns an event cover. Call it only for a viewer the endpoint has
-// already checked is an active member of the event (arch §1, arch §3).
+// already checked is an active member of the event, or holds one of its live invites (arch §1,
+// arch §3, D-115).
 //
-// The cover never passes through the worker, so a Do Not Publish guest in it is unblurred; spec
-// §6.2 defers that (D-110). The cache key is the object key, which is new for every cover.
+// The cover never passes through the worker, so a Do Not Publish guest in it is unblurred, and
+// through an invite that reaches people who are not members yet; spec §6.2 defers that (D-110,
+// D-115). The cache key is the object key, which is new for every cover.
 export async function presignCover(key: string, presignGet: PresignGet): Promise<PresignedImage> {
   return { url: await presignGet(key), cacheKey: key };
 }
@@ -261,14 +298,20 @@ export async function createEvent(
 }
 
 // GET /events. The store returns only the caller's active memberships, so every cover here is one
-// the caller may see.
+// the caller may see. The join requests carry no cover, and are the caller's own pending rows only.
 export async function listEvents(
   store: EventStore,
   presignGet: PresignGet,
   userId: string,
-): Promise<EventSummary[]> {
-  const records = await store.listForMember(userId);
-  return Promise.all(records.map((record) => toSummary(record, presignGet)));
+): Promise<ListEventsResponse> {
+  const [records, joinRequests] = await Promise.all([
+    store.listForMember(userId),
+    store.listJoinRequests(userId),
+  ]);
+  return {
+    events: await Promise.all(records.map((record) => toSummary(record, presignGet))),
+    joinRequests,
+  };
 }
 
 // The check both cover endpoints make before anything else: the event exists and is not deleted,

@@ -31,15 +31,13 @@ export function createEventController(events: EventStore, presignGet: PresignGet
   };
 }
 
-// GET /events. The caller's events and nobody else's; the user comes from the token only.
+// GET /events. The caller's events and join requests and nobody else's; the user comes from the
+// token only.
 export function listEventsController(events: EventStore, presignGet: PresignGet) {
   return async (req: Request, res: Response): Promise<void> => {
     const { id } = authenticatedUser(req);
     const list = await listEvents(events, presignGet, id);
-    // S-03's api build fills joinRequests. Until its join_event exists, no pending row can.
-    res
-      .set('Cache-Control', 'no-store')
-      .json(ListEventsResponse.parse({ events: list, joinRequests: [] }));
+    res.set('Cache-Control', 'no-store').json(ListEventsResponse.parse(list));
   };
 }
 
