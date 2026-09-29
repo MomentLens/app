@@ -571,3 +571,187 @@ describe('event endpoints', () => {
     expect((error as InstanceType<Api['ApiError']>).code).toBe('upload_missing');
   });
 });
+
+describe('invite endpoints', () => {
+  const EVENT_ID = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const TOKEN = 'a'.repeat(43);
+  const preview = {
+    role: 'guest',
+    event: {
+      id: EVENT_ID,
+      name: "Ayesha & Omar's Wedding",
+      cover: null,
+      startsAt: '2026-10-03T13:00:00.000Z',
+      endsAt: '2026-10-04T18:00:00.000Z',
+      venueNames: ['Pearl Continental', 'Nishat Hotel'],
+    },
+    membership: null,
+  };
+
+  function signedIn(accessToken: string): SessionResult {
+    return { data: { session: { access_token: accessToken } }, error: null };
+  }
+
+  function answersInTurn(...answers: [number, unknown][]) {
+    let call = 0;
+    return jest.fn<typeof fetch>(() => {
+      const [status, body] = answers[Math.min(call, answers.length - 1)]!;
+      call += 1;
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve(body),
+      } as unknown as Response);
+    });
+  }
+
+  function initOf(fetchMock: ReturnType<typeof answersInTurn>, call: number) {
+    return fetchMock.mock.calls[call]?.[1] ?? {};
+  }
+
+  function headersOf(fetchMock: ReturnType<typeof answersInTurn>, call: number) {
+    return (initOf(fetchMock, call).headers ?? {}) as Record<string, string>;
+  }
+
+  function errorBody(code: string) {
+    return { error: { code, message: 'refused' } };
+  }
+
+  it('resolves a signed-out lookup with no Authorization header (D-115)', async () => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const fetchMock = answersInTurn([200, preview]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.resolveInvite({ token: TOKEN })).resolves.toEqual(preview);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.test/invites/resolve');
+    expect(initOf(fetchMock, 0).method).toBe('POST');
+    expect(headersOf(fetchMock, 0).Authorization).toBeUndefined();
+  });
+
+  it('sends the token in the body and never the path, which nginx logs (arch:invite)', async () => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const fetchMock = answersInTurn([200, preview]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await api.resolveInvite({ token: TOKEN });
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain(TOKEN);
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual({ token: TOKEN });
+  });
+
+  it('resolves a signed-in lookup with the access token, so the answer carries the membership', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([
+      200,
+      { ...preview, membership: { role: 'guest', status: 'pending' } },
+    ]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    const answer = await api.resolveInvite({ code: 'AB3K7X' });
+    expect(answer.membership).toEqual({ role: 'guest', status: 'pending' });
+    expect(headersOf(fetchMock, 0).Authorization).toBe('Bearer token-1');
+  });
+
+  it('refreshes once and retries a signed-in lookup that answers 401', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    mockAuth.refreshSession.mockResolvedValue(signedIn('token-2'));
+    const fetchMock = answersInTurn([401, errorBody('no_session')], [200, preview]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.resolveInvite({ token: TOKEN })).resolves.toEqual(preview);
+    expect(headersOf(fetchMock, 1).Authorization).toBe('Bearer token-2');
+  });
+
+  it('never looks an invite up as signed out when a stored session cannot be refreshed offline', async () => {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: new AuthRetryableFetchError('Network request failed', 0),
+    });
+    const fetchMock = answersInTurn([200, preview]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.resolveInvite({ token: TOKEN })).rejects.toBeInstanceOf(api.ApiError);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('throws not_found for a dead invite', async () => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    globalThis.fetch = answersInTurn([404, errorBody('not_found')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.resolveInvite({ code: 'AB3K7X' }).catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe('not_found');
+  });
+
+  it('refuses a preview that carries a cover with no cache key (root invariant 2)', async () => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const cover = { url: 'https://r2.example.test/get?sig=1' };
+    globalThis.fetch = answersInTurn([200, { ...preview, event: { ...preview.event, cover } }]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.resolveInvite({ token: TOKEN })).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('joins with the lookup in the body and accepts a 201 and a 200 alike', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const joined = { membership: { role: 'guest', status: 'active' } };
+    const fetchMock = answersInTurn([201, joined], [200, joined]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.joinEvent({ token: TOKEN })).resolves.toEqual(joined);
+    await expect(api.joinEvent({ token: TOKEN })).resolves.toEqual(joined);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.test/invites/join');
+    expect(initOf(fetchMock, 0).method).toBe('POST');
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual({ token: TOKEN });
+  });
+
+  it.each([
+    [403, 'blocked'],
+    [404, 'not_found'],
+    [422, 'event_full'],
+  ])('carries a %i %s from a join to the screen', async (status, code) => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([status, errorBody(code)]);
+    const api = loadApi(BASE_URL);
+
+    const error = await api.joinEvent({ code: 'AB3K7X' }).catch((e: unknown) => e);
+    expect((error as InstanceType<Api['ApiError']>).code).toBe(code);
+    expect((error as InstanceType<Api['ApiError']>).status).toBe(status);
+  });
+
+  it('refuses a join answer that leaves the caller blocked, which a join never does', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([200, { membership: { role: 'guest', status: 'blocked' } }]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.joinEvent({ token: TOKEN })).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('cancels a join request with a bodyless DELETE on the event path', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([200, { membership: null }]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.cancelJoinRequest(EVENT_ID)).resolves.toEqual({ membership: null });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${EVENT_ID}/join-request`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('DELETE');
+    expect(initOf(fetchMock, 0).body).toBeUndefined();
+    expect(headersOf(fetchMock, 0).Authorization).toBe('Bearer token-1');
+  });
+
+  it('hands back the active row when a cancel loses the race with an approve', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const approved = { membership: { role: 'guest', status: 'active' } };
+    globalThis.fetch = answersInTurn([200, approved]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.cancelJoinRequest(EVENT_ID)).resolves.toEqual(approved);
+  });
+});

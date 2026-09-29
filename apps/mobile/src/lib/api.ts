@@ -1,13 +1,18 @@
 import {
+  CancelJoinRequestResponse,
   CreateCoverUploadResponse,
   CreateEventResponse,
   ErrorResponse,
   HealthResponse,
+  JoinEventResponse,
   ListEventsResponse,
   ProfileResponse,
+  ResolveInviteResponse,
   SetEventCoverResponse,
   type CreateEventRequest,
   type ErrorCode,
+  type JoinEventRequest,
+  type ResolveInviteRequest,
 } from '@momentlens/shared-types';
 import {
   isAuthApiError,
@@ -44,7 +49,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT';
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 interface RequestOptions {
   method?: Method;
@@ -156,6 +161,28 @@ async function authenticatedRequest(path: string, options: RequestOptions = {}):
   return request(path, options, await refreshedAccessToken());
 }
 
+// A request that works with or without a session (D-115). Nobody signed in sends no header. A
+// stored session sends its token and gets the same one refresh and retry as above. A session that
+// cannot be refreshed offline throws rather than asking as signed out, because the answer would
+// then miss the caller's membership and route them wrong.
+async function optionallyAuthenticatedRequest(
+  path: string,
+  options: RequestOptions = {},
+): Promise<Response> {
+  const { data, error } = await supabase.auth.getSession();
+  if (data.session === null) {
+    if (isAuthRetryableFetchError(error)) {
+      throw new ApiError(AUTH_UNREACHABLE);
+    }
+    return request(path, options);
+  }
+  const first = await request(path, options, data.session.access_token);
+  if (first.status !== 401) {
+    return first;
+  }
+  return request(path, options, await refreshedAccessToken());
+}
+
 // A body that is not ErrorResponse still says what kind of failure it was through its status. So
 // does one with a code this build has never heard of (packages/shared-types errors.ts).
 async function errorFrom(what: string, response: Response): Promise<ApiError> {
@@ -256,4 +283,46 @@ export async function setEventCover(
     throw await errorFrom('PUT /events/{eventId}/cover', response);
   }
   return parseBody('PUT /events/{eventId}/cover', response, SetEventCoverResponse);
+}
+
+// The event an invite previews, and the caller's own membership when someone is signed in
+// (D-115). A dead invite is a 404 not_found. The token or code goes in the body, never the path,
+// because nginx logs every path (arch:invite).
+export async function resolveInvite(
+  body: ResolveInviteRequest,
+  signal?: AbortSignal,
+): Promise<ResolveInviteResponse> {
+  const response = await optionallyAuthenticatedRequest('/invites/resolve', {
+    method: 'POST',
+    body,
+    signal,
+  });
+  if (response.status !== 200) {
+    throw await errorFrom('POST /invites/resolve', response);
+  }
+  return parseBody('POST /invites/resolve', response, ResolveInviteResponse);
+}
+
+// Joins through the invite Join Confirmation showed, active or pending by the event's approval
+// mode (arch:membership). A 201 made the caller's row and a 200 found it, and the app treats both
+// the same: a repeat returns the row unchanged, so a retry after a timeout is safe. No signal, for
+// the reason createEvent has none.
+export async function joinEvent(body: JoinEventRequest): Promise<JoinEventResponse> {
+  const response = await authenticatedRequest('/invites/join', { method: 'POST', body });
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /invites/join', response);
+  }
+  return parseBody('POST /invites/join', response, JoinEventResponse);
+}
+
+// Cancel Request. The API deletes the caller's row only while it is pending and answers with what
+// they hold afterwards: null once the request is gone, or the active row when an approve got there
+// first (arch:membership).
+export async function cancelJoinRequest(eventId: string): Promise<CancelJoinRequestResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/join-request`;
+  const response = await authenticatedRequest(path, { method: 'DELETE' });
+  if (response.status !== 200) {
+    throw await errorFrom('DELETE /events/{eventId}/join-request', response);
+  }
+  return parseBody('DELETE /events/{eventId}/join-request', response, CancelJoinRequestResponse);
 }
