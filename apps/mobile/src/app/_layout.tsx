@@ -68,8 +68,9 @@ function RootLayout() {
   }
 
   // Exactly one of the first three is open at a time, and a guard that closes on the screen in
-  // view sends the user to the first one open (Expo Router's protected routes). reset-password is
-  // always open, because the recovery link has to work in every state.
+  // view sends the user to the first one open (Expo Router's protected routes). The rest are always
+  // open: the recovery link and an invite link have to work in every state, and Manual Join Entry,
+  // Join Error and Join Blocked are reached signed in and signed out alike (spec §2.4).
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
@@ -88,6 +89,10 @@ function RootLayout() {
             <Stack.Screen name="(auth)" />
           </Stack.Protected>
           <Stack.Screen name="reset-password" />
+          <Stack.Screen name="invite/[token]" />
+          <Stack.Screen name="join-code" />
+          <Stack.Screen name="join-error" />
+          <Stack.Screen name="join-blocked" />
         </Stack>
       </ThemeProvider>
     </QueryClientProvider>

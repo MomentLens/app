@@ -8,10 +8,13 @@ import { TextField } from '@/components/ui/text-field';
 import { TextLink } from '@/components/ui/text-link';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
+import { JoinBanner } from '@/features/join/join-banner';
 import { supabase } from '@/lib/supabase';
 
 // Email and password (spec §4.1), laid out as the Figma LoginScreen frame. A successful login sends
 // SIGNED_IN, and the root layout swaps this group for the app, so nothing here navigates on success.
+// With an invite waiting, the banner says which event, and the app opens Join Confirmation after
+// the login ((app)/_layout.tsx).
 export default function LoginScreen() {
   const router = useRouter();
   const passwordRef = useRef<TextInput>(null);
@@ -48,6 +51,7 @@ export default function LoginScreen() {
 
   return (
     <AuthScreen title="Log in to MomentLens" tagline="Weddings & celebrations">
+      <JoinBanner />
       <View className="gap-4">
         <TextField
           label="Email address"
@@ -102,15 +106,13 @@ export default function LoginScreen() {
         <View className="h-px flex-1 bg-border" />
       </View>
 
-      {/* Joining an event with a code is S-03's flow (spec §4.1). The button is here, disabled,
-          until that slice puts something behind it (S-01 card, decided at build mobile). */}
+      {/* Spec §2.4 step 2: Manual Join Entry, for a code or a pasted link. */}
       <Button
         label="Join with invite code"
-        icon="link"
+        icon="ticket"
         variant="secondary"
-        disabled
-        accessibilityHint="Joining with a code arrives in a later update."
-        onPress={() => undefined}
+        disabled={busy}
+        onPress={() => router.push('/join-code')}
       />
 
       <Text className="text-center font-caption text-caption text-textSecondary">

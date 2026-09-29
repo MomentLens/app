@@ -10,12 +10,14 @@ import { TextLink } from '@/components/ui/text-link';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
 import { PASSWORD_MIN, signupFieldErrors } from '@/features/auth/validation';
+import { JoinBanner } from '@/features/join/join-banner';
 import { supabase } from '@/lib/supabase';
 
 // Create Account (spec §2.1.1): name, email, password, laid out as the Figma CreateAccount frame.
 // The frame's optional profile photo is S-20's, and consent is S-31's gate (D-109). Email
 // confirmation is off, so signUp returns a session straight away, and SIGNED_IN takes the app to
-// Home.
+// Home. An invite link opened signed out lands here, and the banner names the event and role
+// before the account exists (spec §2.3.1).
 export default function SignupScreen() {
   const router = useRouter();
   const emailRef = useRef<TextInput>(null);
@@ -76,6 +78,7 @@ export default function SignupScreen() {
 
   return (
     <AuthScreen title="Create your account">
+      <JoinBanner />
       <View className="gap-4">
         <TextField
           label="Full name"
