@@ -26,6 +26,7 @@ import { TimingTabs } from '@/features/events/timing-tabs';
 import { useCreateEvent } from '@/features/events/use-create-event';
 import { useEvents } from '@/features/events/use-events';
 import { useTimingNow } from '@/features/events/use-timing-now';
+import { JoinRequestCard } from '@/features/join/join-request-card';
 import { usePullRefresh } from '@/hooks/use-pull-refresh';
 import { CREATE_IN_TAB_BAR } from '@/lib/platform';
 
@@ -45,7 +46,8 @@ const EMPTY_TAB: Record<EventTiming, { title: string; body: string }> = {
 };
 
 // The Events tab, the Global shell's landing screen (spec §2.5.1). It lists every event where the
-// caller's membership is active, sorted into Active, Upcoming and Past by span (D-110).
+// caller's membership is active, sorted into Active, Upcoming and Past by span (D-110), and above
+// them, on every tab, the caller's own join requests still waiting for approval (D-115).
 export function EventsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -58,6 +60,18 @@ export function EventsScreen() {
     () => (events.data ? groupByTiming(events.data.events, now) : null),
     [events.data, now],
   );
+  // Newest first. A request has no dates of its own to sort into a tab.
+  const requests = useMemo(
+    () =>
+      [...(events.data?.joinRequests ?? [])].sort((a, b) =>
+        b.requestedAt.localeCompare(a.requestedAt),
+      ),
+    [events.data],
+  );
+
+  function joinWithCode() {
+    router.push('/join-code');
+  }
 
   // iOS's tab bar lies over the content, so the list and the FAB start above it. Android's sits
   // below the content, which already ends at the bar.
@@ -118,25 +132,59 @@ export function EventsScreen() {
                 onPress={() => void events.refetch()}
               />
             </View>
-          ) : groups && events.data.events.length === 0 ? (
-            <NoEvents onCreate={createEvent} />
-          ) : groups && groups[tab].length === 0 ? (
-            <View className="items-center gap-2 py-16">
-              <Text className="text-center font-h2 text-h2 text-textPrimary">
-                {EMPTY_TAB[tab].title}
-              </Text>
-              <Text className="text-center font-bodySecondary text-bodySecondary text-textSecondary">
-                {EMPTY_TAB[tab].body}
-              </Text>
-            </View>
+          ) : groups && events.data.events.length === 0 && requests.length === 0 ? (
+            <NoEvents onCreate={createEvent} onJoin={joinWithCode} />
           ) : (
-            groups?.[tab].map((event) => (
-              <EventCard
-                key={event.id}
-                event={event}
-                onPress={() => router.push({ pathname: '/event/[id]', params: { id: event.id } })}
-              />
-            ))
+            <>
+              {requests.length > 0 ? (
+                <View className="gap-3 pb-2">
+                  <SectionLabel>Waiting for approval</SectionLabel>
+                  {requests.map((request) => (
+                    <JoinRequestCard
+                      key={request.eventId}
+                      request={request}
+                      onPress={() =>
+                        router.push({
+                          pathname: '/join/pending/[eventId]',
+                          params: { eventId: request.eventId, name: request.eventName },
+                        })
+                      }
+                    />
+                  ))}
+                  <SectionLabel>Your events</SectionLabel>
+                </View>
+              ) : null}
+              {groups && groups[tab].length === 0 ? (
+                <View className="items-center gap-2 py-16">
+                  <Text className="text-center font-h2 text-h2 text-textPrimary">
+                    {EMPTY_TAB[tab].title}
+                  </Text>
+                  <Text className="text-center font-bodySecondary text-bodySecondary text-textSecondary">
+                    {EMPTY_TAB[tab].body}
+                  </Text>
+                </View>
+              ) : (
+                groups?.[tab].map((event) => (
+                  <EventCard
+                    key={event.id}
+                    event={event}
+                    onPress={() =>
+                      router.push({ pathname: '/event/[id]', params: { id: event.id } })
+                    }
+                  />
+                ))
+              )}
+              {/* Joining by link is the usual way in, so the code is a quiet way at the end of the
+                  list rather than a button competing with Create (D-115). */}
+              <View className="items-center pt-4">
+                <Button
+                  label="Join with invite code"
+                  icon="ticket"
+                  variant="quiet"
+                  onPress={joinWithCode}
+                />
+              </View>
+            </>
           )}
         </ScrollView>
 
@@ -148,8 +196,18 @@ export function EventsScreen() {
   );
 }
 
-// The Figma "event-tab" frame: someone with no events at all. Joining by code arrives with S-03.
-function NoEvents({ onCreate }: { onCreate: () => void }) {
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <Text
+      accessibilityRole="header"
+      className="px-1 font-micro text-micro uppercase tracking-wider text-textSecondary">
+      {children}
+    </Text>
+  );
+}
+
+// The Figma "event-tab" frame: someone with no events and no requests. Spec §2.4 step 4's prompt.
+function NoEvents({ onCreate, onJoin }: { onCreate: () => void; onJoin: () => void }) {
   return (
     <View className="flex-1 items-center justify-center gap-6 px-4 py-12">
       <View className="h-16 w-16 items-center justify-center rounded-2xl border-2 border-accent">
@@ -164,13 +222,7 @@ function NoEvents({ onCreate }: { onCreate: () => void }) {
         </Text>
       </View>
       <View className="w-full gap-3">
-        <Button
-          label="Join with invite code"
-          variant="secondary"
-          disabled
-          accessibilityHint="Joining by code is not available yet."
-          onPress={() => undefined}
-        />
+        <Button label="Join with invite code" icon="ticket" variant="secondary" onPress={onJoin} />
         <Button label="Create an event" onPress={onCreate} />
       </View>
     </View>
