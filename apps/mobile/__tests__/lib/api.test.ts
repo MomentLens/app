@@ -500,11 +500,11 @@ describe('event endpoints', () => {
 
   it('GETs the caller events and returns them parsed', async () => {
     mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
-    const fetchMock = answersInTurn([200, { events: [event] }]);
+    const fetchMock = answersInTurn([200, { events: [event], joinRequests: [] }]);
     globalThis.fetch = fetchMock;
     const api = loadApi(BASE_URL);
 
-    await expect(api.listEvents()).resolves.toEqual({ events: [event] });
+    await expect(api.listEvents()).resolves.toEqual({ events: [event], joinRequests: [] });
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.example.test/events');
     expect(initOf(fetchMock, 0).method).toBe('GET');
     expect(initOf(fetchMock, 0).body).toBeUndefined();
@@ -514,7 +514,10 @@ describe('event endpoints', () => {
     mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
     globalThis.fetch = answersInTurn([
       200,
-      { events: [{ ...event, cover: { url: 'https://r2.example.test/a.jpg' } }] },
+      {
+        events: [{ ...event, cover: { url: 'https://r2.example.test/a.jpg' } }],
+        joinRequests: [],
+      },
     ]);
     const api = loadApi(BASE_URL);
 

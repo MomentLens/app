@@ -36,7 +36,10 @@ export function listEventsController(events: EventStore, presignGet: PresignGet)
   return async (req: Request, res: Response): Promise<void> => {
     const { id } = authenticatedUser(req);
     const list = await listEvents(events, presignGet, id);
-    res.set('Cache-Control', 'no-store').json(ListEventsResponse.parse({ events: list }));
+    // S-03's api build fills joinRequests. Until its join_event exists, no pending row can.
+    res
+      .set('Cache-Control', 'no-store')
+      .json(ListEventsResponse.parse({ events: list, joinRequests: [] }));
   };
 }
 
