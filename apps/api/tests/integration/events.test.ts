@@ -15,7 +15,12 @@ import {
   SetEventCoverResponse,
   VERIFICATION_RADIUS_DEFAULT_M,
 } from '@momentlens/shared-types';
-import type { CreateEventRequest, MembershipRole, SubEventInput } from '@momentlens/shared-types';
+import type {
+  CreateEventRequest,
+  MembershipRole,
+  MembershipStatus,
+  SubEventInput,
+} from '@momentlens/shared-types';
 
 import type { AppDeps } from '../../src/app';
 import type { VerifyToken } from '../../src/middleware/auth';
@@ -24,7 +29,6 @@ import type {
   EventAccess,
   EventRecord,
   EventStore,
-  MembershipStatus,
 } from '../../src/services/events';
 import { startApp, TEST_R2, testDeps } from '../support/app';
 import type { RunningApp } from '../support/app';
@@ -714,7 +718,10 @@ describe('GET /events', () => {
   it('answers an empty list, not an error, for a user in no event', async () => {
     const response = await send('GET', '/events', 'token-b');
     expect(response.status).toBe(200);
-    expect(ListEventsResponse.parse(await response.json())).toEqual({ events: [] });
+    expect(ListEventsResponse.parse(await response.json())).toEqual({
+      events: [],
+      joinRequests: [],
+    });
   });
 
   it('never sends a QR secret, whatever the store row carries', async () => {

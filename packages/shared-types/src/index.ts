@@ -8,4 +8,5 @@ export * from './errors';
 export * from './event';
 export * from './health';
 export * from './image';
+export * from './invite';
 export * from './profile';

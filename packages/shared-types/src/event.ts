@@ -62,6 +62,24 @@ export const MembershipRole = z.enum(['admin', 'photographer', 'guest']);
 export type MembershipRole = z.infer<typeof MembershipRole>;
 
 /**
+ * Where a membership stands (arch:membership). `pending` is a join request. A `removed` person may
+ * join again through a live invite, and a `blocked` one may not (D-102).
+ */
+export const MembershipStatus = z.enum(['pending', 'active', 'blocked', 'removed']);
+export type MembershipStatus = z.infer<typeof MembershipStatus>;
+
+/** The roles an invite joins as. The Admin is the event's creator and joins through none (D-102). */
+export const InviteRole = MembershipRole.exclude(['admin']);
+export type InviteRole = z.infer<typeof InviteRole>;
+
+/** The caller's own membership of one event. */
+export const Membership = z.object({
+  role: MembershipRole,
+  status: MembershipStatus,
+});
+export type Membership = z.infer<typeof Membership>;
+
+/**
  * How a join request is handled (spec §4.4). `auto` lets a joiner in at once, `manual` holds them
  * as `pending` until the Admin approves. `auto` is the default, because the approval queue arrives
  * with S-07 and a `manual` event made before it lets nobody in (D-110).
@@ -190,12 +208,31 @@ export const CreateEventResponse = z.object({
 export type CreateEventResponse = z.infer<typeof CreateEventResponse>;
 
 /**
- * GET /events. Every event where the caller's membership is `active`, soft-deleted events left
- * out (D-110). A pending, blocked or removed membership lists nothing. No order is promised;
- * the app groups by `eventTiming` and sorts within each tab.
+ * One of the caller's own join requests, a `pending` membership (D-115). The Events tab shows each
+ * as a card that opens Pending Approval. `role` is the one the invite carried. `requestedAt` is
+ * `membership.requested_at`, which every join and rejoin sets (arch:membership).
+ */
+export const JoinRequest = z.object({
+  eventId: z.uuid(),
+  eventName: EventName,
+  role: InviteRole,
+  requestedAt: Timestamp,
+});
+export type JoinRequest = z.infer<typeof JoinRequest>;
+
+/**
+ * GET /events. Soft-deleted events are left out of both lists.
+ *
+ * - `events` holds every event where the caller's membership is `active` (D-110). No order is
+ *   promised; the app groups them by `eventTiming` and sorts within each tab.
+ * - `joinRequests` holds the caller's own `pending` rows and nobody else's (D-115). Pending
+ *   Approval polls this list: an event that moves to `events` opens Event Home, and one that
+ *   leaves both lists sends the app back to the Events list.
+ * - A blocked or removed membership lists nothing in either.
  */
 export const ListEventsResponse = z.object({
   events: z.array(EventSummary),
+  joinRequests: z.array(JoinRequest),
 });
 export type ListEventsResponse = z.infer<typeof ListEventsResponse>;
 

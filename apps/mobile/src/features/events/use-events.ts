@@ -19,7 +19,7 @@ export function useEvents() {
 
 function withEvent(list: ListEventsResponse | undefined, event: EventSummary): ListEventsResponse {
   const others = (list?.events ?? []).filter((existing) => existing.id !== event.id);
-  return { events: [...others, event] };
+  return { events: [...others, event], joinRequests: list?.joinRequests ?? [] };
 }
 
 // Puts an event the create returned into the list straight away, so the landing screen and the

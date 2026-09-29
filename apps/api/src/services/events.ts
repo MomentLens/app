@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { EventType, MembershipRole } from '@momentlens/shared-types';
+import { EventType, MembershipRole, MembershipStatus } from '@momentlens/shared-types';
 import type {
   CreateCoverUploadResponse,
   CreateEventRequest,
@@ -15,9 +15,6 @@ import type { Supabase } from '../db/supabase';
 import { coverKey } from '../lib/keys';
 import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
-
-export const MembershipStatus = z.enum(['pending', 'active', 'blocked', 'removed']);
-export type MembershipStatus = z.infer<typeof MembershipStatus>;
 
 // One event as the caller sees it, before its cover is presigned. Timestamps are already in
 // toISOString form.
