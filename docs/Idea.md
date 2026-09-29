@@ -197,17 +197,20 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
    : creates account (banner shown during signup: "Joining [Event Name] as
    Guest", so the reason for signing up is visible before it happens).
 
-2. Join Confirmation screen: cover photo, event name, date range, venue, and
-   a role badge ("You're joining as Guest") pulled from which link was used.
-   Nothing is created yet; this is a read-only preview. Tapping "Join Event"
-   is the actual join action.
+2. Join Confirmation screen: cover photo, event name, date range, venue
+   names in sub-event order, and a role badge ("You're joining as Guest")
+   pulled from which link was used. Nothing is created yet; this is a
+   read-only preview, and anyone holding the link sees the same one, signed
+   in or not (D-115). Tapping "Join Event" is the actual join action.
 
 3. Per the event's Approval Mode:
    ├── Auto-Approve → joins immediately → Event Home
    └── Approve New Users → Pending Approval screen ("Waiting for the
        organizer to approve your request to join [Event Name]", with a
-       Cancel Request option) → Approval Alerts push fires on resolution →
-       reopening the app routes straight to Event Home if approved
+       Cancel Request option) → Approval Alerts push fires on resolution
+       (Phase 6, hb §14.6) → reopening the app routes straight to Event
+       Home if approved. Until it resolves, the request is also a card on
+       the Events list that opens this screen (D-115)
 ```
 
 #### 2.3.2 Phase B — pre-event
@@ -270,10 +273,13 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
    │   role, and the user is told which role before they join.
    └── Token resolves →
        ├── Invalid / expired / revoked → Join Error screen
+       ├── Valid, and the user is blocked from this event → Join Blocked
+       │   screen (D-102, D-115)
        ├── Valid, and user already belongs to this event → skips straight to
-       │   Event Home, no redundant join screen
-       └── Valid, new to this event → continues into Phase A of the Guest or
-           Photographer flow
+       │   Event Home, no redundant join screen. A pending request goes to
+       │   Pending Approval instead
+       └── Valid, and new to this event or removed from it → continues into
+           Phase A of the Guest or Photographer flow
 
 3. "Log In" (returning user):
    ├── Email + password → logged in
@@ -303,7 +309,7 @@ The bottom tab bar is not one static set of tabs. It swaps between a **Global sh
 | Scan | Venue Check-In QR only (§4.5). Works standalone, since the QR payload carries its venue, and the server works out which sub-event it verifies from the scan time (D-85). |
 | Profile | Avatar → Account Settings (§4.19). |
 
-The Events tab sorts an event by its span, from its first sub-event's start to its last sub-event's end (D-88). Upcoming is before the span starts, Active is inside it, gaps between sub-events included, and Past is after it. An archived event is Past. The list holds every event where the user's membership is active, and no soft-deleted event (D-110).
+The Events tab sorts an event by its span, from its first sub-event's start to its last sub-event's end (D-88). Upcoming is before the span starts, Active is inside it, gaps between sub-events included, and Past is after it. An archived event is Past. The list holds every event where the user's membership is active, and no soft-deleted event (D-110). Each pending join request shows as a card that opens Pending Approval, and a "Join with code" action opens Manual Join Entry for a user who already has events (D-115).
 
 **Event shell**, tabs by role:
 
@@ -374,8 +380,9 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 | Screen | Trigger | Notes |
 |---|---|---|
 | Join Confirmation | Valid invite token, new to event | Read-only preview before the join action fires; shows the role being joined as. |
-| Pending Approval | Approval Mode = manual | A waiting state, not a spinner. Has a Cancel Request option. |
+| Pending Approval | Approval Mode = manual | A waiting state, not a spinner. Has a Cancel Request option. Reached again from its card on the Events list (D-115). |
 | Join Error | Expired or revoked token | Reserved for dead tokens. A mistyped shortcode gets inline field validation on Manual Join Entry instead. |
+| Join Blocked | A blocked person opens a live invite (D-102) | Tells them the organizer blocked them from this event. No join action (D-115). |
 | Forced Logout / Access Removed | The Supabase session ends, or the user is removed or blocked from an event mid-session (§4.1) | Prevents a silent bounce to Login reading as a bug. Access Removed returns to the Events list; only a dead session logs out. |
 | Consent re-gate | Privacy Policy version bump (§4.18) | Blocking full-screen re-consent on next launch, before anything else renders. |
 | Supabase unavailable | Keep-alive ping missed the auto-pause window | Needs a retry action, not a dead end. |
@@ -449,7 +456,7 @@ A lightweight substitute for a full history: event cards on the global Events li
 - Email address and password registration via Supabase Auth. No OTP, no biometric.
 - Deep link handling: an invite link, `momentlens://invite/{token}`, auto-opens the app **if the app is already installed** and the chat app passes the link to the system. Some chat apps show that scheme as plain text; the shortcode below covers them (D-101). There is no deferred deep link and no install-then-resume path. Firebase Dynamic Links shut down in 2025, the replacements are third-party services, and this app will not be on either store, so the feature could never be tested and is not claimed. A user without the app installs the build first, then opens the link or pastes the shortcode (§9 covers how this works on demo day).
 - Short invite code entry (6-character alphanumeric) as a manual alternative. Guest and Photographer codes are distinct values.
-- "Join with Invite Link" flow: a user with a code but no account is guided through registration and then dropped directly into the event.
+- "Join with Invite Link" flow: a user with a code but no account is guided through registration and then to Join Confirmation for that event (§2.3.1).
 - Login: email and password. Password reset via a recovery link, handled natively by Supabase Auth.
 - Session management by Supabase Auth. The access token lasts an hour and refreshes itself. The free plan has no session time-box, so a session ends at sign-out, a password change or a rejected refresh token (D-109).
 - Forced Logout when the Supabase session ends, and Access Removed when the user is removed or blocked from an event, which the app learns from the API's 403 for that event (§2.5.8). Neither is a silent bounce to Login. There is no account suspension in v1.
@@ -809,7 +816,7 @@ One table per area, so a slice cites the part it needs.
 | Scenario | System behavior |
 |---|---|
 | Invite link expired or revoked | Clean error screen: "This link has expired or been revoked. Contact the event organizer." An invite is dead once revoked or once its event is deleted or archived; there is no time limit. |
-| A removed person opens a live invite | They join again, pending or active by the event's approval mode. A blocked person gets the Join Error screen instead (D-102). |
+| A removed person opens a live invite | They join again, pending or active by the event's approval mode. A blocked person gets the Join Blocked screen instead, which says they were blocked (D-102, D-115). |
 
 ### 5.2 Location verification
 
