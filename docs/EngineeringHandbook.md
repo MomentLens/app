@@ -229,7 +229,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 - **Paths** are plural nouns under the resource that owns them: `GET /events/{eventId}/media`, `POST /events/{eventId}/media/preflight`, `POST /media/{mediaId}/complete`. Ids are uuids in the path, never in a query string.
 - **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
 - **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
-- **A 403 on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1).
+- **A 403 on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1). A join answers a blocked person 403 `blocked` instead, and the app shows Join Blocked, never Access Removed (D-115).
 - A failure no other row covers is a 500 with `internal_error`, which Sentry reports. Its `message` names no cause, because the cause goes to Sentry and the logs.
 
 | Status | Means | `code` values so far |
@@ -237,7 +237,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 200, 201 | Done; 201 when a row was created | |
 | 400 | The body or path failed validation | `invalid_request` |
 | 401 | No session, or it expired | `no_session` |
-| 403 | Not an active member of this event, or the wrong role | `not_member`, `wrong_role`, `not_uploader` |
+| 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |
 | 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing` |
 | 422 | A limit reached | `event_full`, `too_many_references` |
