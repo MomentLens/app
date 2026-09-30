@@ -9,7 +9,7 @@
 //
 // Retrieval never throws and never exits non-zero. A miss prints a diagnostic, because the
 // first time this crashes an agent falls back to grep and stays there. Only `check` exits 1.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildIndex, FILES, tokens } from './docindex.mjs';
@@ -389,6 +389,42 @@ verbs.check = () => {
       });
     }
   }
+  // Claude Code reads AGENTS.md only where no CLAUDE.md exists, so one of these switches every
+  // agent rule off without a warning (D-116). The pre-commit snapshot holds only tracked
+  // files, so there this catches a committed one; a local run also catches an untracked one.
+  for (const dir of [
+    '',
+    '.claude/',
+    'apps/api/',
+    'apps/mobile/',
+    'worker/',
+    'packages/shared-types/',
+  ])
+    for (const name of ['CLAUDE.md', 'CLAUDE.local.md'])
+      if (existsSync(join(root, ...`${dir}${name}`.split('/'))))
+        e.push({
+          code: 'claude-md',
+          file: `${dir}${name}`,
+          line: 1,
+          msg: 'delete it and put its content in the AGENTS.md beside it (D-116)',
+        });
+  // Codex reads the slice skill from .agents/, Claude Code from .claude/. A symlink breaks on
+  // a Windows checkout without symlink support, so it is a copy that has to stay identical.
+  const skill = (p) => {
+    try {
+      return readFileSync(join(root, ...p.split('/')), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const claudeSkill = skill('.claude/skills/slice/SKILL.md');
+  if (claudeSkill !== null && skill('.agents/skills/slice/SKILL.md') !== claudeSkill)
+    e.push({
+      code: 'skill-drift',
+      file: '.agents/skills/slice/SKILL.md',
+      line: 1,
+      msg: 'differs from .claude/skills/slice/SKILL.md; copy that file over it',
+    });
   if (e.length) {
     console.log(`docs:check FAILED, ${e.length} error(s)`);
     for (const x of e) console.log(`  ${x.code}  ${x.file}:${x.line}  ${x.msg}`);

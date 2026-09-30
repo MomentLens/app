@@ -1,6 +1,7 @@
 // node scripts/doctor.mjs, or pnpm check:machine. Works from any directory in the repo.
 import { readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -164,6 +165,63 @@ report(
 
 if (run('gh auth status') === null)
   warn('gh', 'missing or not logged in, so /slice asks you instead of checking dependencies');
+
+// Claude Code reads AGENTS.md from 2.1.277 on, and only where no CLAUDE.md exists (D-116). An
+// older version, or a CLAUDE.md in the repo or any folder above it, leaves the agent with no
+// project rules and no error. Your own ~/.claude/CLAUDE.md does not count.
+const MIN_CLAUDE = '2.1.277';
+const asNumber = (v) => Number(v[1]) * 1e6 + Number(v[2]) * 1e3 + Number(v[3] ?? 0);
+const claudeGot = firstVersion(run('claude --version'));
+if (claudeGot)
+  report(
+    asNumber(claudeGot) >= asNumber(firstVersion(MIN_CLAUDE)),
+    'claude',
+    claudeGot[0],
+    `${MIN_CLAUDE} or later`,
+    'claude update',
+  );
+else warn('claude', `not on PATH; the agent you use must be Claude Code ${MIN_CLAUDE} or later`);
+
+const shadows = [];
+for (let dir = root, prev = ''; dir !== prev; prev = dir, dir = dirname(dir)) {
+  const names = ['CLAUDE.md', 'CLAUDE.local.md'];
+  if (dir !== homedir()) names.push(join('.claude', 'CLAUDE.md'));
+  for (const n of names) if (existsSync(join(dir, n))) shadows.push(join(dir, n));
+}
+for (const d of ['apps/api', 'apps/mobile', 'worker', 'packages/shared-types'])
+  for (const n of ['CLAUDE.md', 'CLAUDE.local.md'])
+    if (existsSync(join(root, d, n))) shadows.push(join(root, d, n));
+report(
+  !shadows.length,
+  'CLAUDE.md',
+  shadows.length ? shadows.join(' ') : 'none',
+  'none in the repo or above it',
+  'Delete them. They switch AGENTS.md off in Claude Code (D-116)',
+);
+
+// Every developer deploys the dev server and reads its logs through this alias (Handbook §13.4).
+// ssh -G prints the resolved config without connecting; an unknown alias resolves to itself.
+const sshHost = run('ssh -G momentlens')?.match(/^hostname (.+)$/m)?.[1];
+if (!sshHost || sshHost === 'momentlens')
+  warn(
+    'ssh',
+    'no "momentlens" host in ~/.ssh/config, needed to deploy the dev server (Handbook §13.4)',
+  );
+
+// supabase db push targets the project this checkout is linked to, never the one in .env.
+let linked = null;
+try {
+  linked = JSON.parse(read('supabase/.temp/linked-project.json')).name;
+} catch {
+  // Not linked in this checkout. A worktree never is, since supabase/.temp is gitignored.
+}
+if (linked !== 'momentlens-dev')
+  warn(
+    'supabase',
+    linked
+      ? `linked to ${linked}, so db push would go there, not to momentlens-dev`
+      : 'not linked, needed only to push a migration (Handbook §13.4)',
+  );
 
 // WSL2 reaches the Windows drive through a slow network filesystem that breaks file watching.
 if (process.platform === 'linux' && root.startsWith('/mnt/'))
