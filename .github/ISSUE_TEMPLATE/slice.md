@@ -1,6 +1,6 @@
 ---
 name: Work slice
-about: One slice from docs/WorkSlices.md. One issue, one branch, one PR.
+about: One slice from docs/WorkSlices.md. One issue, one stack of PRs.
 title: "S-XX: <slice name>"
 ---
 
@@ -30,7 +30,7 @@ this one depends on, before starting. If it turned up nothing, look again.
 ## Slice card
 
 <!-- Written by the agent after the read-back is answered, and edited only when a person changes a decision.
-     Every later stage (/slice S-XX schema, build, done) loads this and nothing else from the read-back.
+     Every later stage (/slice S-XX schema, build, done, cleanup) loads this and nothing else from the read-back.
      Ids and paths only, never copied doc text. Under about 900 tokens. -->
 
 **Goal:** one sentence.
@@ -51,7 +51,7 @@ this one depends on, before starting. If it turned up nothing, look again.
 
 ## Definition of done
 
-- [ ] zod schema merged in `packages/shared-types` before any UI or handler
+- [ ] zod schema in `packages/shared-types`, in its own PR at the bottom of the code stack, before any UI or handler (D-116)
 - [ ] RLS policy written, or noted here as not applicable. Only `media` and `event` have one (D-73)
 - [ ] Human read before merge if this touches any RLS policy, the image-serving authorization check, the upload queue state machine, or auth and invite-token handling (D-68). If it touches none, say so here
 - [ ] A negative test for each human-read surface touched, and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-68, D-73)
@@ -59,5 +59,6 @@ this one depends on, before starting. If it turned up nothing, look again.
 - [ ] Tested on a physical device if it touches camera, GPS or the queue (Handbook §10)
 - [ ] Unit test for any pure logic (Handbook §11.2)
 - [ ] Dark mode through tokens, no hardcoded hex
-- [ ] Reviewed by one of the other two (Handbook §12), or `/code-review` run on every PR while D-113's exception holds
+- [ ] Every PR in the stack reviewed by one of the other two (Handbook §12)
+- [ ] Every stage's discussion log is in the top PR (D-116)
 - [ ] `docs/ARCHITECTURE.md` updated in this PR if it added a table, column, R2 key or job, as its own commit from the done stage, and Ukasha has reviewed that change (D-75, D-107)

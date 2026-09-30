@@ -1,5 +1,5 @@
 # MomentLens work slices
-> The assignable unit of work. One slice = one GitHub issue = one branch = one PR.
+> The assignable unit of work. One slice = one GitHub issue = one stack of PRs.
 
 ## What this file is and is not
 
@@ -15,17 +15,17 @@ A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It 
 
 ## The rule that makes parallel work possible
 
-**The first PR of any slice is the zod schema alone, merged before anyone writes UI or handlers.**
+**The first code PR of any slice is the zod schema alone, and every handler and screen is built on a branch cut from it** (D-116).
 
 **The slice that first writes to a table owns its migration**, and its row cites that table's `arch:` heading. The two RLS policies belong to the slices that first need Realtime on them, and each gets a human read (D-68).
 
-Once the contract is in `packages/shared-types`, the screen and the endpoint can be built at the same time against types that can be mocked, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
+Once the schema branch is pushed, the screen and the endpoint can be built at the same time on branches cut from it, against types that can be mocked, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
 
 ## Definition of done
 
 A slice is not done when the screen renders. It is done when all of these are true. The same list is in `.github/ISSUE_TEMPLATE/slice.md`, so every slice issue carries it as checkboxes.
 
-- [ ] zod schema merged in `packages/shared-types`
+- [ ] zod schema in `packages/shared-types`, in its own PR at the bottom of the slice's code stack (D-116)
 - [ ] RLS policy written, or noted as not applicable. Only `media` and `event` have one; everything else is enforced in the service layer (D-73)
 - [ ] **Read by a human before merging** if the slice touches any RLS policy, the image-serving endpoint's authorization check, the upload queue's state machine, or auth and invite-token handling (D-68)
 - [ ] A negative test for each of those surfaces, and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-73)
@@ -33,7 +33,8 @@ A slice is not done when the screen renders. It is done when all of these are tr
 - [ ] Works on a physical device, not only a simulator, if it touches camera, GPS, or the queue (Handbook §10)
 - [ ] Unit test for any pure logic in it (Handbook §11.2)
 - [ ] Dark mode uses tokens, no hardcoded hex
-- [ ] Reviewed by one other person (Handbook §12), or `/code-review` run on every PR while D-113's exception holds
+- [ ] Every PR in the stack reviewed by one of the other two (Handbook §12)
+- [ ] Every stage's discussion log is in the top PR (D-116)
 - [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, written by the done stage as its own commit, with Ukasha reviewing that change (D-75, D-107)
 
 ## Ownership
@@ -42,7 +43,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 
 Two constraints drive this. Ukasha is on the M1, the fastest machine the team has measured for face processing (D-78), so the Python worker is his by default. And he did the planning, owns the docs, and will otherwise become the person everyone waits on, so the album and capture surfaces deliberately go elsewhere.
 
-Owner means *builds it*. Review ownership is separate. Every PR needs one of the other two, per Handbook §12, except while D-113's exception holds.
+Owner means *builds it*. Review ownership is separate. Every PR needs one of the other two, per Handbook §12.
 
 ---
 
@@ -117,7 +118,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69). S-11 also owns the loop that calls S-12's endpoints and moves each queued item by the table in arch §4 (D-97). That loop is the upload queue's state machine, so a human reads it before it merges.
 
-**S-10's queue belongs to an account.** Each queued item uploads only under the session of the account that queued it, and My Media shows each account only its own (apps/mobile/CLAUDE.md). The team hands phones around at the demo.
+**S-10's queue belongs to an account.** Each queued item uploads only under the session of the account that queued it, and My Media shows each account only its own (apps/mobile/AGENTS.md). The team hands phones around at the demo.
 
 **S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue.
 
@@ -222,7 +223,7 @@ Every numbered section of `docs/Idea.md` is either cited by a slice above, liste
 
 **Decisions and `docs/ARCHITECTURE.md`** get the same audit by hand when a phase starts, not in the gate, because the log is appended to constantly and a gate there would fire on every new entry. A decision or an architecture section no slice reaches is a rule nobody will be shown. The ones that reach no brief on purpose are cut scope, deferred work, superseded entries, and the four Photographer rules, whose content spec §4.10 restates for the six slices that cite it.
 
-**The one to watch.** spec §5, edge cases and exception handling, belongs to a dozen slices, so it is not one unit of work. It is split by area, spec §5.1 to §5.6, so a slice cites the part it builds: S-10 cites §5.2 and §5.4, and S-12 cites §5.4. S-04 does not cite §5.3: its two rows, a sub-event running late and two overlapping, are in spec §4.3, which it cites. That is not full coverage. **Read the spec §5 subsections for your area before building any error path, whatever your slice cites, and treat a row in them as a requirement.** Root `CLAUDE.md` routes to it.
+**The one to watch.** spec §5, edge cases and exception handling, belongs to a dozen slices, so it is not one unit of work. It is split by area, spec §5.1 to §5.6, so a slice cites the part it builds: S-10 cites §5.2 and §5.4, and S-12 cites §5.4. S-04 does not cite §5.3: its two rows, a sub-event running late and two overlapping, are in spec §4.3, which it cites. That is not full coverage. **Read the spec §5 subsections for your area before building any error path, whatever your slice cites, and treat a row in them as a requirement.** Root `AGENTS.md` routes to it.
 
 ---
 
@@ -245,7 +246,7 @@ Run `node scripts/doc.mjs slice S-XX` and read what it prints, phase paragraph
 first. If you cannot run commands, read only these sections, in this order:
 What to build:    docs/Idea.md, sections <§X, §Y>
 How to build it:  docs/EngineeringHandbook.md, sections <§X>
-Rules:            CLAUDE.md, plus the CLAUDE.md of each package this touches
+Rules:            AGENTS.md, plus the AGENTS.md of each package this touches
 Contracts:        packages/shared-types. Do not duplicate a type.
 
 Stack constraints that override your training data:
@@ -255,30 +256,38 @@ TanStack Query for server state, Zustand for UI state only, expo-sqlite for
 the upload queue. NativeWind v4 tokens, no hardcoded hex. No localStorage or
 AsyncStorage anywhere. No Node APIs in the app.
 
-Order of work: follow sections 1 to 5 of .claude/skills/slice/SKILL.md
+Order of work: follow sections 1 to 6 of .claude/skills/slice/SKILL.md
 exactly, the same stages the /slice command runs, each in a fresh session
-that starts from the slice card in the issue (Handbook §18.8).
+that starts from the slice card in the issue (Handbook §18.8). The slice
+ships as a stack of PRs, each branch cut from the one below; follow "The
+stack" in that file. Keep its "Discussion log" in every stage and post it
+to the issue before the stage ends.
 0. Check that the issue of every slice in "Depends on" is closed. If one is
    open, stop and say which.
 1. Read the slice back: the seven items in section 2, every one required.
    Stop. I will either say go or fix the docs first. Then write the card.
-2. Write the zod schema alone and open it as its own PR. Stop until I merge it.
+2. Write the zod schema alone and open it as the first code PR of the
+   stack. Do not wait for a merge.
 3. Build one package per session in the order the card sets out, each
-   negative test first.
-4. Report every Definition of done item with its evidence.
+   negative test first, each on its own branch and PR. For screens, ask me
+   once for designs, and improvise any screen I have none for.
+4. Report every Definition of done item with its evidence, put every
+   stage's discussion log in the top PR, and tell me who to ask for review.
+5. After the review: merge the stack from the top down with Rebase and
+   merge, then clean up, as section 6 describes.
 
 The docs are a draft, not a contract. If two sections disagree or one cannot
-work, say so instead of picking one. The numbered invariants in CLAUDE.md and
+work, say so instead of picking one. The numbered invariants in AGENTS.md and
 the decision log are decisions rather than descriptions: raise those, do not
 route around them.
 
 Done means: every item of the Definition of done in docs/WorkSlices.md, each
 reported as met or not met with its evidence.
 
-[paste the Figma frame here]
+[paste screen designs here, if you have any]
 ```
 
-**Why the two stops.** You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines, and you learn the reasoning, which is what you need in June 2027 when an examiner points at a function (HB §18).
+**Why the stop after the read-back.** You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines, and you learn the reasoning, which is what you need in June 2027 when an examiner points at a function (HB §18).
 
 **Why the Figma frame goes last.** An image at the top of a session dominates everything after it, and the agent designs from the picture and backfills the logic. Constraints first, picture last.
 
