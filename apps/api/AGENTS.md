@@ -1,6 +1,6 @@
 # apps/api
 
-Express 5 + TypeScript. The only thing that decides "is this request allowed." Root `CLAUDE.md` has the invariants; they apply here too.
+Express 5 + TypeScript. The only thing that decides "is this request allowed." Root `AGENTS.md` has the invariants; they apply here too.
 
 Detail in Handbook §5 and §7. Tables and who may see what: `docs/ARCHITECTURE.md` §1 and §2.
 
@@ -105,5 +105,6 @@ On the client's completion call, send R2 a HEAD for both objects and answer 409 
 - `pino` for logging, `helmet` for headers.
 - **Sentry starts in `src/instrument.ts`, preloaded with `node --import`** by `pnpm dev` and the systemd unit. Never import it from `index.ts` or call `Sentry.init` anywhere else. ESM runs a module's imports before its code, so Sentry would start after express had loaded and events would lose their request. It reports errors only, with `sendDefaultPii` off. Keep `setupExpressErrorHandler` after the last route and before any other error middleware.
 - Two Supabase projects exist, dev and stable. Development uses dev; the demo stack uses stable (D-76).
+- **The phone talks to the dev server**, `api.momentlens.me`, not to your machine. To try an API change on a phone before it merges, push the slice's migration if it has one, then deploy the branch to the dev server and put `main` back afterwards, telling the team both times (Handbook §13.4, D-116).
 - Tests in `tests/unit/` and `tests/integration/`, plain Jest without the `jest-expo` preset. The serving-endpoint negative test is the highest-value test in the repo; write it before the endpoint.
 - `pnpm --filter api test:rls` runs the RLS negative tests against the dev project, reading its URL and both keys from the root `.env`. Plain `pnpm test` skips them. `.github/workflows/rls.yml` runs them on every pull request that touches `supabase/` or `apps/api/`, with the dev project's keys as repository secrets; the stable project's secret key never reaches GitHub (D-106).

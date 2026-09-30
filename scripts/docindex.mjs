@@ -43,7 +43,7 @@ export const FILES = {
 
 // Scanned for citations so `doc why` reports the whole blast radius. Not chunked.
 // Code counts: apps/api/eslint.config.mjs bans sharp and jimp citing D-57, and reopening
-// D-57 means changing that rule. Listing only the CLAUDE.md files missed it.
+// D-57 means changing that rule. Listing only the AGENTS.md files missed it.
 const SOURCE_DIRS = [
   'apps',
   'packages',
@@ -74,8 +74,8 @@ const walk = (rel, out = []) => {
   return out;
 };
 
-// Every file an agent follows as instructions. A dangling citation in AGENTS.md or an agent
-// file sends that agent to a section that is not there, exactly as one in CLAUDE.md does.
+// Every file an agent follows as instructions. A dangling citation in any of them sends the
+// agent to a section that is not there.
 const agentFiles = () => {
   try {
     return readdirSync(join(root, '.claude', 'agents'))
@@ -86,13 +86,13 @@ const agentFiles = () => {
   }
 };
 const GATED = new Set([
-  'CLAUDE.md',
   'AGENTS.md',
-  'apps/api/CLAUDE.md',
-  'apps/mobile/CLAUDE.md',
-  'worker/CLAUDE.md',
+  'apps/api/AGENTS.md',
+  'apps/mobile/AGENTS.md',
+  'worker/AGENTS.md',
   '.claude/skills/slice/SKILL.md',
   '.github/ISSUE_TEMPLATE/slice.md',
+  '.github/pull_request_template.md',
   ...agentFiles(),
 ]);
 // The two retrieval scripts cite D-57 and §4.11 as usage examples, so scanning them puts

@@ -1,6 +1,6 @@
 # apps/mobile
 
-Expo app, iOS and Android. Root `CLAUDE.md` has the invariants; they apply here too.
+Expo app, iOS and Android. Root `AGENTS.md` has the invariants; they apply here too.
 
 Routes live in `src/app/` (Expo Router) and everything else under `src/`. Screens map to spec §2.5. Read it before adding a route.
 
@@ -75,11 +75,11 @@ Uploads are sequential per session on purpose, so most of a session stays cancel
 
 **Do not reach for these.** `@react-native-community/datetimepicker` and `react-native-pager-view` both duplicate something already in the build, and each costs a rebuild. Dates use the wheel above or `@expo/ui`; the S-22 pager is built from gesture-handler and Reanimated, which D-77 needs anyway so that panning a zoomed photo and swiping to the next one can be coordinated. Bottom sheets are `@expo/ui`'s `BottomSheet`, with React Native content inside its `RNHostView`.
 
-**Builds are `arm64-v8a` only.** `expo-build-properties` sets `buildArchs`, so every build, local or EAS, compiles one copy of each native library instead of four. That is most of the native build time, and it is why no build here needs an architecture flag on the command line. One ABI covers all of it: every phone the team owns, and the Pixel 7 emulator on the M1, which is arm64 as well.
+**Builds are `arm64-v8a` only.** `expo-build-properties` sets `buildArchs`, so every build, local or EAS, compiles one copy of each native library instead of four. That is most of the native build time, and it is why no build here needs an architecture flag on the command line. One ABI covers every phone the team owns and an emulator on an Apple Silicon Mac, which is arm64 as well.
 
-Two things stop working, both on purpose. A 32-bit-only Android device cannot install the APK, and an emulator on an Intel machine cannot either, because those images are x86_64. If somebody needs one of those, add the ABI here and tell the team, rather than passing a flag locally, or the build works for whoever remembered the flag and for nobody else. Maestro in Phase 7 runs on an arm64 emulator or a real phone for the same reason.
+Two things stop working, both on purpose. A 32-bit-only Android device cannot install the APK, and an emulator on an x86 machine cannot either, because those images are x86_64. The Windows PCs are x86, so on Windows the app runs on a phone over USB, never an emulator (Handbook §9). If somebody needs one of those, add the ABI here and tell the team, rather than passing a flag locally, or the build works for whoever remembered the flag and for nobody else. Maestro in Phase 7 runs on an arm64 emulator or a real phone for the same reason.
 
-**The app runs in the development build, not Expo Go.** MMKV, the `momentlens` URL scheme for invite links, remote push and the background upload module all need native code that Expo Go does not ship. `pnpm --filter mobile android` (or `ios` on the Mac) builds it and installs it on the connected phone or emulator, and `pnpm --filter mobile start` then serves JavaScript to it. Rebuild only after adding a package with native code or changing native config in `app.json` (Handbook §10). When a native module fails to load, check whether the installed build predates the package before debugging the code.
+**The app runs in the development build, not Expo Go.** MMKV, the `momentlens` URL scheme for invite links, remote push and the background upload module all need native code that Expo Go does not ship. `pnpm --filter mobile android` (or `ios` on the Mac) builds it and installs it on the connected phone or emulator, and `pnpm --filter mobile start` then serves JavaScript to it. How a Windows machine builds it and how the phone reaches Metro running in WSL2 is still open in Handbook §9; say so rather than guessing a setup. Rebuild only after adding a package with native code or changing native config in `app.json` (Handbook §10). When a native module fails to load, check whether the installed build predates the package before debugging the code.
 
 ---
 
@@ -91,6 +91,7 @@ Two things stop working, both on purpose. A 32-bit-only Android device cannot in
 - **`className` works on React Native core components only.** NativeWind maps it on `View`, `Text`, `Pressable` and the rest of `react-native`, and a third-party component such as `SafeAreaView` ignores it. Pass that component `style`, or put the classes on a `View` inside it.
 - **`react-native-css-interop` and `@sentry/cli` are direct dependencies on purpose.** pnpm's isolated installs hide a package's dependencies from the app. NativeWind's Babel step imports css-interop from the app's own files, and Sentry's Gradle upload step looks for `@sentry/cli` from `android/`, so a release build fails without it. Pin each to the exact version its parent (`nativewind`, `@sentry/react-native`) depends on, and bump them together.
 - **Fonts load in `src/app/_layout.tsx` with `useFonts`**, keyed by the family names `tailwind.config.js` uses. A weight added to the type scale goes in both files. Styling, tokens and fonts are JavaScript and assets, so none of them needs a native rebuild.
+- **A design image sets layout and direction, never sizes or behavior.** Sizes and placement follow Apple's Human Interface Guidelines on iOS and Material 3 on Android (D-112), and the spec decides behavior. A screen with no image is built in the style of the screens already in `src/features/`, from the same `components/ui/` pieces. The slice skill's mobile build asks for images once and never insists.
 - **Gestures and animation use Reanimated worklets**, not the JS-driven `Animated` API.
 - **Never add or drop `border-dashed` on a view that holds an image.** On Android the image inside stopped drawing once the dashed border was removed. Draw a dashed outline as its own absolutely placed view that comes and goes, as `features/events/cover-field.tsx` does.
 - **No `AsyncStorage` patterns.** `react-native-mmkv` for key-value, SQLite for the queue.

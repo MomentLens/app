@@ -14,7 +14,7 @@ Write the full output of every command to `.slices/<id>/<name>.log` (the directo
 
 1. For each package touched: `pnpm --filter <pkg> lint`, `pnpm --filter <pkg> typecheck`, `pnpm --filter <pkg> test`. For the worker, run Ruff and pytest from its venv once the worker has them. Always run `pnpm docs:check`.
 2. Check that every negative test the card names exists and ran.
-3. Read the diff against the slice's base, `git diff origin/main...HEAD` unless the prompt names another base, plus the uncommitted changes. For each invariant number on the card, look for the violation that invariant in root `CLAUDE.md` describes. These are suspicions for a person to confirm, not verdicts.
+3. Read the diff against the slice's base, `git diff origin/main...HEAD` unless the prompt names another base, plus the uncommitted changes. For each invariant number on the card, look for the violation that invariant in root `AGENTS.md` describes. These are suspicions for a person to confirm, not verdicts.
    - 1: `processed_at` set outside `worker/`, or before the job's last write to R2
    - 2: a key the worker writes without `variant_version`; an app image cache key that is not the one the serving endpoint returned
    - 3: a URL built from the bucket name or the R2 host; a request field that names the subject or the file to serve

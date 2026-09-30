@@ -1,6 +1,6 @@
 # worker
 
-Python 3.12. A **pgmq consumer**, not a web server written in FastAPI. Root `CLAUDE.md` has the invariants; they apply here too.
+Python 3.12. A **pgmq consumer**, not a web server written in FastAPI. Root `AGENTS.md` has the invariants; they apply here too.
 
 Detail in Handbook §6, spec §4.11, and `docs/ARCHITECTURE.md` §2 (tables) and §5 (jobs).
 
@@ -70,7 +70,7 @@ Thumbnails are cut from the blurred output, never blurred separately at 300px.
 ## Local rules
 
 - `requirements.txt` is exactly pinned, never ranges. Locally, from `worker/`: `uv venv --python 3.12 && uv pip install -r requirements.txt`, which `pnpm check:machine` verifies. The server builds its own with `python3.12 -m venv` in `scripts/provision.sh`.
-- InsightFace 2.0 installs as a pure-Python package, and `onnxruntime` and OpenCV ship wheels for x86-64 and ARM64. The server is x86-64 and the M1 is ARM64 (D-78), so local and production no longer match. If a dependency misbehaves only on the server, debug it on the server.
+- InsightFace 2.0 installs as a pure-Python package, and `onnxruntime` and OpenCV ship wheels for x86-64 and ARM64. The server and the Windows machines are x86-64, and Ukasha's M1 is ARM64 (D-78). A wheel that installs in WSL2 should install on the server; one that misbehaves only on the server gets debugged on the server.
 - Ruff replaces flake8, black and isort. One tool.
 - Tests in `tests/`, pytest.
-- Logs come out of `journalctl -u momentlens-worker -f` on the server. Write log lines somebody can grep at 2am.
+- Logs come out of `ssh momentlens 'journalctl -u momentlens-worker -f'` (Handbook §13.4). Write log lines somebody can grep at 2am.
