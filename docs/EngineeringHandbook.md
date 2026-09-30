@@ -39,7 +39,7 @@ One framing before anything else. Everything here assumes v11's scope. If buildi
 | E2E testing | Maestro | Local runs are free; cloud runs are metered. |
 | Package manager | `pnpm` | Fast, disk-efficient, first-class workspaces for the monorepo. |
 
-**Pin your versions and do not chase upgrades.** The project is pinned to Expo SDK 57 and RN 0.86 (root `CLAUDE.md`). Expo ships a major SDK roughly every four months, so at least two more land before June 2027. Do not upgrade unless something is actually broken; an SDK bump in month eight costs a week and buys nothing you need.
+**Pin your versions and do not chase upgrades.** The project is pinned to Expo SDK 57 and RN 0.86 (root `AGENTS.md`). Expo ships a major SDK roughly every four months, so at least two more land before June 2027. Do not upgrade unless something is actually broken; an SDK bump in month eight costs a week and buys nothing you need.
 
 ---
 
@@ -86,10 +86,10 @@ One monorepo, three packages. For three people, a single repo beats three repos:
 
 ```text
 momentlens/
-├── CLAUDE.md                 # session context: invariants + routing. Root file.
+├── AGENTS.md                 # every agent's instructions: invariants + routing. Root file.
 ├── apps/
 │   ├── mobile/              # Expo app
-│   │   ├── CLAUDE.md
+│   │   ├── AGENTS.md
 │   │   ├── src/
 │   │   │   ├── app/          # Expo Router screens
 │   │   │   ├── components/
@@ -102,21 +102,20 @@ momentlens/
 │   │   └── app.json / eas.json
 │   │
 │   └── api/                  # Express API
-│       ├── CLAUDE.md
+│       ├── AGENTS.md
 │       ├── src/
 │       │   ├── routes/
 │       │   ├── controllers/
 │       │   ├── services/
 │       │   ├── middleware/    # JWT verification, error handling
-│       │   ├── db/            # typed Supabase client + query helpers
-│       │   └── schemas/       # zod
+│       │   └── db/            # typed Supabase client + query helpers
 │       ├── tests/
 │       │   ├── unit/
 │       │   └── integration/   # the RLS + serving-endpoint negative tests (§11.3)
 │       └── package.json
 │
 ├── worker/                   # Python AI worker. Outside apps/ on purpose: see below.
-│   ├── CLAUDE.md
+│   ├── AGENTS.md
 │   ├── app/
 │   │   ├── jobs/                 # one file per job in docs/ARCHITECTURE.md §5
 │   │   │   ├── thumbnail_dims.py # Phase 3 warm-up (D-72), retired by S-21
@@ -189,7 +188,7 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 - Filter on `processed_at IS NOT NULL` (D-55). A row that exists but has not been processed has no blur variants yet, so showing it in the shared album shows an unblurred photo. The uploader sees their own unprocessed photo in My Media with a spinner; nobody else sees it anywhere.
 - Never cache a photo by media ID alone, and never by URL. `expo-image` caches under the key the serving endpoint returns, which is built from the signed object key plus `variant_version` (D-60, D-86). A media-ID key keeps the pre-blur image in every client's disk cache after a retroactive blur, and on a shared phone it hands the next account the previous one's unblurred variant. Logging out clears the image cache.
 
-**Native modules.** `apps/mobile/CLAUDE.md` lists every native package in the build and what each one is for, and §17 is the full library list. Two rules worth repeating here: Stage 1 image work goes through `expo-image-manipulator`, native and off the JS thread, and hashing uses `expo-crypto`'s `digest()`, because Node's `crypto` does not exist in React Native.
+**Native modules.** `apps/mobile/AGENTS.md` lists every native package in the build and what each one is for, and §17 is the full library list. Two rules worth repeating here: Stage 1 image work goes through `expo-image-manipulator`, native and off the JS thread, and hashing uses `expo-crypto`'s `digest()`, because Node's `crypto` does not exist in React Native.
 
 ---
 
@@ -205,7 +204,7 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 
 **Authorization lives in the service layer (D-73).** The API queries Supabase with the secret key, so RLS never applies to it, and every rule below is a service-layer check with a negative authorization test: another user, another event, the wrong role. A missing check throws nothing and returns someone else's data, and that test is the only thing that catches it. `docs/ARCHITECTURE.md` §1 is the full table.
 
-**RLS is a backstop against the app, not against the API.** It is on for every table, and the only policies are `SELECT` on `media` and `event`, which Realtime needs. Those two check membership through a `security definer` function, because `membership` has no policy and a plain subquery inside a policy sees no rows. They exist for Realtime only: the app reads `media` and `event` through the API like everything else, because the API applies soft deletes, pagination and the viewer-scoped face rules that a policy cannot. Adding a policy to make a client query work is the mistake root `CLAUDE.md` names; add an endpoint.
+**RLS is a backstop against the app, not against the API.** It is on for every table, and the only policies are `SELECT` on `media` and `event`, which Realtime needs. Those two check membership through a `security definer` function, because `membership` has no policy and a plain subquery inside a policy sees no rows. They exist for Realtime only: the app reads `media` and `event` through the API like everything else, because the API applies soft deletes, pagination and the viewer-scoped face rules that a policy cannot. Adding a policy to make a client query work is the mistake root `AGENTS.md` names; add an endpoint.
 
 The rules easiest to get wrong:
 
@@ -315,7 +314,8 @@ There is no role branch left to unit-test here. The pre-flight checks are worth 
 9. **Python 3.12 through uv**, the version in `worker/.python-version`: `brew install uv`, `uv python install 3.12`, then from `worker/` run `uv venv --python 3.12 && uv pip install -r requirements.txt`. `pnpm check:machine` looks for Python through uv, so a Python installed any other way reads as missing.
 10. **EAS CLI**: `npm install -g eas-cli`, then `eas login`.
 11. **VS Code** with ESLint, Prettier, Tailwind CSS IntelliSense, Python, and Expo Tools.
-12. **Check the machine** with `pnpm check:machine` (not `pnpm doctor`, which is pnpm's own command). It compares Node, pnpm, Python, Java, the Android SDK and Xcode against the repo pins, and checks the git hook, the worker's venv, and both env files: `apps/mobile/.env` must set `EXPO_PUBLIC_API_URL` on every machine, while the root `.env` keys matter only if you run the API or worker locally. `.env.example` says which key goes in which file. Get the `.env` values from a teammate over a private channel or from the Supabase and R2 dashboards; never paste them into a commit, an issue or an agent chat that is shared.
+12. **Claude Code 2.1.277 or later**, the first version that reads `AGENTS.md` (D-116). `claude --version` shows it and `claude update` updates it. The desktop app updates its own copy. Then the one-time access steps in §13.4: the Supabase link and the `momentlens` SSH alias.
+13. **Check the machine** with `pnpm check:machine` (not `pnpm doctor`, which is pnpm's own command). It compares Node, pnpm, Python, Java, the Android SDK, Xcode and Claude Code against the repo pins, and checks for a stray `CLAUDE.md`, the git hook, the worker's venv, the Supabase link, the SSH alias and both env files: `apps/mobile/.env` must set `EXPO_PUBLIC_API_URL` on every machine, while the root `.env` keys matter only if you run the API or worker locally. `.env.example` says which key goes in which file. Get the `.env` values from a teammate over a private channel or from the Supabase and R2 dashboards; never paste them into a commit, an issue or an agent chat that is shared.
 
 **One thing that changed.** Your M1 is ARM64 and the server is x86-64 (D-78), so local and production no longer share an architecture. InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both, which keeps that gap small. If a wheel behaves differently on the server, debug it there, not on your Mac. The M1 is still the fastest machine the team has measured for face processing, which is one reason the worker is yours.
 
@@ -329,7 +329,7 @@ Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differ
 
 - Use **WSL2** (Ubuntu 24.04, the server's release) for the backend (Express and FastAPI), general Node tooling and the agent. It avoids a long tail of path-handling and native-module-compilation quirks. Clone the repo into the WSL2 filesystem (`~/`), not `/mnt/c`, where file watching and installs are slow; `pnpm check:machine` warns when it sees `/mnt/`.
 - Install Node, pnpm, uv and Python **inside WSL2**, not the Windows-native versions, so the toolchain stays consistent. Ubuntu has no Homebrew, so two of §8's steps change: install fnm with `curl -fsSL https://fnm.vercel.app/install | bash` and uv with `curl -LsSf https://astral.sh/uv/install.sh | sh`, open a new shell, then carry on from `fnm install` and `uv python install 3.12`.
-- **Test Android on a physical phone over USB**, running the development build. Builds are arm64-v8a only (`apps/mobile/CLAUDE.md`), and the Android emulator on an x86 Windows machine runs x86_64 images, so it cannot install them. A phone is also what §10 recommends for the camera and GPS. Never Expo Go: since P0-9 the app needs native modules Expo Go does not ship, among them MMKV, the invite-link URL scheme and background upload. B and C run it on their own 64-bit Android phones, the arm64-v8a devices the build targets. **Open, to settle later:** whether the build is compiled on the Windows side or by EAS in the cloud, and how `adb` reaches the phone when Metro runs in WSL2.
+- **Test Android on a physical phone over USB**, running the development build. Builds are arm64-v8a only (`apps/mobile/AGENTS.md`), and the Android emulator on an x86 Windows machine runs x86_64 images, so it cannot install them. A phone is also what §10 recommends for the camera and GPS. Never Expo Go: since P0-9 the app needs native modules Expo Go does not ship, among them MMKV, the invite-link URL scheme and background upload. B and C run it on their own 64-bit Android phones, the arm64-v8a devices the build targets. **Open, to settle later:** whether the build is compiled on the Windows side or by EAS in the cloud, and how `adb` reaches the phone when Metro runs in WSL2.
 - **The iOS Simulator does not exist on Windows.** Apple ships it only with Xcode. This is not workaround-able. Practically:
   - You can write and test 100% of the Android side locally, on a physical phone.
   - For iOS, **EAS Build compiles iOS binaries in the cloud with no local Mac**. You cannot run the Simulator, but you can build a real iOS app and install it on a physical iPhone via the Custom Dev Client, entirely from Windows. EAS Build's free tier covers a limited number of builds per month, which is enough if you are not rebuilding natively every day (§10 explains why you won't be).
@@ -406,14 +406,37 @@ Two honesty notes that belong with the numbers rather than in the viva prep, bec
 
 ```text
 main ← always deployable
-  ├── feature/venue-verification-gate
-  ├── feature/album-face-filter
-  └── fix/upload-queue-cancel
+  ├── fix/upload-queue-cancel
+  └── docs/s-05-rulings          only when the read-back fixed docs
+        └── feat/s-05-schema
+              └── feat/s-05-api
+                    └── feat/s-05-mobile
 ```
+
+**A slice is a stack of PRs.** Each stage of `/slice` pushes one branch, cut from the branch below it, and opens one PR against that branch. Nobody waits for a merge in the middle of a slice (D-116). "The stack" in `.claude/skills/slice/SKILL.md` has the names and commands.
 
 **PRs, even at this size.** The value is not process for its own sake. It is insurance against the bus-factor problem: if only the author has ever read a piece of code, that is a real risk when they are unavailable during exam week and their area breaks. A quick review spreads enough context that the team is not hostage to one person's availability.
 
-**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. `main` takes changes only through pull requests, and the team's rule is one review and a green CI run before merging (D-107). While the other two are away, Ukasha merges after `/code-review` and a green CI run instead (D-113). Not to gatekeep. To keep any area from becoming a black box.
+**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. `main` takes changes only through pull requests, and the team's rule is one review and a green CI run before merging (D-107). A slice asks for that review once, when its done stage has finished, and the reviewer approves every PR in the stack. Ukasha also reads every human-read surface (§18.1) and every `docs/ARCHITECTURE.md` change, whoever else reviews (D-68, D-75). Not to gatekeep. To keep any area from becoming a black box.
+
+**Merging a stack, from the top down.** Once every PR in the stack is approved and green:
+
+1. Merge the top PR into the branch below it with **Rebase and merge**, never Squash. GitHub replays its commits onto that branch and deletes the merged one.
+2. Wait for the checks on the next PR down, which now carries those commits too, and merge it the same way.
+3. The bottom PR reaches `main` last. Its `Closes #n` closes the slice's issue, and CI runs on the whole slice one final time before it lands.
+
+Rebase and merge keeps every commit, so `main` shows each slice's commits in order (D-116). No step needs a force push. `/slice <id> cleanup` runs these merges for the developer, one at a time, after a yes.
+
+**When GitHub cannot rebase the bottom PR**, `main` moved under it and a commit conflicts. Rebase that branch yourself and force-push it, the only force push a stack needs:
+
+```bash
+git fetch origin
+git switch feat/s-05-schema
+git rebase origin/main          # fix each conflict, git add it, git rebase --continue
+git push --force-with-lease
+```
+
+Wait for its checks, then merge it.
 
 **Conventional commits** (`feat:`, `fix:`, `chore:`). Makes `git log` useful when you are trying to remember why something changed three weeks ago. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits. PR titles and descriptions carry no tool attribution either, such as a "Generated with Claude Code" line.
 
@@ -484,7 +507,7 @@ The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. P
 
 #### 13.3.5 Deploying an update
 
-**Deploying an update** is `ssh SERVER 'sudo bash /srv/momentlens/scripts/deploy.sh'`. The script pulls, installs the API's dependencies, builds and restarts the API. It reinstalls and restarts the worker only if something under `worker/` changed between the old commit and the new one; `--skip-worker` leaves it alone regardless. It never rewrites the units, so a unit change needs `provision.sh`.
+**Deploying an update** is `ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh'`, through the alias §13.4 sets up. The script pulls, installs the API's dependencies, builds and restarts the API. It reinstalls and restarts the worker only if something under `worker/` changed between the old commit and the new one; `--skip-worker` leaves it alone regardless. It never rewrites the units, so a unit change needs `provision.sh`.
 
 **Logs**: `journalctl -u momentlens-worker -f`. Learn this command in week one. It is where every mysterious failure will be explained.
 
@@ -502,6 +525,69 @@ A credit sitting unused is not a standby. To make it one, three things must exis
 3. **One rehearsal.** Spin the standby VM up once on whichever credit is current, run `provision.sh`, point a staging subdomain at it, confirm the app works, then tear it down. An untested fallback is a story you tell yourself. Budget half a day in Phase 7.
 
 Both R2 and Supabase are external, so a compute swap moves no data. That is the whole reason this fallback is cheap, and it is worth saying out loud in a viva.
+
+### 13.4 Migrations, deploys and server logs
+
+All three developers share the dev Supabase project and the dev server, so every command here changes what the other two see. An agent asks before running any of them, every time (root `AGENTS.md`). Run them from the repo root, inside WSL2 on Windows.
+
+**Once per machine.**
+
+1. **Supabase.** Ask Ukasha to add you to the Supabase organization, and for the dev project's database password over a private channel. Then run `pnpm exec supabase login` and `pnpm exec supabase link --project-ref <ref>`, where `<ref>` is the part of the root `.env`'s `SUPABASE_URL` before `.supabase.co`. The link lives in `supabase/.temp/`, which git ignores, so each clone links once, and a worktree has no link until you run it there too. `pnpm check:machine` warns when a checkout is linked to anything but `momentlens-dev`.
+2. **SSH.** Make a key if you have none, `ssh-keygen -t ed25519`, and send Ukasha the public half, `cat ~/.ssh/id_ed25519.pub`. He adds it with `echo '<key>' | ssh momentlens 'cat >> ~/.ssh/authorized_keys'` and tells you the server's login user. Then add this to `~/.ssh/config`:
+
+   ```text
+   Host momentlens
+     HostName api.momentlens.me
+     User <the login user Ukasha names>
+     IdentityFile ~/.ssh/id_ed25519
+   ```
+
+   `ssh momentlens 'echo ok'` confirms it, and `pnpm check:machine` warns while the alias is missing. The server moves from Oracle to Netcup on 2026-10-15 (arch §7). The alias follows `api.momentlens.me`, but Ukasha has to add every key again on the new server, and SSH refuses the new host key until you run `ssh-keygen -R api.momentlens.me`.
+
+**A new migration.** The slice that first writes to a table owns its migration (docs/WorkSlices.md), and its api build writes it:
+
+```bash
+pnpm exec supabase migration new invite_regenerate   # creates supabase/migrations/<timestamp>_invite_regenerate.sql
+```
+
+**Pushing a migration to the dev project.** The slice owner pushes during the api build, once tests or the phone need the new schema, and tells the team. **A migration that has reached the dev project is frozen.** Never edit or rename it, and never edit one another slice wrote. A change is a new migration (D-116).
+
+```bash
+cat supabase/.temp/linked-project.json    # must say momentlens-dev
+pnpm exec supabase migration list          # the Local and Remote columns show what is about to go up
+pnpm exec supabase db push                 # asks for the database password
+```
+
+`db push` sends every migration in your checkout that the dev project lacks, so push from the slice's own branch. If `migration list` shows a Remote migration with no Local file, someone pushed from a branch you do not have; the CLI refuses to push until you have it, so `git fetch` and ask the team which branch it came from. Nobody links a checkout to the stable project before Phase 7 (D-76).
+
+**Deploying the dev server.** After a stack that touched `apps/api/`, `worker/` or `supabase/migrations/` merges, whoever merged it deploys `main`:
+
+```bash
+ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh'
+```
+
+It pulls the branch the server has checked out, builds and restarts the API, and restarts the worker only when `worker/` changed (§13.3.5).
+
+**Trying an unmerged API change on a phone.** Every phone talks to `api.momentlens.me`, the dev server, through `EXPO_PUBLIC_API_URL`. To test a slice's API before its stack merges, push its migration first if it has one, then deploy its branch, and put `main` back when you are done. Tell the team both times, because the server runs one branch at a time for all three phones.
+
+```bash
+ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch feat/s-05-api'
+ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'
+```
+
+`deploy.sh` fast-forwards the server's copy of a branch, so a branch that was force-pushed since its last deploy stops with "Not possible to fast-forward". Put the server on `main`, delete its copy with `ssh momentlens 'sudo -u momentlens git -C /srv/momentlens branch -D feat/s-05-api'`, and deploy the branch again.
+
+**Reading the server.**
+
+```bash
+ssh momentlens 'sudo journalctl -u momentlens-api -n 100 --no-pager'
+ssh momentlens 'sudo journalctl -u momentlens-worker -f'
+ssh momentlens 'sudo -u momentlens git -C /srv/momentlens log -1 --oneline --decorate'   # which branch and commit it runs
+```
+
+**Development builds.** `pnpm --filter mobile android` builds and installs one on a phone over USB (§10 says when to rebuild). EAS builds one in the cloud: from `apps/mobile`, `eas build --profile development --platform android`, then install the APK from the link it prints. EAS needs `eas login` with an account Ukasha has added to the `momentlens` organization on expo.dev. Which of the two works on Windows is still open (§9).
+
+**Two more that touch shared services.** `pnpm --filter api test:rls` runs the RLS negative tests against the dev project with the root `.env`'s keys. `gh workflow enable keepalive.yml` turns the Supabase keep-alive back on after GitHub disables it for 60 days without repository activity (arch §7).
 
 ---
 
@@ -739,7 +825,7 @@ Context is the scarcest resource in an agent session and most people waste it on
 
 ### 18.4 The version-drift problem, specifically
 
-The stack moves faster than model training data. Root `CLAUDE.md` lists the traps under "Model traps in this stack." The habit that fixes them: when an agent gives you an API you have not personally used, check the real docs before building on it. A hallucinated prop that silently does nothing is much harder to debug than one that throws.
+The stack moves faster than model training data. Root `AGENTS.md` lists the traps under "Model traps in this stack." The habit that fixes them: when an agent gives you an API you have not personally used, check the real docs before building on it. A hallucinated prop that silently does nothing is much harder to debug than one that throws.
 
 ### 18.5 Commit hygiene for agent-generated code
 
@@ -767,7 +853,7 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 - **Cite a section id, never a line number.** `EngineeringHandbook.md:542` went stale in one PR. Ids survive edits and the gate checks them (gated: a dangling citation fails).
 - **Renaming a heading changes its id.** Before renaming one, `doc why` it, or grep for `arch:<slug>` if it is a table heading, and update what cites it.
 - **Say the date on anything that will stop being true**, such as a server that goes away on 2026-10-15, so the next reader can tell a stale line from a current one.
-- **Write plainly.** These apply to `docs/`, the `CLAUDE.md` files, `AGENTS.md`, `.claude/`, commit messages and PR descriptions, whoever's agent writes them (D-107). Fix an older line when you touch it; do not rewrite a file just to comply.
+- **Write plainly.** These apply to `docs/`, the `AGENTS.md` files, `.claude/`, `.agents/`, commit messages and PR descriptions, whoever's agent writes them (D-107). Fix an older line when you touch it; do not rewrite a file just to comply.
   - No em dashes. End the sentence or use a comma. Older decision headings keep theirs.
   - None of these words: delve, crucial, pivotal, showcase, tapestry, testament, underscore, landscape used abstractly, leverage, utilize, robust, seamless.
   - No "not just X, but Y". State the point.
@@ -781,9 +867,9 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 
 The procedure is `.claude/skills/slice/SKILL.md`; the two subagents are in `.claude/agents/`. Both are committed, so every developer runs the same ones. This section is why they are shaped that way, and the cheat-sheet.
 
-**What a session costs before anyone types.** Estimated on 2026-09-23 with the token counter in `scripts/docindex.mjs`, not counting Claude Code's own system prompt and tool definitions: root `CLAUDE.md` 3,340 tokens, loaded into every session and every custom subagent. A package `CLAUDE.md` loads when work touches that package: `apps/api` 2,576, `apps/mobile` 2,829, `worker` 1,752. The skill is 3,043. Across the 44 slice briefs the median is about 2,450 and the p90 5,332, and the largest, S-13, is 8,874 (`doc toc slices` has each one). Repeated fixed files are served from the prompt cache, so they cost less money than their token count, but they still fill the window.
+**What a session costs before anyone types.** Estimated on 2026-09-30 with the token counter in `scripts/docindex.mjs`, not counting Claude Code's own system prompt and tool definitions: root `AGENTS.md` 4,405 tokens, loaded into every session. A package `AGENTS.md` loads when work touches that package: `apps/api` 2,686, `apps/mobile` 3,051, `worker` 1,812. The skill is 5,589, up from 3,043 once it gained the stack, the discussion log and the cleanup stage (D-116). Across the 44 slice briefs the median is about 2,450 and the p90 5,332, and the largest, S-13, is 8,874 (`doc toc slices` has each one). Repeated fixed files are served from the prompt cache, so they cost less money than their token count, but they still fill the window.
 
-**A subagent is not free.** Each one starts by loading root `CLAUDE.md`, its own prompt (about 670 tokens for the auditor, 790 for the verifier) and the package file it works in, so a call costs about 4,000 to 7,000 tokens before it does anything, on top of the session that started it. It earns that only by keeping noise out of the session, where reasoning degrades as history piles up. The rule: delegate work that would put more than about 5,000 tokens into the session that the session will not need again. Do the rest inline.
+**A subagent is not free.** Each one starts by loading root `AGENTS.md`, its own prompt (about 670 tokens for the auditor, 790 for the verifier) and the package file it works in, so a call costs about 4,000 to 7,000 tokens before it does anything, on top of the session that started it. It earns that only by keeping noise out of the session, where reasoning degrades as history piles up. The rule: delegate work that would put more than about 5,000 tokens into the session that the session will not need again. Do the rest inline.
 
 **Why these two, and not more.** This is the smallest set that passes that rule, not a proven optimum; the first three slices measure it.
 
@@ -791,8 +877,8 @@ The procedure is `.claude/skills/slice/SKILL.md`; the two subagents are in `.cla
 |---|---|---|
 | `slice-auditor` | The doc lookups behind the read-back's hunt: every entity checked in `ARCHITECTURE.md`, every decision's `why`, spec §5. An estimated 5,000 to 15,000 tokens on a large brief, in the session that also carries the discussion with the developer | Kept, for briefs over about 1,500 tokens, 29 of the 44. Below that a brief names too few ids to repay 4,000 tokens of overhead. Runs on the session's model at high effort, once per slice, because the read-back is where a silent bug is cheapest to catch |
 | `slice-verifier` | Lint, typecheck and test output, repeated on every fix round. A failing Jest suite or a `tsc` cascade runs to hundreds of lines | Kept. Pinned to `claude-sonnet-5`, since it runs commands and summarizes failures; its invariant checks are suspicions a person confirms, and the four human-read surfaces still get a person |
-| Built-in `Explore` | Whole files read to answer "what already exists" | Kept. It loads no `CLAUDE.md`, so it is the cheapest call there is |
-| An implementer subagent | A package's code, in a build session that holds nothing else anyway | Dropped. A fresh build session per package isolates the same work for one root `CLAUDE.md` load instead of two, and the agent that builds is the one the developer answers, with no questions relayed |
+| Built-in `Explore` | Whole files read to answer "what already exists" | Kept. It loads no instruction file, so it is the cheapest call there is |
+| An implementer subagent | A package's code, in a build session that holds nothing else anyway | Dropped. A fresh build session per package isolates the same work for one root `AGENTS.md` load instead of two, and the agent that builds is the one the developer answers, with no questions relayed |
 | A schema author | Nothing; the schema is small and the developer reviews it in the same session | Not built |
 | A reviewer | Nothing a teammate's review and `/code-review` do not already cover | Not built |
 
@@ -802,11 +888,11 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 
 | Source | What happens | What stops it |
 |---|---|---|
-| The read-back conversation | Brief, follow-up sections and discussion ride into the build as history nobody needs | A fresh session per stage; only the approved card crosses |
+| The read-back conversation | Brief, follow-up sections and discussion ride into the build as history nobody needs | A fresh session per stage; only the approved card and the branches cross. The discussion log goes to the issue for the reviewer, never into the next session |
 | Test, lint, typecheck and build output | A failing run is hundreds of lines, repeated on every retry | `slice-verifier` writes full logs to `.slices/<id>/` and returns at most 20 lines per failure |
 | Reading files to find one function | Whole files enter the context to answer a one-line question | `Explore` returns paths and names only |
 | Fix loops | Each attempt appends a diff and an error | Two rounds per failure, then stop and ask (§18.2) |
-| Several packages in one session | Each package's `CLAUDE.md` and code pile up together | One build session per package |
+| Several packages in one session | Each package's `AGENTS.md` and code pile up together | One build session per package |
 | Native build and device logs | Gradle and `adb logcat` run to thousands of lines | A person runs the device check and reports the result; never paste the log |
 
 **The stages, and what each holds.** Token figures are estimates from the measured sizes above; replace them with the real numbers from the first three slices.
@@ -814,15 +900,17 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 | Stage | Session holds | Delegated | Person decides | Hands forward |
 |---|---|---|---|---|
 | Read-back, `/slice S-12` | fixed files, brief, auditor and Explore reports, the read-back, the discussion: about 14,000 to 20,000 | `slice-auditor` on larger briefs, `Explore` | go, the decisions, doc fixes | the slice card in the issue, under 900 |
-| Schema, `/slice S-12 schema` | fixed files, card, `packages/shared-types`: about 9,000 | nothing | merge the schema PR | the merged schema, by path |
-| Build, `/slice S-12 build api`, one session per package | fixed files, card, the package's `CLAUDE.md` and code, verifier reports under 800 each: about 15,000 to 40,000, set by how much code it reads | `slice-verifier` | every question the card cannot answer, the phone check | commits; the last package opens the PR |
-| Done, `/slice S-12 done` | fixed files, card, verifier report, the checklist: about 9,000 | `slice-verifier` | review, the human reads, `ARCHITECTURE.md` (Ukasha) | the merged slice, its issue closed |
+| Schema, `/slice S-12 schema` | fixed files, card, `packages/shared-types`: about 10,000 | nothing | nothing; say if a schema looks wrong | the schema branch and its PR, by path |
+| Build, `/slice S-12 build api`, one session per package | fixed files, card, the package's `AGENTS.md` and code, verifier reports under 800 each: about 17,000 to 42,000, set by how much code it reads | `slice-verifier` | every question the card cannot answer, screen designs, the phone check, each migration push and deploy | that package's branch and its PR |
+| Done, `/slice S-12 done` | fixed files, card, verifier report, the checklist, the discussion logs: about 12,000 | `slice-verifier` | who reviews the stack | the stack, with the logs in its top PR |
+| Cleanup, `/slice S-12 cleanup` | fixed files, the PR list, git state: about 10,000 | nothing | merging the stack, deploying `main` | the merged slice, its issue closed, a clean machine |
 
 **Handoffs are artifacts, never transcripts.**
 
 - **The slice card** is the read-back after a person answered it: goal, decisions with who made them, what the slice builds against and produces, files in build order, negative tests, invariant numbers, edge cases with their rule ids, the doc ids to read while building, and anything still open. It lives in the slice's GitHub issue, so all three developers' agents load the same one. It is written once and changed only when a person changes a decision.
-- **Schemas pass by path.** Once the schema PR merges, the card names the file in `packages/shared-types` and the exported names, and a build session reads that one file. Nothing pastes handler or screen code between sessions; the compiler checks the contract.
-- **Invariants pass by number.** Root `CLAUDE.md` already reaches every session and every custom subagent, so nobody pastes it. The card lists the invariant numbers the slice touches and the negative test for each, and `slice-verifier` checks the diff for each numbered violation. What it flags is a suspicion for a person, not a verdict.
+- **Schemas pass by path.** Once the schema branch is pushed, the card names the file in `packages/shared-types` and the exported names, and a build session cuts its branch from the one below and reads that one file. Nothing pastes handler or screen code between sessions; the compiler checks the contract.
+- **Invariants pass by number.** Root `AGENTS.md` already reaches every session, and the auditor reads its invariants when its own context lacks them, so nobody pastes it. The card lists the invariant numbers the slice touches and the negative test for each, and `slice-verifier` checks the diff for each numbered violation. What it flags is a suspicion for a person, not a verdict.
+- **The discussion log is for the reviewer, not the next stage.** Each stage posts its own to the issue, and the done stage copies them all into the top PR, so Ukasha can read how a teammate's slice was decided without having been there. The next stage never loads it; the card carries every decision it needs.
 - **Subagent reports have a fixed shape and a size cap**, set in each agent file. A subagent never asks a person anything, and cannot: the auditor returns its questions under `DECISIONS NEEDED`, and the session asks them.
 
 **When to start over.** `/clear` and reload the card at every stage boundary and between packages, after two failed fixes of the same problem, after a large log reached the context by accident, and when `/context` shows the window more than half full. Prefer that to `/compact` whenever a card exists: the card was reviewed by a person and the compaction summary was not. Never build two packages at once in one working tree; for a genuine alternative, use a separate git worktree.
@@ -832,9 +920,10 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 #### Cheat-sheet, for every slice
 
 1. **Pick** a slice whose "Depends on" issues are all closed. If it has no issue, create one from the Work slice template, titled `S-12: <name>`.
-2. **`/slice S-12`** in a fresh session. Read the read-back, starting with what the docs get wrong and the decisions list. **You decide:** answer every decision, fix the docs in their own PR if needed, then say go. The agent writes the card into the issue. `/clear`.
-3. **`/slice S-12 schema`.** Review the schema PR. **You decide:** merge it. `/clear`.
-4. **`/slice S-12 build api`**, `/clear`, then **`/slice S-12 build mobile`**, in the card's order. Answer every question yourself; never tell the agent to guess. **You decide:** run the phone check if the card says one is needed. The last package opens the PR. `/clear`.
-5. **`/slice S-12 done`.** **You decide:** get one teammate's review, or while D-113's exception holds run `/code-review`, read any of the four human-read surfaces yourself, and send `ARCHITECTURE.md` changes to Ukasha. Merge, and close the issue.
+2. **`/slice S-12`** in a fresh session. Read the read-back, starting with what the docs get wrong and the decisions list. **You decide:** answer every decision, then say go. The agent writes the card into the issue and opens a doc-fix PR if the docs needed one. `/clear`.
+3. **`/slice S-12 schema`.** The agent opens the schema PR on the stack and lists the schemas. Say if one looks wrong. `/clear`.
+4. **`/slice S-12 build api`**, `/clear`, then **`/slice S-12 build mobile`**, in the card's order. Answer every question yourself; never tell the agent to guess. Attach screen designs when the mobile build asks, or let it improvise. **You decide:** run the phone check if the card says one is needed, and say yes or no to each migration push and deploy. Each package opens its own PR on the stack. `/clear`.
+5. **`/slice S-12 done`.** The agent reports the Definition of done and puts every stage's discussion log in the top PR. **You decide:** which teammate reviews. Request them on every PR, and Ukasha on any human-read surface or `ARCHITECTURE.md` change. `/clear`.
+6. **`/slice S-12 cleanup`** once the reviews are in. On your yes it merges the stack from the top down, then closes the issue, removes the slice's worktrees and branches, updates `main`, and offers to put the dev server back on `main`.
 
 Never carry a stage's session into the next, never paste a log into a session, and never let an agent answer its own question.

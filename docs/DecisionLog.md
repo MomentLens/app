@@ -795,6 +795,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A hook enforcing read-only agents, about 40 lines of script for a risk the prompts already name.
 **Cost.** A pinned model id needs a bump when models change. A docs PR waits for a teammate's review.
 **Amended (see D-113).** While the other two are away, Ukasha merges after `/code-review` and CI, with no teammate's review.
+**Amended (see D-116).** D-113's exception has ended. A slice's stack gets its one review after the done stage, and merges from the top down with Rebase and merge.
 
 ### D-108: A job that keeps failing on a photo unpublishes it
 **Decision.** Amends D-103. When a message about a photo fails its third try, the worker archives it and clears that photo's `processed_at` if it was set. The photo leaves the album, and its uploader sees it as processing in My Media. The serving endpoint stops signing it at once, because its visibility check needs `processed_at` (`docs/ARCHITECTURE.md` §1), and other phones drop it on their next fetch of the event. To run the job again, send the archived message back to `jobs`; on success the job sets `processed_at` last, as always.
@@ -879,6 +880,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Nobody else can review for now, and waiting would stall every slice. S-02's five pull requests, #39 to #43, had already merged with no review.
 **Rejected.** Holding every pull request until a teammate is free.
 **Cost.** A mistake that only a second person would catch can reach `main`. `/code-review` knows the code but not the team's intent. The branch protection on `main` requires no approvals and no status checks, so both halves of this rule, the review and the green CI run, are kept by habit, not by GitHub.
+**Amended (see D-116).** The exception ended on 2026-09-30, when B and C came back. D-116's own change was the last one Ukasha merged alone.
 
 ### D-114: S-02's build rulings, and deleting an Admin's account
 **Decision.** Ukasha ruled on the first seven on 2026-09-25, during S-02's API build, and they sat on S-02's slice card in #37 until now. The last is from 2026-09-29.
@@ -915,6 +917,22 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A signed-out preview with only the name and role. Answering a blocked person 404 with Join Error's "expired or revoked" copy, which tells them something false. nginx `limit_req` on lookups. Keeping the pending request on the phone only, which a second device or a reinstall loses.
 **Cost.** Anyone holding or guessing a live code learns an event's name, dates, venue names and cover without an account, and nothing slows a guesser. A blocked person learns they were blocked. One error code, one screen, one column and a field on `ListEventsResponse`.
 **Reopen if.** The API's logs show invite lookups the team did not make. Then add the rate limit.
+
+### D-116: One AGENTS.md, a stack of PRs per slice, and shared infrastructure for all three
+**Decision.** Amends D-107 and D-113. Ukasha ruled on 2026-09-30, when B and C came back.
+- `AGENTS.md` is the only instruction file for every agent tool, at the root and in `apps/mobile/`, `apps/api/` and `worker/`. Every `CLAUDE.md` is deleted. Claude Code reads `AGENTS.md` from 2.1.277 on, and only where no `CLAUDE.md` or `CLAUDE.local.md` sits in the project or a folder above it, so the docs gate fails on either file and `pnpm check:machine` fails on either file or an older Claude Code. `.agents/skills/slice/SKILL.md` is a copy of the Claude skill, and the gate keeps the two identical.
+- A slice ships as a stack of PRs: read-back doc fixes if there are any, then the schema, then one PR per package, each branch cut from the one below. No stage waits for a merge. The done stage asks for one teammate's review of the whole stack, and Ukasha reads the human-read surfaces and any `docs/ARCHITECTURE.md` change.
+- A reviewed stack merges from the top down with Rebase and merge, never Squash, so `main` keeps every commit.
+- Every stage keeps a discussion log and posts it to the slice's issue, and the done stage copies all of them into the top PR.
+- A sixth stage, `/slice <id> cleanup`, merges an approved stack on the developer's yes, closes the issue, removes the slice's worktrees and local branches, and brings `main` and the dev server up to date.
+- The mobile build asks once for screen designs, never insists, and builds any screen without one in the style of the existing screens.
+- The slice owner pushes the slice's migration to the dev project during the api build. A migration that has reached the dev project is never edited; a change is a new migration.
+- Every developer gets SSH to the dev server through the `momentlens` alias (hb §13.4). Whoever merges a stack that touched the API, the worker or a migration deploys `main`. A developer may deploy an unmerged branch to try it on a phone, telling the team first, and puts `main` back after.
+- D-113's exception ends with this change, the last one Ukasha merges alone. From here every PR gets one teammate's review and a green CI run before it merges (D-107).
+**Why.** B and C are starting with little context on the project, and their agents with none. The rules sat in `CLAUDE.md` files that other agent tools skip, and Ukasha wants smaller agents from other tools able to find and explain things from the same file. The migration and deploy steps lived only in Ukasha's agent memory. Each slice stopped halfway for its schema PR to merge, and nothing recorded how a slice was decided, so Ukasha could not see what a teammate's agent had been told. Ukasha wants every commit kept on `main`.
+**Rejected.** A one-line `CLAUDE.md` in each folder importing `AGENTS.md`, which also works on Claude Code before 2.1.277. Squash merges. Merging the stack from the bottom up, which needs a rebase and a force push before each PR. Only Ukasha pushing migrations. No SSH for B and C, with unmerged API changes tried against an API on their own machine.
+**Cost.** A Claude Code older than 2.1.277, or one stray `CLAUDE.md`, leaves an agent with no project rules and no error, and the checks catch it only when someone runs them. The dev server runs one branch at a time for all three phones. A migration pushed from an unmerged branch is on the shared database before anyone has reviewed it. Top-down merging reruns CI once per PR in the stack.
+**Reopen if.** An agent is found working without the rules, or two developers need the dev server on different branches in the same week.
 
 ## Open items that are not decisions yet
 
