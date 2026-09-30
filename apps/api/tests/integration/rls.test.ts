@@ -916,6 +916,15 @@ if (project === null) {
         );
         expect(resolveCall.error).not.toBeNull();
         expect(resolveCall.data).toBeNull();
+        const issueCall = await client.rpc('issue_invite', {
+          p_event_id: event.id,
+          p_role: 'guest',
+        });
+        expect(issueCall.error).not.toBeNull();
+        const tokenCall = await client.rpc('new_invite_token');
+        expect(tokenCall.error).not.toBeNull();
+        const shortcodeCall = await client.rpc('new_invite_shortcode');
+        expect(shortcodeCall.error).not.toBeNull();
       }
 
       await expect(store.listForMember(a.id)).resolves.toEqual([event]);
