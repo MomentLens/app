@@ -40,8 +40,9 @@ worker/**/__pycache__/
 .vscode/*
 !.vscode/extensions.json
 
-# Claude Code (personal, per-machine settings)
+# Claude Code (personal, per-machine settings, and the worktrees the desktop app makes per session)
 .claude/settings.local.json
+.claude/worktrees/
 
 # Per-slice agent logs and scratch (Handbook §18.8)
 .slices/
