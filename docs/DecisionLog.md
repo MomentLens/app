@@ -969,6 +969,16 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Reading the role out of the `GET /events` cache. Realtime on `membership`. Leaving the offline cold start to S-04. A hand-written MMKV cache for the one event, which S-04 would then write again for the schedule. JS tabs for the Event shell, which would look different from the Global shell's on both platforms.
 **Cost.** One endpoint, one read-only SQL function and their tests. Two JavaScript packages. A persisted cover URL expires an hour after it was signed, so offline the header shows the cover only if `expo-image` cached it. A role change shows on the next foreground or the next 403, not at once.
 **Reopen if.** A tester reports stale tabs after a role change.
+**Amended (see D-119).** The Event header shows no cover. The persister is `@tanstack/query-async-storage-persister`, and the `GET /events` list survives a restart along with the event.
+
+### D-119: S-08's mobile build rulings
+**Decision.** Amends D-118. Ukasha ruled on these on 2026-10-01, during S-08's mobile build.
+- The Event header holds "‹ Events", the event's name and the slot S-29 fills with the avatar (spec §2.5.9). It shows no cover.
+- The persister is `@tanstack/query-async-storage-persister`, writing to MMKV. D-118 named `@tanstack/query-sync-storage-persister`, which TanStack Query has deprecated.
+- The `GET /events` list survives a restart, as the event does, and a logout or an ended session clears it with the event.
+**Why.** The name already says which event is open, and the Figma frames leave the cover out. A cold start with no signal reaches an event only through the Events list, so persisting the event alone left a guest unable to open it.
+**Rejected.** The cover in the header. The deprecated sync persister. Persisting the event and not the list.
+**Cost.** One more persisted query. Every event the user belongs to stays on the phone for up to 14 days with the app closed, or until a logout. A persisted cover URL on an Events card expires an hour after it was signed, so offline a card shows its cover only if `expo-image` cached it.
 
 ## Open items that are not decisions yet
 

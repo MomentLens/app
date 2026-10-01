@@ -300,7 +300,7 @@ The Scan tab is solely for the Venue Check-In QR verification action in §4.5. I
 
 #### 2.5.1 Two-tier tab bar
 
-The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (event cover thumbnail, name, a "‹ Events" back affordance, and the user's avatar, which opens Account Settings per §2.5.9) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting.
+The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (a "‹ Events" back affordance, the event's name, and the user's avatar, which opens Account Settings per §2.5.9, D-119) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting.
 
 **Global shell** (3 tabs):
 
@@ -713,7 +713,7 @@ Renamed from "Private mode," which saved to the camera roll, the most publicly s
 
 ### 4.14 Offline mode
 - Cached on first load: the schedule, sub-event and venue details including coordinates and radius, and the thumbnail grid.
-- The event and the viewer's role in it survive a restart, so someone who reopens the app with no signal still reaches My Media and the camera (D-118).
+- The Events list, the event and the viewer's role in it survive a restart, so someone who reopens the app with no signal still reaches My Media and the camera (D-118, D-119).
 - Capture and the local upload queue work fully offline. Queued items run their full pre-flight and upload sequence once reconnected, taking along the GPS reading or QR scan the device recorded for verification (§4.5).
 - **Offline QR scanning works.** The scanned payload is written to local SQLite and travels with the next pre-flight request. No venue secret is pre-cached, because caching the secret of an unscanned QR would let any client self-verify from anywhere.
 - Local GPS verification works offline, since the comparison is against cached coordinates on-device. It flips the queue to ready; the actual upload still needs connectivity for pre-flight and the presigned URL. Local verification removes the wait, not the network requirement.
