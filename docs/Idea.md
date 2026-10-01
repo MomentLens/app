@@ -204,7 +204,7 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
    in or not (D-115). Tapping "Join Event" is the actual join action.
 
 3. Per the event's Approval Mode:
-   ├── Auto-Approve → joins immediately → Event Home
+   ├── Auto-Approve → joins immediately → the role's landing tab (§2.5.1)
    └── Approve New Users → Pending Approval screen ("Waiting for the
        organizer to approve your request to join [Event Name]", with a
        Cancel Request option) → Approval Alerts push fires on resolution
@@ -277,7 +277,7 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
        ├── Valid, and the user is blocked from this event → Join Blocked
        │   screen (D-102, D-115)
        ├── Valid, and user already belongs to this event → skips straight to
-       │   Event Home, no redundant join screen. A pending request goes to
+       │   their landing tab, no redundant join screen. A pending request goes to
        │   Pending Approval instead
        └── Valid, and new to this event or removed from it → continues into
            Phase A of the Guest or Photographer flow
@@ -300,7 +300,7 @@ The Scan tab is solely for the Venue Check-In QR verification action in §4.5. I
 
 #### 2.5.1 Two-tier tab bar
 
-The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (event cover thumbnail, name, and a "‹ Events" back affordance) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting.
+The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (event cover thumbnail, name, a "‹ Events" back affordance, and the user's avatar, which opens Account Settings per §2.5.9) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting.
 
 **Global shell** (3 tabs):
 
@@ -316,8 +316,8 @@ The Events tab sorts an event by its span, from its first sub-event's start to i
 
 | Role | Tabs |
 |---|---|
-| Guest | Home · My Media · Schedule |
-| Admin | Home · My Media · Schedule · Manage |
+| Guest | Home (default landing) · My Media · Schedule |
+| Admin | Home (default landing) · My Media · Schedule · Manage |
 | Photographer | My Media (default landing) · Schedule |
 
 There is **no Camera tab**. Camera is a full-screen modal Viewfinder launched via a FAB on My Media, the same pattern as Instagram and Snapchat, where capture suspends the tab bar rather than living in it. A role never sees a tab it structurally cannot use. Photographer never sees Home, rather than seeing it grayed out; a disabled tab invites "why can't I tap this" confusion for no benefit.
@@ -713,6 +713,7 @@ Renamed from "Private mode," which saved to the camera roll, the most publicly s
 
 ### 4.14 Offline mode
 - Cached on first load: the schedule, sub-event and venue details including coordinates and radius, and the thumbnail grid.
+- The event and the viewer's role in it survive a restart, so someone who reopens the app with no signal still reaches My Media and the camera (D-118).
 - Capture and the local upload queue work fully offline. Queued items run their full pre-flight and upload sequence once reconnected, taking along the GPS reading or QR scan the device recorded for verification (§4.5).
 - **Offline QR scanning works.** The scanned payload is written to local SQLite and travels with the next pre-flight request. No venue secret is pre-cached, because caching the secret of an unscanned QR would let any client self-verify from anywhere.
 - Local GPS verification works offline, since the comparison is against cached coordinates on-device. It flips the queue to ready; the actual upload still needs connectivity for pre-flight and the presigned URL. Local verification removes the wait, not the network requirement.
