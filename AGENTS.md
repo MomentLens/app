@@ -25,7 +25,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 | Serving or downloading an image or thumbnail | Spec §4.13 + Handbook §5.2 + D-69 + D-86 + `docs/ARCHITECTURE.md` §1 and §3 |
 | Album, grid, filters | Spec §4.9 + Handbook §16 |
 | RLS or any permission check | `docs/ARCHITECTURE.md` §1 + D-73 + Handbook §5.1 |
-| Navigation or screens | Spec §2.5 + Handbook §16.5 + D-112 |
+| Navigation or screens | Spec §2.5 + Handbook §16.5 + D-112 + D-118 |
 | Deployment | Handbook §13 + `docs/ARCHITECTURE.md` §7 |
 | Pushing a migration, deploying the dev server, reading server logs | Handbook §13.4 |
 | Merging a slice's stack of PRs | Handbook §12 |
@@ -64,7 +64,7 @@ Spec sections are stable identifiers. Cite them (`spec §4.11`) rather than para
 These fail **silently**. Wrong code here looks correct, throws nothing, and passes tests written from the wrong angle. Do not violate them, and say so if asked to.
 
 1. **`processed_at` is written last**, after every variant is in R2. It is what makes a media row album-visible, and the album query filters on it. Write it early and an unblurred photo is published. (D-55)
-2. **Every object key the worker writes carries `variant_version`**, bumped on every regeneration including the first. That includes blurred thumbnails. Image cache keys must include it: the app caches under the key the serving endpoint returns, the signed object key plus `variant_version`. A stable key means clients keep serving the pre-blur image from disk cache after a retroactive blur. (D-60, D-86)
+2. **Every object key the worker writes carries `variant_version`**, bumped on every regeneration including the first. That includes blurred thumbnails. A media file's cache key must include it. The app caches under the key the serving endpoint returns, the signed object key plus `variant_version`. A stable key means clients keep serving the pre-blur image from disk cache after a retroactive blur. A cover or an avatar has no version, and its key carries its upload's id instead (arch §3). (D-60, D-86, D-118)
 3. **The server decides which image file a requester gets.** Never derive "is this the subject" from client input. Never hand out a bucket URL. Media files have one endpoint: authorization check, then a presigned URL. A cover or an avatar is presigned by the endpoint that returns its event or profile, after that endpoint's check (arch §3). (D-57, D-110)
 4. **The Do Not Publish filter is a read-time predicate parameterized by the viewer**, never a write-time exclusion. The wrong version passes every test written from another viewer's perspective and returns nothing for the subject, who is the one person who needs it. (D-29, D-46)
 5. **Media bytes never pass through Express.** No compositing, resizing, or format inspection in a route handler, under any deadline. That includes the thumbnail. (Handbook §7)

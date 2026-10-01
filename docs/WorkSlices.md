@@ -87,7 +87,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-08 | Two-tier navigation shell, role-based tab sets, persistent header | §2.5.1, §2.2, §4.10, HB §16.5, HB §4 | C | S-03 |
+| S-08 | Two-tier navigation shell, role-based tab sets, persistent header, and `GET /events/{eventId}` | §2.5.1, §2.2, §4.10, HB §16.5, HB §4, D-118 | C | S-03 |
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17 | B | S-02, S-08 |
 | S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §4.17, arch:sub_event | U | S-02, S-08 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03, S-07a |
@@ -199,6 +199,12 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 **S-31 also writes the `consent` migration**, as the first slice to write that table. S-01's signup ends at Home with no consent screen, so the gate blocks every account with no row for the current policy version, the ones made before S-31 included (arch:consent).
 
 **S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later. "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV; the push toggles are `profile.notify_approval` and `profile.notify_album`, which S-27's sender checks.
+
+**S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens Account Settings (spec §2.5.9, D-118).
+
+**S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
+
+**S-27 writes `membership.last_viewed_at`** when someone opens an event, because the "new since last visit" dot reads it (arch:membership) and no earlier slice writes it (D-118).
 
 ---
 
