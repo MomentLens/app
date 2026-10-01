@@ -1,7 +1,8 @@
 // The negative tests for RLS on health_check, profile, subject, event, venue, sub_event,
 // membership and invite (D-73, docs/ARCHITECTURE.md §1), and the tests that need a real database or
 // real Auth: the trigger that creates a profile, the cascades, getClaims on a token the project
-// signed (D-109), create_event and list_my_events through the API's event store (D-110), and
+// signed (D-109), create_event and list_my_events through the API's event store (D-110),
+// get_my_event through the same store (D-118), and
 // resolve_invite, join_event, the cancel and the join request list through the API's stores
 // (D-115). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
@@ -609,6 +610,123 @@ if (project === null) {
       await expect(create(a.id, body)).resolves.toEqual({ outcome: 'gone' });
     });
 
+    // get_my_event, read for GET /events/{eventId} (D-118).
+    it('reads one event for an active member, and for nobody once soft-deleted', async () => {
+      const [a, b] = [await createNamedUser(), await createNamedUser()];
+      const event = await createdEvent(a.id);
+      await expect(store.findForCaller(event.id, a.id)).resolves.toEqual({
+        deleted: false,
+        membership: { role: 'admin', status: 'active' },
+        event,
+      });
+      await expect(store.findForCaller(event.id, b.id)).resolves.toEqual({
+        deleted: false,
+        membership: null,
+        event: null,
+      });
+
+      await addMember(event.id, b.id, 'photographer', 'pending');
+      for (const status of ['pending', 'blocked', 'removed'] as const) {
+        await admin
+          .from('membership')
+          .update({ status })
+          .eq('event_id', event.id)
+          .eq('user_id', b.id);
+        await expect(store.findForCaller(event.id, b.id)).resolves.toEqual({
+          deleted: false,
+          membership: { role: 'photographer', status },
+          event: null,
+        });
+      }
+
+      await admin
+        .from('membership')
+        .update({ status: 'active' })
+        .eq('event_id', event.id)
+        .eq('user_id', b.id);
+      const forB = await store.findForCaller(event.id, b.id);
+      expect(forB?.event).toEqual({ ...event, role: 'photographer' });
+      // The same event, span included, that GET /events lists.
+      await expect(store.listForMember(b.id)).resolves.toEqual([forB?.event]);
+
+      await admin.from('event').update({ deleted_at: new Date().toISOString() }).eq('id', event.id);
+      await expect(store.findForCaller(event.id, a.id)).resolves.toEqual({
+        deleted: true,
+        membership: { role: 'admin', status: 'active' },
+        event: null,
+      });
+      await expect(store.findForCaller(event.id, b.id)).resolves.toEqual({
+        deleted: true,
+        membership: { role: 'photographer', status: 'active' },
+        event: null,
+      });
+    });
+
+    it('finds nothing for an event id that does not exist', async () => {
+      const a = await createNamedUser();
+      await expect(store.findForCaller(randomUUID(), a.id)).resolves.toBeNull();
+    });
+
+    it("never hands the API a refused caller's view of the event's name or cover", async () => {
+      const [a, b] = [await createNamedUser(), await createNamedUser()];
+      const event = await createdEvent(a.id);
+      const coverKey = `events/${event.id}/cover_${randomUUID()}.jpg`;
+      await admin.from('event').update({ cover_key: coverKey }).eq('id', event.id);
+      const hidden = {
+        id: null,
+        name: null,
+        type: null,
+        cover_key: null,
+        starts_at: null,
+        ends_at: null,
+        archived_at: null,
+      };
+      const row = async (userId: string) => {
+        const result = await admin.rpc('get_my_event', {
+          p_event_id: event.id,
+          p_user_id: userId,
+        });
+        expect(result.error).toBeNull();
+        expect(result.data).toHaveLength(1);
+        return (result.data as unknown[])[0];
+      };
+
+      await expect(row(b.id)).resolves.toEqual({
+        deleted: false,
+        role: null,
+        status: null,
+        ...hidden,
+      });
+      await addMember(event.id, b.id, 'guest', 'pending');
+      await expect(row(b.id)).resolves.toEqual({
+        deleted: false,
+        role: 'guest',
+        status: 'pending',
+        ...hidden,
+      });
+      await expect(row(a.id)).resolves.toMatchObject({
+        name: 'RLS Test Wedding',
+        cover_key: coverKey,
+      });
+
+      await admin.from('event').update({ deleted_at: new Date().toISOString() }).eq('id', event.id);
+      await expect(row(a.id)).resolves.toEqual({
+        deleted: true,
+        role: 'admin',
+        status: 'active',
+        ...hidden,
+      });
+    });
+
+    it('reads an archived event as usual, with the time it was archived', async () => {
+      const a = await createNamedUser();
+      const event = await createdEvent(a.id);
+      const archivedAt = '2026-12-20T09:30:00.123Z';
+      await admin.from('event').update({ archived_at: archivedAt }).eq('id', event.id);
+      const found = await store.findForCaller(event.id, a.id);
+      expect(found?.event).toEqual({ ...event, archivedAt });
+    });
+
     it('lists an archived event with the time it was archived', async () => {
       const a = await createNamedUser();
       const event = await createdEvent(a.id);
@@ -903,6 +1021,12 @@ if (project === null) {
         const listCall = await client.rpc('list_my_events', { p_user_id: a.id });
         expect(listCall.error).not.toBeNull();
         expect(listCall.data).toBeNull();
+        const getCall = await client.rpc('get_my_event', {
+          p_event_id: event.id,
+          p_user_id: a.id,
+        });
+        expect(getCall.error).not.toBeNull();
+        expect(getCall.data).toBeNull();
         // join_event takes the user as a parameter, so a caller who could run it could put anyone
         // into any event, past the cap. resolve_invite would read anyone's membership.
         const joinCall = await client.rpc(
