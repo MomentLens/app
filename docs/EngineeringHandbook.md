@@ -419,7 +419,7 @@ main ← always deployable
 
 **Ownership.** One primary owner per surface (mobile, API, worker), matching comfort.
 
-**Code owners review every PR** (D-117). `.github/CODEOWNERS` names the `maintainers` team for every path, so GitHub requests its review on every PR, and `main` takes changes only through pull requests. Two rulesets on `main` hold the line. "main: CI" requires the CI job and nobody can bypass it. "main: review" requires a code-owner approval, allows Rebase and merge only, and drops an approval when new commits arrive; repository admins can bypass it. A code owner's own PRs need a green CI run and `/code-review`, and merge with `gh pr merge --rebase --admin`. The code owners' review covers the human-read surfaces (§18.1) and `docs/ARCHITECTURE.md` (D-68, D-75). Another developer's review is welcome and never required. A slice asks for review once, when its done stage has finished.
+**Code owners review every PR** (D-117). `.github/CODEOWNERS` names the `maintainers` team for every path, so GitHub requests its review on every PR, and `main` takes changes only through pull requests. Two rulesets on `main` hold the line. "main: CI" requires the job named `Lint, typecheck, test, build` in `.github/workflows/ci.yml`, by that exact name, and nobody can bypass it; rename the job and the ruleset has to change with it. "main: review" requires a code-owner approval, allows Rebase and merge only, and drops an approval when new commits arrive; repository admins can bypass it. A code owner's own PRs need a green CI run and `/code-review`, and merge with `gh pr merge --rebase --admin`. The code owners' review covers the human-read surfaces (§18.1) and `docs/ARCHITECTURE.md` (D-68, D-75). On a code owner's own PR the code owner is the person who reads a human-read surface, with `/code-review` and the negative test as the second check. Another developer's review is welcome and never required. A slice asks for review once, when its done stage has finished.
 
 **Merging a stack, from the top down.** Once every PR in the stack is approved and green:
 
@@ -438,7 +438,7 @@ git rebase origin/main          # fix each conflict, git add it, git rebase --co
 git push --force-with-lease
 ```
 
-Wait for its checks, then merge it.
+The force push drops the PR's approval, so wait for its checks and get it approved once more, then merge it. A code owner's own bottom PR merges with `--admin` instead.
 
 **Conventional commits** (`feat:`, `fix:`, `chore:`). Makes `git log` useful when you are trying to remember why something changed three weeks ago. Never put anyone's name in a collaboration list or include co-author trailers (`Co-authored-by:`) in commits. PR titles and descriptions carry no tool attribution either, such as a "Generated with Claude Code" line.
 
@@ -925,7 +925,7 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 2. **`/slice S-12`** in a fresh session. Read the read-back, starting with what the docs get wrong and the decisions list. **You decide:** answer every decision, then say go. The agent writes the card into the issue and opens a doc-fix PR if the docs needed one. `/clear`.
 3. **`/slice S-12 schema`.** The agent opens the schema PR on the stack and lists the schemas. Say if one looks wrong. `/clear`.
 4. **`/slice S-12 build api`**, `/clear`, then **`/slice S-12 build mobile`**, in the card's order. Answer every question yourself; never tell the agent to guess. Attach screen designs when the mobile build asks, or let it improvise. **You decide:** run the phone check if the card says one is needed, and say yes or no to each migration push and deploy. Each package opens its own PR on the stack. `/clear`.
-5. **`/slice S-12 done`.** The agent reports the Definition of done and puts every stage's discussion log in the top PR. GitHub has already requested the code owners' review. **You decide:** whether to ask another developer too. `/clear`.
+5. **`/slice S-12 done`.** The agent reports the Definition of done and puts every stage's discussion log in the top PR. GitHub has already requested the code owners' review. **You decide:** whether to ask another developer too. For a code owner's own slice there is no log and no review to wait for: the agent runs `/code-review` on each PR and notes it there. `/clear`.
 6. **`/slice S-12 cleanup`** once the reviews are in. On your yes it merges the stack from the top down, asking you to get the bottom PR approved again once the stack has folded into it, then closes the issue, removes the slice's worktrees and branches, updates `main`, and offers to put the dev server back on `main`.
 
 Never carry a stage's session into the next, never paste a log into a session, and never let an agent answer its own question.
