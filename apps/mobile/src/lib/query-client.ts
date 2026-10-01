@@ -1,10 +1,11 @@
 import { MAX_EVENT_SPAN_MS } from '@momentlens/shared-types';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { focusManager, QueryClient, type Query } from '@tanstack/react-query';
+import { focusManager, onlineManager, QueryClient, type Query } from '@tanstack/react-query';
 import type {
   PersistedClient,
   PersistQueryClientOptions,
 } from '@tanstack/react-query-persist-client';
+import { addNetworkStateListener, type NetworkState } from 'expo-network';
 import { AppState, Platform } from 'react-native';
 import { createMMKV } from 'react-native-mmkv';
 
@@ -13,7 +14,13 @@ import { useAuthStore } from '@/stores/auth';
 // The app's one TanStack Query client. It lives in a module rather than in the root layout's state
 // so that ending a session can clear it from outside React (features/auth/logout.ts). Editing
 // another file keeps the cache across Fast Refresh, because only the edited module re-runs.
-export const queryClient = new QueryClient();
+//
+// Nothing waits for a network. A query fails offline, so a cold start shows its persisted copy or
+// its error state rather than a spinner, and an Admin's write is refused rather than queued
+// (D-121). Knowing the network state only makes stale queries refetch on reconnect, below.
+export const queryClient = new QueryClient({
+  defaultOptions: { queries: { networkMode: 'always' }, mutations: { networkMode: 'always' } },
+});
 
 // How long a persisted query lasts with the app closed: an event's longest span, so a guest who
 // last opened the app on the first day still gets in on the last one with no signal.
@@ -125,6 +132,25 @@ focusManager.setEventListener((setFocused) => {
   }
   const subscription = AppState.addEventListener('change', (state) => {
     setFocused(state === 'active');
+  });
+  return () => subscription.remove();
+});
+
+// Online unless expo-network says otherwise. Android can report reachability as unknown for a
+// moment after a change, and only a definite no counts as offline.
+function isOnline(state: NetworkState): boolean {
+  return state.isConnected !== false && state.isInternetReachable !== false;
+}
+
+// React Native has no browser online event, so TanStack Query would believe the phone is always
+// online and never refetch on reconnect. expo-network tells it instead, and the event, the Events
+// list and the schedule refetch when the network comes back (D-118, D-121).
+onlineManager.setEventListener((setOnline) => {
+  if (Platform.OS === 'web') {
+    return undefined;
+  }
+  const subscription = addNetworkStateListener((state) => {
+    setOnline(isOnline(state));
   });
   return () => subscription.remove();
 });
