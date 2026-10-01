@@ -7,6 +7,7 @@ import type { Logger } from 'pino';
 import {
   createCoverUploadController,
   createEventController,
+  getEventController,
   listEventsController,
   setEventCoverController,
 } from './controllers/events';
@@ -57,6 +58,7 @@ export function createApp(deps: AppDeps): Express {
     eventsRouter(auth, {
       create: createEventController(deps.events, deps.presignGet),
       list: listEventsController(deps.events, deps.presignGet),
+      get: getEventController(deps.events, deps.presignGet),
       createCoverUpload: createCoverUploadController(deps.events, deps.presignPut),
       setCover: setEventCoverController(deps.events, deps.objectExists, deps.presignGet),
       cancelJoinRequest: cancelJoinRequestController(deps.invites),

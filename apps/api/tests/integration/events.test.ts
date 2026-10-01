@@ -1,7 +1,7 @@
-// POST /events, GET /events and the two cover endpoints (D-110, D-115, arch §3). The event store is
-// an in-memory fake keyed by user, so these tests check what the API does with each answer the
-// store gives. rls.test.ts runs the real store, create_event, list_my_events and the join request
-// list against the dev project.
+// POST /events, GET /events, GET /events/{eventId} and the two cover endpoints (D-110, D-115, D-118,
+// arch §3). The event store is an in-memory fake keyed by user, so these tests check what the API
+// does with each answer the store gives. rls.test.ts runs the real store, create_event,
+// list_my_events, get_my_event and the join request list against the dev project.
 // URLs are signed by the real R2 presigner with test credentials.
 import { randomUUID } from 'node:crypto';
 
@@ -11,6 +11,7 @@ import {
   CreateCoverUploadResponse,
   CreateEventResponse,
   ErrorResponse,
+  GetEventResponse,
   ListEventsResponse,
   MAX_EVENT_SPAN_MS,
   SetEventCoverResponse,
@@ -38,10 +39,21 @@ import type { RunningApp } from '../support/app';
 
 const A = randomUUID();
 const B = randomUUID();
+// One user per role and status, for the tests that seed an event with all of them as members.
+const G = randomUUID();
+const P = randomUUID();
+const PENDING = randomUUID();
+const BLOCKED = randomUUID();
+const REMOVED = randomUUID();
 
 const tokens = new Map([
   ['token-a', A],
   ['token-b', B],
+  ['token-guest', G],
+  ['token-photographer', P],
+  ['token-pending', PENDING],
+  ['token-blocked', BLOCKED],
+  ['token-removed', REMOVED],
 ]);
 
 const verifyToken: VerifyToken = (token) => {
@@ -842,21 +854,184 @@ describe('GET /events', () => {
   });
 });
 
+describe('GET /events/{eventId}', () => {
+  let event: FakeEvent;
+  let coverKey: string;
+
+  beforeEach(() => {
+    const id = randomUUID();
+    coverKey = `events/${id}/cover_${randomUUID()}.jpg`;
+    event = store.seed(
+      {
+        [A]: ['admin', 'active'],
+        [G]: ['guest', 'active'],
+        [P]: ['photographer', 'active'],
+        [PENDING]: ['guest', 'pending'],
+        [BLOCKED]: ['guest', 'blocked'],
+        [REMOVED]: ['guest', 'removed'],
+      },
+      { id, name: 'Mehndi Night', coverKey },
+    );
+  });
+
+  // A refused body names nothing about the event: not its name, not its cover key, and no URL.
+  async function expectRefused(response: Response, status: number, code: string) {
+    expect(response.status).toBe(status);
+    const text = await response.text();
+    expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe(code);
+    expect(text).not.toContain('Mehndi Night');
+    expect(text).not.toContain(coverKey);
+    expect(text).not.toContain('X-Amz');
+  }
+
+  it('answers 401 no_session with no token', async () => {
+    await expectRefused(await send('GET', `/events/${event.id}`), 401, 'no_session');
+  });
+
+  it.each([
+    ['another user, in no role', 'token-b'],
+    ['a pending member', 'token-pending'],
+    ['a blocked member', 'token-blocked'],
+    ['a removed member', 'token-removed'],
+  ])('answers %s 403 not_member, with no cover URL', async (_who, token) => {
+    await expectRefused(await send('GET', `/events/${event.id}`, token), 403, 'not_member');
+  });
+
+  it("refuses A for another event, though A is this event's Admin", async () => {
+    const other = store.seed({ [B]: ['admin', 'active'] }, { name: 'Only B' });
+    const response = await send('GET', `/events/${other.id}`, 'token-a');
+    expect(response.status).toBe(403);
+    const text = await response.text();
+    expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('not_member');
+    expect(text).not.toContain('Only B');
+  });
+
+  it.each([
+    ['its Admin', 'token-a'],
+    ['a Guest', 'token-guest'],
+    ['another user', 'token-b'],
+  ])('answers 404 not_found for a soft-deleted event, to %s too', async (_who, token) => {
+    event.deleted = true;
+    await expectRefused(await send('GET', `/events/${event.id}`, token), 404, 'not_found');
+  });
+
+  it('answers 404 not_found for an event that does not exist', async () => {
+    const response = await send('GET', `/events/${randomUUID()}`, 'token-a');
+    expect(response.status).toBe(404);
+    expect(await errorCode(response)).toBe('not_found');
+  });
+
+  it('answers 400 invalid_request for an event id that is not a uuid', async () => {
+    const response = await send('GET', '/events/not-a-uuid', 'token-a');
+    expect(response.status).toBe(400);
+    expect(await errorCode(response)).toBe('invalid_request');
+  });
+
+  it.each([
+    ['the Admin', 'token-a', 'admin'],
+    ['a Guest', 'token-guest', 'guest'],
+    ['a Photographer', 'token-photographer', 'photographer'],
+  ] as const)('gives %s the event with their own role', async (_who, token, role) => {
+    const response = await send('GET', `/events/${event.id}`, token);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    const body = GetEventResponse.parse(await response.json());
+    expect(body).toEqual({
+      event: {
+        id: event.id,
+        name: 'Mehndi Night',
+        type: 'wedding',
+        role,
+        cover: { url: expect.any(String), cacheKey: coverKey },
+        startsAt: event.startsAt,
+        endsAt: event.endsAt,
+        archivedAt: null,
+      },
+    });
+  });
+
+  it('presigns the cover for the caller, cached by its key, never a bucket URL', async () => {
+    const { event: body } = GetEventResponse.parse(
+      await (await send('GET', `/events/${event.id}`, 'token-guest')).json(),
+    );
+    const url = new URL(body.cover?.url ?? '');
+    expect(url.hostname).toBe(`${TEST_R2.bucket}.${TEST_R2.accountId}.r2.cloudflarestorage.com`);
+    expect(url.pathname).toBe(`/${coverKey}`);
+    expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
+    expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('sends a null cover for an event with none', async () => {
+    event.coverKey = null;
+    const { event: body } = GetEventResponse.parse(
+      await (await send('GET', `/events/${event.id}`, 'token-a')).json(),
+    );
+    expect(body.cover).toBeNull();
+  });
+
+  it('opens an archived event as usual, with the time it was archived', async () => {
+    event.archivedAt = '2026-12-20T09:30:00.123Z';
+    const response = await send('GET', `/events/${event.id}`, 'token-guest');
+    expect(response.status).toBe(200);
+    const { event: body } = GetEventResponse.parse(await response.json());
+    expect(body.archivedAt).toBe('2026-12-20T09:30:00.123Z');
+  });
+
+  it('treats an uppercase event id as the same event', async () => {
+    const response = await send('GET', `/events/${event.id.toUpperCase()}`, 'token-a');
+    expect(response.status).toBe(200);
+    expect(GetEventResponse.parse(await response.json()).event.id).toBe(event.id);
+  });
+
+  it('never sends a QR secret, whatever the store row carries', async () => {
+    const text = await (await send('GET', `/events/${event.id}`, 'token-a')).text();
+    expect(text).not.toContain(event.qrSecret);
+    expect(text.toLowerCase()).not.toContain('qr');
+  });
+
+  it('answers 500 internal_error, naming no cause, when the store fails', async () => {
+    store.failWith = new Error('connection reset by the database');
+    const response = await send('GET', `/events/${event.id}`, 'token-a');
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('internal_error');
+    expect(text).not.toContain('connection reset');
+  });
+
+  it('answers 500 rather than send a stored name the contract rejects', async () => {
+    event.name = '   ';
+    const response = await send('GET', `/events/${event.id}`, 'token-a');
+    expect(response.status).toBe(500);
+    expect(await errorCode(response)).toBe('internal_error');
+  });
+
+  it('answers 500 when the store finds an active member but no event', async () => {
+    const broken = await startApp(
+      deps({
+        events: Object.assign(Object.create(store) as FakeEvents, {
+          findForCaller: () =>
+            Promise.resolve({
+              deleted: false,
+              membership: { role: 'guest', status: 'active' },
+              event: null,
+            }),
+        }),
+      }),
+    );
+    try {
+      const response = await fetch(`${broken.baseUrl}/events/${event.id}`, {
+        headers: { Authorization: 'Bearer token-guest' },
+      });
+      expect(response.status).toBe(500);
+      expect(await errorCode(response)).toBe('internal_error');
+    } finally {
+      await broken.close();
+    }
+  });
+});
+
 describe('the cover endpoints', () => {
   let event: FakeEvent;
-  const G = randomUUID();
-  const P = randomUUID();
-  const PENDING = randomUUID();
-  const BLOCKED = randomUUID();
-  const REMOVED = randomUUID();
-
-  beforeAll(() => {
-    tokens.set('token-guest', G);
-    tokens.set('token-photographer', P);
-    tokens.set('token-pending', PENDING);
-    tokens.set('token-blocked', BLOCKED);
-    tokens.set('token-removed', REMOVED);
-  });
 
   beforeEach(() => {
     event = store.seed({
