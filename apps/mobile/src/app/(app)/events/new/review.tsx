@@ -7,6 +7,7 @@ import { Alert, BackHandler, Text, View } from 'react-native';
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { TextLink } from '@/components/ui/text-link';
+import { eventHref } from '@/features/event-shell/tabs';
 import { uploadCover } from '@/features/events/cover';
 import { markCreated, renewRequestId, useEventDraft } from '@/features/events/draft';
 import { buildCreateEventRequest, sortSubEvents } from '@/features/events/request';
@@ -87,7 +88,7 @@ export default function ReviewStep() {
   );
 
   function land(event: EventSummary) {
-    router.replace({ pathname: '/event/[id]', params: { id: event.id } });
+    router.replace(eventHref(event.id, event.role));
   }
 
   async function sendCover(event: EventSummary) {
