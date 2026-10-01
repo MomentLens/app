@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 
 import { clearPendingInvite } from '@/features/join/pending-invite';
-import { queryClient } from '@/lib/query-client';
+import { clearQueries } from '@/lib/query-client';
 import { removeStoredSession, storedSessionUserId, supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
 
@@ -15,12 +15,10 @@ export function isChosenLogout(): boolean {
 
 // Everything one account left in memory or on disk that the next account must not see. The team
 // hands phones around, and expo-image's disk cache holds the last account's images, the unblurred
-// ones included (apps/mobile/CLAUDE.md, spec §4.1). The upload queue is per account already and is
-// not touched.
+// ones included (apps/mobile/CLAUDE.md, spec §4.1). The queries saved for an offline start go too
+// (D-118). The upload queue is per account already and is not touched.
 export async function clearAccountCaches(): Promise<void> {
-  // A query still in flight would otherwise land in the cache after it was cleared.
-  await queryClient.cancelQueries();
-  queryClient.clear();
+  await clearQueries();
   await Promise.all([Image.clearMemoryCache(), Image.clearDiskCache()]);
 }
 

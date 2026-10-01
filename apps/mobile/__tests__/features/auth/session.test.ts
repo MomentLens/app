@@ -49,11 +49,9 @@ jest.mock('@/lib/supabase', () => ({
   },
 }));
 
-const mockQueryClient = {
-  cancelQueries: jest.fn(() => Promise.resolve()),
-  clear: jest.fn(),
-};
-jest.mock('@/lib/query-client', () => ({ queryClient: mockQueryClient }));
+// Clears the query cache and its copy on disk. __tests__/lib/query-client.test.ts tests it.
+const mockClearQueries = jest.fn(() => Promise.resolve());
+jest.mock('@/lib/query-client', () => ({ clearQueries: mockClearQueries }));
 
 const mockImage = {
   clearMemoryCache: jest.fn(() => Promise.resolve(true)),
@@ -127,7 +125,7 @@ async function settle() {
 }
 
 function expectCachesCleared() {
-  expect(mockQueryClient.clear).toHaveBeenCalled();
+  expect(mockClearQueries).toHaveBeenCalled();
   expect(mockImage.clearMemoryCache).toHaveBeenCalled();
   expect(mockImage.clearDiskCache).toHaveBeenCalled();
 }
@@ -136,7 +134,7 @@ afterEach(() => {
   jest.clearAllMocks();
   mockState.listener = null;
   mockState.signOutLeavesSession = false;
-  mockQueryClient.cancelQueries.mockImplementation(() => Promise.resolve());
+  mockClearQueries.mockImplementation(() => Promise.resolve());
 });
 
 describe('a session that cannot be refreshed', () => {
@@ -293,7 +291,7 @@ describe('who is signed in', () => {
 
     await emit('TOKEN_REFRESHED', sessionFor('user-a'));
 
-    expect(mockQueryClient.clear).not.toHaveBeenCalled();
+    expect(mockClearQueries).not.toHaveBeenCalled();
     expect(mockImage.clearDiskCache).not.toHaveBeenCalled();
   });
 
@@ -307,7 +305,7 @@ describe('who is signed in', () => {
   it('never throws out of the auth callback, which would make signOut reject', async () => {
     const app = start({ userIdAtLaunch: 'user-a' });
     await settle();
-    mockQueryClient.cancelQueries.mockImplementation(() => Promise.reject(new Error('boom')));
+    mockClearQueries.mockImplementation(() => Promise.reject(new Error('boom')));
     const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
     await expect(emit('SIGNED_OUT', null)).resolves.toBeUndefined();
