@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-// Who is signed in, mirrored from Supabase Auth, which owns the tokens (apps/mobile/CLAUDE.md).
+// Who is signed in, mirrored from Supabase Auth, which owns the tokens (apps/mobile/AGENTS.md).
 // features/auth/session.ts is the only writer apart from the two ends of a session, logout and
 // acknowledging Forced Logout. The root layout reads `status` to pick which screens exist.
 //

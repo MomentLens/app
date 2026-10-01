@@ -3,7 +3,7 @@
  * NativeWind v4 (Tailwind CSS v3 engine). Lives in apps/mobile/.
  *
  * Source of truth for every color and type token in the app.
- * Per EngineeringHandbook.md §15 and apps/mobile/CLAUDE.md: NEVER hardcode a hex
+ * Per EngineeringHandbook.md §15 and apps/mobile/AGENTS.md: NEVER hardcode a hex
  * value or a raw px font size in a component. Reference these tokens instead
  * — `bg-background`, `text-textPrimary`, `font-h1 text-h1`, etc. — so dark
  * mode and any future palette tweak happen in exactly one place.

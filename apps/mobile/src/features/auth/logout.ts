@@ -15,7 +15,7 @@ export function isChosenLogout(): boolean {
 
 // Everything one account left in memory or on disk that the next account must not see. The team
 // hands phones around, and expo-image's disk cache holds the last account's images, the unblurred
-// ones included (apps/mobile/CLAUDE.md, spec §4.1). The queries saved for an offline start go too
+// ones included (apps/mobile/AGENTS.md, spec §4.1). The queries saved for an offline start go too
 // (D-118). The upload queue is per account already and is not touched.
 export async function clearAccountCaches(): Promise<void> {
   await clearQueries();

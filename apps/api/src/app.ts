@@ -47,7 +47,7 @@ export interface AppDeps {
 
 // Built separately from index.ts so tests get an app without a listening port.
 // Middleware and routes attach here, in the route → controller → service layering
-// from apps/api/CLAUDE.md.
+// from apps/api/AGENTS.md.
 export function createApp(deps: AppDeps): Express {
   const app = express();
   app.use(helmet());
