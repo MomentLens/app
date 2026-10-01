@@ -49,7 +49,7 @@ Review and merging happen once, after the done stage, as Handbook §12 describes
 
 ## Discussion log
 
-The code owners read each slice's story in its final PR. A session's conversation is gone after `/clear`, so every stage writes down what mattered while it happens, not from memory at the end. **A code owner's own slice keeps no log** (D-117), so skip this section and every step that posts or copies a log.
+The code owners read each slice's story in its final PR. A session's conversation is gone after `/clear`, so every stage writes down what mattered while it happens, not from memory at the end. Every slice keeps one, a code owner's own included (D-120).
 
 Each stage keeps `.slices/<id>/discussion-<stage>.md` (the folder is gitignored) and adds to it as the conversation goes:
 

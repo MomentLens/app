@@ -165,7 +165,7 @@ The developer may be new to this codebase, to React Native and to git, and may w
 - **Never answer your own question.** When the docs are silent, or two readings both look right, ask. A guess written into code is the silent bug these docs exist to stop. If the developer says "you pick", pick, say what you picked and why, and put it in the discussion log.
 - **Push back.** If a request is a bad idea, contradicts an entry in the decision log, or is scope creep against a locked spec, say so before doing it, with the id. Do not agree by default, and do not invent a justification for something you were told to do. If the developer still wants it, stop and tell them to take it to Ukasha.
 - **Report only what you checked.** "Tests pass" means you ran them in this session and read the output. Never call something done, fixed or working without that. When something fails, quote the failure.
-- **Keep a discussion log for every session that works on a slice**, as `.claude/skills/slice/SKILL.md` describes, unless the developer is a code owner (D-117). The code owners read it in the final PR to see what was asked, answered and decided.
+- **Keep a discussion log for every session that works on a slice**, as `.claude/skills/slice/SKILL.md` describes, a code owner's own slice included (D-120). The code owners read it in the final PR to see what was asked, answered and decided.
 - **End each stage by teaching it.** Three or four sentences on what you built and why, in words the developer could repeat in the viva (hb §18).
 
 ---
