@@ -939,7 +939,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 ### D-117: Code owners review every PR into main
 **Decision.** Amends D-107 and D-116. Ukasha ruled on 2026-10-01.
 - `.github/CODEOWNERS` names the `maintainers` team for every path, so GitHub requests its review on every PR. A PR reaches `main` only with a code-owner approval and a green CI run. Another developer's review is welcome and never required.
-- A code owner's own PRs reach `main` after a green CI run and `/code-review`, with no other approval, and merge with `gh pr merge --rebase --admin`.
+- A code owner's own PRs reach `main` after a green CI run and `/code-review`, with no other approval, and merge with `gh pr merge --rebase --admin`. Where one touches a human-read surface, the code owner is the person D-68 asks for, with `/code-review` and the negative test as the second check.
 - Two rulesets on `main` enforce this. "main: CI" requires the CI job and has no bypass. "main: review" requires a code-owner approval, allows Rebase and merge only, and drops an approval when new commits arrive; repository admins can bypass it. Squash merging is off for the whole repository (D-116).
 - Folding a stack down into its bottom PR drops that PR's approval, so it needs approving once more before it merges.
 - Each developer answers the decision questions in their own slice's read-back. The code owners see the answers in review.

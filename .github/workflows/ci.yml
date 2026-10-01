@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   typescript:
+    # The "main: CI" ruleset requires a check with exactly this name (D-117). Rename it there too.
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 15

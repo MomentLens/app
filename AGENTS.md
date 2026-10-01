@@ -82,7 +82,7 @@ These fail **silently**. Wrong code here looks correct, throws nothing, and pass
 
 ## Surfaces that get a human read before merging
 
-Not a comprehension exercise. These four fail silently when they are wrong, so a person checks them and each is paired with a negative test. The code owners' review, which every PR into `main` needs, covers them. Everything else gets an ordinary review. (D-68, D-117)
+Not a comprehension exercise. These four fail silently when they are wrong, so a person checks them and each is paired with a negative test. The code owners' review, which every PR into `main` from anyone else needs, covers them. On a code owner's own PR the code owner reads them, with `/code-review` and the negative test as the second check. Everything else gets an ordinary review. (D-68, D-117)
 
 - Any RLS policy
 - The image-serving endpoint's authorization check
