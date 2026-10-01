@@ -64,6 +64,11 @@ export interface SubEventForm {
   radiusM: number;
 }
 
+// The form once its problems are cleared: a venue is chosen and the name is trimmed.
+export interface SubEventValues extends SubEventForm {
+  venue: DraftVenue;
+}
+
 export interface SubEventFormProblems {
   name?: string;
   endsAt?: string;
