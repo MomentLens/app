@@ -16,7 +16,7 @@ interface UseEventsOptions {
   refetchInterval?: number;
 }
 
-// GET /events as server state (apps/mobile/CLAUDE.md). api.ts has already refreshed and retried
+// GET /events as server state (apps/mobile/AGENTS.md). api.ts has already refreshed and retried
 // once by the time a 401 reaches here, so it is not retried again. It survives a restart like the
 // event does, because a cold start with no signal reaches an event only through this list (decided
 // at S-08's build mobile, D-118).

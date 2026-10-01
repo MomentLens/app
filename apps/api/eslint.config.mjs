@@ -8,9 +8,9 @@
 // on 9 until eslint-config-expo's React and import plugins support 10.
 //
 // The no-restricted-imports block is the one rule here that isn't generic
-// Node/TS hygiene — it's CLAUDE.md invariant 5 and Handbook §16 turned into
-// something that actually fails a PR instead of relying on someone
-// remembering it under deadline pressure:
+// Node/TS hygiene. It's root AGENTS.md invariant 5 and Handbook §7 turned
+// into something that fails a PR instead of relying on someone remembering
+// it under deadline pressure:
 //
 //   "Media bytes never pass through Express. No compositing, resizing, or
 //   format inspection in a route handler, under any deadline."
@@ -26,7 +26,7 @@ import prettierConfig from 'eslint-config-prettier/flat';
 import globals from 'globals';
 
 const IMAGE_PROCESSING_MSG =
-  'Image/format work belongs in worker/, never in an Express route handler (CLAUDE.md invariant 5, Handbook §16, D-57).';
+  'Image/format work belongs in worker/, never in an Express route handler (root AGENTS.md invariant 5, Handbook §7, D-57).';
 const EXIF_MSG =
   'EXIF handling happens client-side or in worker/, never in apps/api (Handbook §7).';
 

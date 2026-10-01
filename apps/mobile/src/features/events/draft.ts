@@ -3,7 +3,7 @@ import { randomUUID } from 'expo-crypto';
 import { create } from 'zustand';
 
 // The Create Event wizard's draft. It lives in memory only, so killing the app loses it (D-110),
-// and it is client state, so it sits in Zustand rather than TanStack Query (apps/mobile/CLAUDE.md).
+// and it is client state, so it sits in Zustand rather than TanStack Query (apps/mobile/AGENTS.md).
 // The three steps and the Add Sub-Event sheet are separate screens and all read it from here.
 
 // A venue a sub-event in this draft uses. Two sub-events hold the same `key` when the second one

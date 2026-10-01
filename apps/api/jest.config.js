@@ -1,4 +1,4 @@
-// Plain Jest, no jest-expo preset (apps/api/CLAUDE.md). @swc/jest strips types
+// Plain Jest, no jest-expo preset (apps/api/AGENTS.md). @swc/jest strips types
 // without checking them; `pnpm typecheck` covers tests/ as well as src/.
 
 /** @type {import('jest').Config} */
