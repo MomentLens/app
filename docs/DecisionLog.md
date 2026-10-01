@@ -950,6 +950,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Another developer's review on a code owner's PRs. Keeping an approval after new commits arrive. Code owners answering every read-back question. Keeping the rule by habit, with no ruleset.
 **Cost.** Every PR from outside the maintainers waits on their review. Nobody outside the maintainers reads the maintainers' code in review, and their slices leave no discussion log, so the others learn that code from the docs alone. A stack's bottom PR needs a second approval. A read-back answer that the code owners would have ruled differently is found only in review, after the code exists.
 **Reopen if.** PRs regularly sit waiting for a code-owner review, or read-back answers keep being rebuilt in review.
+**Amended (see D-120).** A code owner's own slice keeps a discussion log like everyone else's.
 
 ### D-118: Navigation rulings from S-08's read-back
 **Decision.** Amends D-110 and D-115. Ukasha ruled on each of these on 2026-10-01 and let the routine calls stand.
@@ -979,6 +980,13 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** The name already says which event is open, and the Figma frames leave the cover out. A cold start with no signal reaches an event only through the Events list, so persisting the event alone left a guest unable to open it.
 **Rejected.** The cover in the header. The deprecated sync persister. Persisting the event and not the list.
 **Cost.** One more persisted query. Every event the user belongs to stays on the phone for up to 14 days with the app closed, or until a logout. A persisted cover URL on an Events card expires an hour after it was signed, so offline a card shows its cover only if `expo-image` cached it.
+
+### D-120: Code owners keep a discussion log too
+**Decision.** Amends D-117. Ukasha ruled on 2026-10-01. A code owner's own slice keeps a discussion log in every stage, as every other slice does. Each stage posts its log to the slice's issue, and the done stage copies every log into the top PR (D-116). The rest of D-117 stands, and a code owner's stack still merges on a green CI run and `/code-review`. A slice already under way when this landed keeps a log from its next stage on.
+**Why.** Ukasha wants the decisions behind a code owner's slice on record in its PRs. Without a log, the questions asked and answered in a code owner's sessions were gone after `/clear`, and B and C learned that code from the docs alone, the cost D-117 accepted.
+**Rejected.** Each stage's log in that stage's own PR instead of the issue, for every developer, which leaves no single record in the top PR and rewrites the done stage. Each log in its own PR and the top PR both, which puts every log in two places.
+**Cost.** A code owner's session spends a few hundred tokens a stage writing the log, and the code owner's top PR gets longer.
+**Reopen if.** Code owners' logs go unread in review, or a top PR's logs pass GitHub's 65,536-character cap on a description.
 
 ## Open items that are not decisions yet
 
