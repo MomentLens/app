@@ -848,6 +848,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** A Google Cloud project with billing turned on, and one native rebuild on all three machines for the map plugin. One column, `event.create_request_id`. A Do Not Publish face in a cover shows to every member until spec §6.2's fix.
 **Amended (see D-111).** The event's venue and the one radius are gone. Each sub-event carries its own radius, a sub-event's venue is one an earlier sub-event added or a new one, and the wizard sets Approval Mode. The default is still `auto`.
 **Amended (see D-115).** `GET /events` also returns the caller's pending join requests. A Do Not Publish face in a cover now reaches anyone holding a live invite, not only members.
+**Amended (see D-118).** S-08 builds `GET /events/{eventId}`, and creating an event lands on the Admin's Home tab.
 
 ### D-111: Each sub-event has its own radius, and the wizard has three steps
 **Decision.** Amends D-110. Ukasha ruled on each of these on 2026-09-25, after S-02's API build, from the Figma draft of the wizard.
@@ -918,6 +919,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A signed-out preview with only the name and role. Answering a blocked person 404 with Join Error's "expired or revoked" copy, which tells them something false. nginx `limit_req` on lookups. Keeping the pending request on the phone only, which a second device or a reinstall loses.
 **Cost.** Anyone holding or guessing a live code learns an event's name, dates, venue names and cover without an account, and nothing slows a guesser. A blocked person learns they were blocked. One error code, one screen, one column and a field on `ListEventsResponse`.
 **Reopen if.** The API's logs show invite lookups the team did not make. Then add the rate limit.
+**Amended (see D-118).** `active` routes to the role's landing tab, which is My Media for a Photographer and Home for everyone else.
 
 ### D-116: One AGENTS.md, a stack of PRs per slice, and shared infrastructure for all three
 **Decision.** Amends D-107 and D-113. Ukasha ruled on 2026-09-30, when B and C came back.
@@ -948,6 +950,25 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Another developer's review on a code owner's PRs. Keeping an approval after new commits arrive. Code owners answering every read-back question. Keeping the rule by habit, with no ruleset.
 **Cost.** Every PR from outside the maintainers waits on their review. Nobody outside the maintainers reads the maintainers' code in review, and their slices leave no discussion log, so the others learn that code from the docs alone. A stack's bottom PR needs a second approval. A read-back answer that the code owners would have ruled differently is found only in review, after the code exists.
 **Reopen if.** PRs regularly sit waiting for a code-owner review, or read-back answers keep being rebuilt in review.
+
+### D-118: Navigation rulings from S-08's read-back
+**Decision.** Amends D-110 and D-115. Ukasha ruled on each of these on 2026-10-01 and let the routine calls stand.
+- S-08 builds `GET /events/{eventId}`. It returns the event as `GET /events` lists it, with the caller's role, the span and the cover, presigned after the membership check (arch §3). A caller whose membership is not `active` gets 403 `not_member`, and a soft-deleted or unknown event gets 404 `not_found`. S-15 adds the verification state that spec §4.5 calls the event response.
+- The Event shell reads the role from that endpoint through one TanStack Query that every tab shares. One function maps a role to its tabs and its landing tab, so spec §4.10's tab restriction lives in one place.
+- The event query survives a restart. TanStack Query's persister keeps the queries marked to persist in MMKV, and a logout or an ended session clears them, so a guest who reopens the app with no signal still reaches My Media and the camera (spec §4.14). S-04 marks the schedule the same way. S-08 adds `@tanstack/react-query-persist-client` and `@tanstack/query-sync-storage-persister` to `apps/mobile`, both JavaScript only.
+- A role change or a removal reaches the phone when the app returns to the foreground, or when an event call answers 403 `not_member` or `wrong_role`, which refetches the event. Membership gets no Realtime, because that needs an RLS policy D-73 rules out. The API checks the role on every request, so nothing leaks in between.
+- Root invariant 2's cache-key rule covers media files. A cover or an avatar has no `variant_version`, and its key carries its upload's id instead (arch §3).
+- Routine calls:
+  - A Guest and the Admin land on Home, a Photographer on My Media. D-115's "`active` to Event Home" means the role's landing tab.
+  - The Event shell uses Expo Router's native tabs, as the Global shell does (D-112). Native tabs cannot add or remove a tab once mounted, so the bar is keyed on the role and remounts when it changes.
+  - A route the role lacks, reached through a link, redirects to the role's landing tab.
+  - The header holds the cover, the name and "‹ Events", with a slot S-29 fills with the avatar (spec §2.5.9).
+  - Until S-31 builds Access Removed, a `not_member` in the Event shell shows a "no longer have access" state with a way back to Events. A caller whose join request is still pending goes to Pending Approval instead.
+  - S-27 writes `membership.last_viewed_at`. Nothing writes it before S-27.
+**Why.** S-08's read-back found that hb §16.5 named a membership query no slice built (D-110). The cached `GET /events` list cannot tell a removed member from a pending one or a stranger, and it is empty when a push opens an event before the list loads. Spec §4.14 left the event out of the offline cache, so a cold start with no signal locked a guest out of the camera. Hb §5.3 turned every 403 into Access Removed, including the `wrong_role` a Guest gets after becoming a Photographer. Spec §2.3.1, §2.4 and D-115 sent a Photographer to a Home they never see.
+**Rejected.** Reading the role out of the `GET /events` cache. Realtime on `membership`. Leaving the offline cold start to S-04. A hand-written MMKV cache for the one event, which S-04 would then write again for the schedule. JS tabs for the Event shell, which would look different from the Global shell's on both platforms.
+**Cost.** One endpoint, one read-only SQL function and their tests. Two JavaScript packages. A persisted cover URL expires an hour after it was signed, so offline the header shows the cover only if `expo-image` cached it. A role change shows on the next foreground or the next 403, not at once.
+**Reopen if.** A tester reports stale tabs after a role change.
 
 ## Open items that are not decisions yet
 
