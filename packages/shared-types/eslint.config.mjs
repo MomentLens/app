@@ -2,8 +2,8 @@
 //
 // MomentLens — shared-types lint config.
 //
-// CLAUDE.md's layout table calls this package "the app↔API contract (TS
-// only)". It's linted a notch stricter than apps/mobile and apps/api for
+// Root AGENTS.md's layout calls this package "the app↔API contract". It's
+// linted a notch stricter than apps/mobile and apps/api for
 // that reason: no-explicit-any is an error here, not a warning, because a
 // stray `any` in a zod-inferred type quietly defeats the point of having a
 // shared contract in the first place — both sides keep compiling, and the

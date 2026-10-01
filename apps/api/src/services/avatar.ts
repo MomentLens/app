@@ -11,7 +11,7 @@ export interface AvatarOwner {
 }
 
 // The one function that presigns a profile photo, called by every endpoint that returns a person
-// (apps/api/CLAUDE.md). Call it only after that endpoint has checked the viewer may see this
+// (apps/api/AGENTS.md). Call it only after that endpoint has checked the viewer may see this
 // person at all, the audience of profile.full_name (arch §1). This adds the one rule on top.
 //
 // Under Do Not Publish the photo reaches its owner and nobody else, the Admin included (D-35,
