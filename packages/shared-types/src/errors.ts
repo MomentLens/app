@@ -22,9 +22,13 @@ export const ErrorCode = z.enum([
   'album_closed',
   'unverified',
   'upload_missing',
+  'last_sub_event',
+  'sub_event_has_media',
   // 422
   'event_full',
   'too_many_references',
+  'too_many_sub_events',
+  'event_too_long',
   // 500
   'internal_error',
 ]);
