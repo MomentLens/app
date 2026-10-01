@@ -38,6 +38,16 @@ jest.mock('@/lib/supabase', () => ({
 }));
 jest.mock('@/features/join/pending-invite', () => ({ clearPendingInvite: () => undefined }));
 
+// The listener query-client.ts hands expo-network, so a test can say the network came or went.
+let mockNetworkListener:
+  ((state: { isConnected?: boolean; isInternetReachable?: boolean }) => void) | null = null;
+jest.mock('expo-network', () => ({
+  addNetworkStateListener: (listener: typeof mockNetworkListener) => {
+    mockNetworkListener = listener;
+    return { remove: () => undefined };
+  },
+}));
+
 const EVENT_ID = '6f1c2a4e-8d3b-4c5a-9e7f-0a1b2c3d4e5f';
 const EVENT_KEY = ['event', EVENT_ID];
 const EVENT: GetEventResponse = {
@@ -236,5 +246,33 @@ describe('the persisted query cache', () => {
     await persistQueryClientSave(options(app));
 
     expect(await restoredEvent('user-a')).toBeUndefined();
+  });
+});
+
+describe('reconnect', () => {
+  it('tells TanStack Query when the network goes and comes back, so stale queries refetch (D-121)', () => {
+    jest.isolateModules(() => {
+      const lib = jest.requireActual<typeof QueryClientModule>('@/lib/query-client');
+      launched.push({ lib } as App);
+      const { onlineManager } =
+        jest.requireActual<typeof import('@tanstack/react-query')>('@tanstack/react-query');
+
+      mockNetworkListener?.({ isConnected: false, isInternetReachable: false });
+      expect(onlineManager.isOnline()).toBe(false);
+      mockNetworkListener?.({ isConnected: true, isInternetReachable: true });
+      expect(onlineManager.isOnline()).toBe(true);
+      mockNetworkListener?.({ isConnected: true, isInternetReachable: false });
+      expect(onlineManager.isOnline()).toBe(false);
+      // Android can report reachability as unknown for a moment; only a definite no is offline.
+      mockNetworkListener?.({ isConnected: true });
+      expect(onlineManager.isOnline()).toBe(true);
+    });
+  });
+
+  it('never pauses a query or a write for want of a network, so an Admin write is refused, not queued', () => {
+    const app = launch('user-a');
+    const defaults = app.lib.queryClient.getDefaultOptions();
+    expect(defaults.queries?.networkMode).toBe('always');
+    expect(defaults.mutations?.networkMode).toBe('always');
   });
 });
