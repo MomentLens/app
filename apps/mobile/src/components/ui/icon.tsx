@@ -53,6 +53,7 @@ const PATHS = {
   check: <Path d="M20 6 9 17l-5-5" />,
   'chevron-down': <Path d="m6 9 6 6 6-6" />,
   'chevron-left': <Path d="m15 18-6-6 6-6" />,
+  'chevron-right': <Path d="m9 18 6-6-6-6" />,
   'clipboard-paste': (
     <>
       <Path d="M11 14h10" />
@@ -93,6 +94,14 @@ const PATHS = {
       <Path d="M14.084 14.158a3 3 0 0 1-4.242-4.242" />
       <Path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143" />
       <Path d="m2 2 20 20" />
+    </>
+  ),
+  images: (
+    <>
+      <Path d="M18 22H4a2 2 0 0 1-2-2V6" />
+      <Path d="m22 13-1.296-1.296a2.41 2.41 0 0 0-3.408 0L11 18" />
+      <Circle cx="12" cy="8" r="2" />
+      <Rect width="16" height="16" x="6" y="2" rx="2" />
     </>
   ),
   'locate-fixed': (
@@ -144,6 +153,7 @@ const PATHS = {
       <Rect x="2" y="4" width="20" height="16" rx="2" />
     </>
   ),
+  navigation: <Path d="M3 11 22 2 13 21 11 13Z" />,
   pencil: (
     <>
       <Path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
@@ -154,6 +164,22 @@ const PATHS = {
     <>
       <Path d="M5 12h14" />
       <Path d="M12 5v14" />
+    </>
+  ),
+  'qr-code': (
+    <>
+      <Rect width="5" height="5" x="3" y="3" rx="1" />
+      <Rect width="5" height="5" x="16" y="3" rx="1" />
+      <Rect width="5" height="5" x="3" y="16" rx="1" />
+      <Path d="M21 16h-3a2 2 0 0 0-2 2v3" />
+      <Path d="M21 21v.01" />
+      <Path d="M12 7v3a2 2 0 0 1-2 2H7" />
+      <Path d="M3 12h.01" />
+      <Path d="M12 3h.01" />
+      <Path d="M12 16v.01" />
+      <Path d="M16 12h1" />
+      <Path d="M21 12v.01" />
+      <Path d="M12 21v-1" />
     </>
   ),
   search: (
@@ -174,6 +200,15 @@ const PATHS = {
       <Path d="M13 5v2" />
       <Path d="M13 17v2" />
       <Path d="M13 11v2" />
+    </>
+  ),
+  'trash-2': (
+    <>
+      <Path d="M10 11v6" />
+      <Path d="M14 11v6" />
+      <Path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <Path d="M3 6h18" />
+      <Path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     </>
   ),
   x: (
