@@ -796,6 +796,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** A pinned model id needs a bump when models change. A docs PR waits for a teammate's review.
 **Amended (see D-113).** While the other two are away, Ukasha merges after `/code-review` and CI, with no teammate's review.
 **Amended (see D-116).** D-113's exception has ended. A slice's stack gets its one review after the done stage, and merges from the top down with Rebase and merge.
+**Amended (see D-117).** The review is a code owner's, and a code owner's own PRs need CI and `/code-review` instead.
 
 ### D-108: A job that keeps failing on a photo unpublishes it
 **Decision.** Amends D-103. When a message about a photo fails its third try, the worker archives it and clears that photo's `processed_at` if it was set. The photo leaves the album, and its uploader sees it as processing in My Media. The serving endpoint stops signing it at once, because its visibility check needs `processed_at` (`docs/ARCHITECTURE.md` §1), and other phones drop it on their next fetch of the event. To run the job again, send the archived message back to `jobs`; on success the job sets `processed_at` last, as always.
@@ -933,6 +934,20 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A one-line `CLAUDE.md` in each folder importing `AGENTS.md`, which also works on Claude Code before 2.1.277. Squash merges. Merging the stack from the bottom up, which needs a rebase and a force push before each PR. Only Ukasha pushing migrations. No SSH for B and C, with unmerged API changes tried against an API on their own machine.
 **Cost.** A Claude Code older than 2.1.277, or one stray `CLAUDE.md`, leaves an agent with no project rules and no error, and the checks catch it only when someone runs them. The dev server runs one branch at a time for all three phones. A migration pushed from an unmerged branch is on the shared database before anyone has reviewed it. Top-down merging reruns CI once per PR in the stack.
 **Reopen if.** An agent is found working without the rules, or two developers need the dev server on different branches in the same week.
+**Amended (see D-117).** The done stage no longer asks for a teammate's review. GitHub requests the code owners', and a code owner's own slice keeps no discussion log.
+
+### D-117: Code owners review every PR into main
+**Decision.** Amends D-107 and D-116. Ukasha ruled on 2026-10-01.
+- `.github/CODEOWNERS` names the `maintainers` team for every path, so GitHub requests its review on every PR. A PR reaches `main` only with a code-owner approval and a green CI run. Another developer's review is welcome and never required.
+- A code owner's own PRs reach `main` after a green CI run and `/code-review`, with no other approval, and merge with `gh pr merge --rebase --admin`.
+- Two rulesets on `main` enforce this. "main: CI" requires the CI job and has no bypass. "main: review" requires a code-owner approval, allows Rebase and merge only, and drops an approval when new commits arrive; repository admins can bypass it. Squash merging is off for the whole repository (D-116).
+- Folding a stack down into its bottom PR drops that PR's approval, so it needs approving once more before it merges.
+- Each developer answers the decision questions in their own slice's read-back. The code owners see the answers in review.
+- A code owner's own slice keeps no discussion log.
+**Why.** The maintainers hold the most context on the design, so their review is where a slice gets checked against it.
+**Rejected.** Another developer's review on a code owner's PRs. Keeping an approval after new commits arrive. Code owners answering every read-back question. Keeping the rule by habit, with no ruleset.
+**Cost.** Every PR from outside the maintainers waits on their review. Nobody outside the maintainers reads the maintainers' code in review, and their slices leave no discussion log, so the others learn that code from the docs alone. A stack's bottom PR needs a second approval. A read-back answer that the code owners would have ruled differently is found only in review, after the code exists.
+**Reopen if.** PRs regularly sit waiting for a code-owner review, or read-back answers keep being rebuilt in review.
 
 ## Open items that are not decisions yet
 

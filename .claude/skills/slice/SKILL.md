@@ -19,7 +19,7 @@ The first word is the slice id. A second word picks the stage; with none, the st
 
 **Each stage starts in a fresh session** (`/clear`). Two things cross from one stage to the next: the slice card in the slice's GitHub issue, which a person approved, and the stack's branches on GitHub. Never carry a stage's conversation into the next one (Handbook §18.8).
 
-**No stage asks anyone to merge anything.** The slice ships as a stack of PRs that nobody merges until the done stage has finished and a teammate has reviewed all of it.
+**No stage asks anyone to merge anything.** The slice ships as a stack of PRs that nobody merges until the done stage has finished and the stack has been reviewed.
 
 These steps are the same for every developer and every agent. An agent tool that cannot run skills or subagents follows this file through the handoff template in `docs/WorkSlices.md`, doing the subagents' work itself.
 
@@ -43,11 +43,13 @@ The id is lower case in branch names: `feat/s-12-schema`, `feat/s-12-api`.
 - **A fix that belongs lower in the stack goes lower.** If the api build finds the schema missing a field, stop and ask. The fix is a commit on the lowest branch it belongs to, and every branch above it is then rebased onto it (`git rebase origin/<branch below>`, then `git push --force-with-lease`). That is a force push, so it needs the developer's yes each time.
 - **Work in the checkout the session starts in**, whether that is the developer's clone or a worktree the app made for the session. Never switch the branch of a checkout whose Metro is serving another branch (a listener on port 8081 or 8082); add a worktree instead, `git worktree add ../MomentLens-<id> <branch>`, and copy the two `.env` files into it.
 
-Review and merging happen once, after the done stage, as Handbook §12 describes: one of the other two developers reviews every PR in the stack, Ukasha reads any human-read surface and any `docs/ARCHITECTURE.md` change, and the stack merges from the top down with Rebase and merge, which keeps every commit.
+Review and merging happen once, after the done stage, as Handbook §12 describes. GitHub requests the code owners' review on every PR from `.github/CODEOWNERS`, and `main` takes a PR only with a code-owner approval and a green CI run. A code owner's own stack needs green CI and `/code-review` instead. The stack merges from the top down with Rebase and merge, which keeps every commit.
+
+**Check once per session whether the developer is a code owner** (D-117): they are when `gh api orgs/MomentLens/teams/maintainers/members -q '.[].login'` lists their login, `gh api user -q .login`. Several steps below differ for one.
 
 ## Discussion log
 
-Ukasha reads each slice's story in its final PR. A session's conversation is gone after `/clear`, so every stage writes down what mattered while it happens, not from memory at the end.
+The code owners read each slice's story in its final PR. A session's conversation is gone after `/clear`, so every stage writes down what mattered while it happens, not from memory at the end. **A code owner's own slice keeps no log** (D-117), so skip this section and every step that posts or copies a log.
 
 Each stage keeps `.slices/<id>/discussion-<stage>.md` (the folder is gitignored) and adds to it as the conversation goes:
 
@@ -151,7 +153,7 @@ Push the branch and open `<id>: <package>` on the stack, naming the human-read s
 
 `git fetch origin` and check out the top branch of the stack. Run `slice-verifier` once more against the whole stack, with base `origin/main`. Then go through the Definition of done in `docs/WorkSlices.md` item by item. For each one say met or not met, with the evidence: the test name and file, the command and its result, or the reason it does not apply. Do not describe a slice as done while an item is unmet.
 
-If `docs/ARCHITECTURE.md` needs an update, write it now as its own commit on the top branch, citing the D-entry or the merged code, and name it in that PR so Ukasha approves it there (D-75, D-107). The build stages never edit `docs/`; only this stage and the read-back's doc-fix branch do.
+If `docs/ARCHITECTURE.md` needs an update, write it now as its own commit on the top branch, citing the D-entry or the merged code, and name it in that PR so the code owners approve it there (D-75, D-107). A code owner's own change needs no other approval. The build stages never edit `docs/`; only this stage and the read-back's doc-fix branch do.
 
 Every PR in the stack names which of the four human-read surfaces it touches, or says it touches none. Fix any description that does not, with `gh pr edit <n> --body-file`.
 
@@ -171,16 +173,15 @@ GitHub caps a description at 65,536 characters. If the logs would pass it, link 
 Post this stage's log to the issue, then tell the developer, and stop there:
 
 1. The stack from bottom to top, each PR with its number and link.
-2. **Ask one of the other two developers to review every PR in it.** Give the command for each PR, `gh pr edit <n> --add-reviewer <their GitHub login>`, and offer to run it once the developer names the reviewer.
-3. What Ukasha (`ukasha167`) must read himself: each human-read surface touched, any `docs/ARCHITECTURE.md` commit, any doc-fix PR. Add him as a reviewer on those PRs the same way.
-4. How it lands: once every PR is approved and green, it merges from the top down with Rebase and merge (Handbook §12). Then `/slice <id> cleanup` in a fresh session, which can do the merging too.
+2. **Review.** GitHub has already requested the code owners' review on every PR. Another developer's review is welcome and never required; if the developer wants one, give `gh pr edit <n> --add-reviewer <their GitHub login>` for each PR and offer to run it. **For a code owner's own stack** there is nobody to wait for: run `/code-review` on each PR, fix what it finds on the branch it belongs to, and say the stack can merge once CI is green.
+3. How it lands: once every PR is approved, or for a code owner reviewed by `/code-review`, and green, it merges from the top down with Rebase and merge (Handbook §12). Folding the stack down drops the bottom PR's approval, so that PR needs approving once more before it reaches `main`. Then `/slice <id> cleanup` in a fresh session, which can do the merging too.
 
 ## 6. Cleanup
 
 In a fresh session, once the stack is reviewed.
 
 1. `git fetch --prune origin`, then list the slice's PRs: `gh pr list --state all --search "<id> in:title" --json number,title,state,headRefName,baseRefName,headRefOid,reviewDecision`.
-2. **If any PR is still open**, and every open one is approved with green checks (`gh pr checks <n>`), list them top to bottom and offer to merge the stack. Merge only after the developer says yes, one PR at a time from the top: `gh pr merge <n> --rebase`, then `gh pr checks <next one down> --watch` until its checks pass, then the next. If GitHub cannot rebase one, stop and follow Handbook §12's conflict steps. If any open PR is not approved or not green, stop and say which, and what it waits on.
+2. **If any PR is still open**, and every open one is approved with green checks (`gh pr checks <n>`), list them top to bottom and offer to merge the stack. For a code owner's own stack, `/code-review` having run on each PR stands in for the approval. Merge only after the developer says yes, one PR at a time from the top: `gh pr merge <n> --rebase`, then `gh pr checks <next one down> --watch` until its checks pass, then the next. Folding the stack drops the bottom PR's approval: for anyone else's stack, stop there and ask the developer to get it approved again; for a code owner's, merge it with `gh pr merge <n> --rebase --admin`, which bypasses the review rule on `main` and never the CI rule. If GitHub cannot rebase one, stop and follow Handbook §12's conflict steps. If any open PR is not approved or not green, stop and say which, and what it waits on.
 3. When the bottom PR has merged, check that the issue closed. If it is still open, close it with a comment listing the merged PRs.
 4. **Check before deleting.** For each slice branch that exists locally, keep it and say why if its worktree has uncommitted changes (`git -C <path> status --porcelain`) or its tip is not the PR's `headRefOid`, which means commits that never reached GitHub.
 5. Remove every worktree on a slice branch with `git worktree remove <path>`, never `--force`, then `git worktree prune`. If this session runs inside one of them, leave that one and tell the developer to remove it from their main clone afterwards. List any other worktree whose branch shows `gone` in `git branch -vv`, and offer to remove it the same way.

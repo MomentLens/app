@@ -6,7 +6,7 @@
 ## What this changes
 
 ## Human-read surfaces
-<!-- Any RLS policy, the image-serving authorization check, the upload queue state machine, auth or invite-token handling (D-68). Ukasha reads each one. Or "none". -->
+<!-- Any RLS policy, the image-serving authorization check, the upload queue state machine, auth or invite-token handling (D-68). The code owners read each one. Or "none". -->
 
 ## Tests
 <!-- The negative tests added, and each command run with its result. -->

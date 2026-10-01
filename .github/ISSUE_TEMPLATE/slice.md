@@ -59,6 +59,6 @@ this one depends on, before starting. If it turned up nothing, look again.
 - [ ] Tested on a physical device if it touches camera, GPS or the queue (Handbook §10)
 - [ ] Unit test for any pure logic (Handbook §11.2)
 - [ ] Dark mode through tokens, no hardcoded hex
-- [ ] Every PR in the stack reviewed by one of the other two (Handbook §12)
-- [ ] Every stage's discussion log is in the top PR (D-116)
+- [ ] Every PR in the stack approved by a code owner, or for a code owner's own slice, `/code-review` run on each (Handbook §12, D-117)
+- [ ] Every stage's discussion log is in the top PR, unless a code owner built the slice (D-116, D-117)
 - [ ] `docs/ARCHITECTURE.md` updated in this PR if it added a table, column, R2 key or job, as its own commit from the done stage, and Ukasha has reviewed that change (D-75, D-107)

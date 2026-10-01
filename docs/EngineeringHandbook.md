@@ -417,13 +417,15 @@ main ← always deployable
 
 **PRs, even at this size.** The value is not process for its own sake. It is insurance against the bus-factor problem: if only the author has ever read a piece of code, that is a real risk when they are unavailable during exam week and their area breaks. A quick review spreads enough context that the team is not hostage to one person's availability.
 
-**Ownership with mandatory cross-review.** One primary owner per surface (mobile, API, worker), matching comfort, but at least one of the other two reviews every PR. `main` takes changes only through pull requests, and the team's rule is one review and a green CI run before merging (D-107). A slice asks for that review once, when its done stage has finished, and the reviewer approves every PR in the stack. Ukasha also reads every human-read surface (§18.1) and every `docs/ARCHITECTURE.md` change, whoever else reviews (D-68, D-75). Not to gatekeep. To keep any area from becoming a black box.
+**Ownership.** One primary owner per surface (mobile, API, worker), matching comfort.
+
+**Code owners review every PR** (D-117). `.github/CODEOWNERS` names the `maintainers` team for every path, so GitHub requests its review on every PR, and `main` takes changes only through pull requests. Two rulesets on `main` hold the line. "main: CI" requires the CI job and nobody can bypass it. "main: review" requires a code-owner approval, allows Rebase and merge only, and drops an approval when new commits arrive; repository admins can bypass it. A code owner's own PRs need a green CI run and `/code-review`, and merge with `gh pr merge --rebase --admin`. The code owners' review covers the human-read surfaces (§18.1) and `docs/ARCHITECTURE.md` (D-68, D-75). Another developer's review is welcome and never required. A slice asks for review once, when its done stage has finished.
 
 **Merging a stack, from the top down.** Once every PR in the stack is approved and green:
 
 1. Merge the top PR into the branch below it with **Rebase and merge**, never Squash. GitHub replays its commits onto that branch and deletes the merged one.
 2. Wait for the checks on the next PR down, which now carries those commits too, and merge it the same way.
-3. The bottom PR reaches `main` last. Its `Closes #n` closes the slice's issue, and CI runs on the whole slice one final time before it lands.
+3. The bottom PR reaches `main` last. Folding the stack into it drops its approval, because new commits arrived, so it needs approving once more; a code owner's own bottom PR merges with `--admin` instead. Its `Closes #n` closes the slice's issue, and CI runs on the whole slice one final time before it lands.
 
 Rebase and merge keeps every commit, so `main` shows each slice's commits in order (D-116). No step needs a force push. `/slice <id> cleanup` runs these merges for the developer, one at a time, after a yes.
 
@@ -902,7 +904,7 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 | Read-back, `/slice S-12` | fixed files, brief, auditor and Explore reports, the read-back, the discussion: about 14,000 to 20,000 | `slice-auditor` on larger briefs, `Explore` | go, the decisions, doc fixes | the slice card in the issue, under 900 |
 | Schema, `/slice S-12 schema` | fixed files, card, `packages/shared-types`: about 10,000 | nothing | nothing; say if a schema looks wrong | the schema branch and its PR, by path |
 | Build, `/slice S-12 build api`, one session per package | fixed files, card, the package's `AGENTS.md` and code, verifier reports under 800 each: about 17,000 to 42,000, set by how much code it reads | `slice-verifier` | every question the card cannot answer, screen designs, the phone check, each migration push and deploy | that package's branch and its PR |
-| Done, `/slice S-12 done` | fixed files, card, verifier report, the checklist, the discussion logs: about 12,000 | `slice-verifier` | who reviews the stack | the stack, with the logs in its top PR |
+| Done, `/slice S-12 done` | fixed files, card, verifier report, the checklist, the discussion logs: about 12,000 | `slice-verifier` | whether to add another developer's review | the stack, with the logs in its top PR |
 | Cleanup, `/slice S-12 cleanup` | fixed files, the PR list, git state: about 10,000 | nothing | merging the stack, deploying `main` | the merged slice, its issue closed, a clean machine |
 
 **Handoffs are artifacts, never transcripts.**
@@ -923,7 +925,7 @@ A model set in an agent file wins over `CLAUDE_CODE_SUBAGENT_MODEL` unless `CLAU
 2. **`/slice S-12`** in a fresh session. Read the read-back, starting with what the docs get wrong and the decisions list. **You decide:** answer every decision, then say go. The agent writes the card into the issue and opens a doc-fix PR if the docs needed one. `/clear`.
 3. **`/slice S-12 schema`.** The agent opens the schema PR on the stack and lists the schemas. Say if one looks wrong. `/clear`.
 4. **`/slice S-12 build api`**, `/clear`, then **`/slice S-12 build mobile`**, in the card's order. Answer every question yourself; never tell the agent to guess. Attach screen designs when the mobile build asks, or let it improvise. **You decide:** run the phone check if the card says one is needed, and say yes or no to each migration push and deploy. Each package opens its own PR on the stack. `/clear`.
-5. **`/slice S-12 done`.** The agent reports the Definition of done and puts every stage's discussion log in the top PR. **You decide:** which teammate reviews. Request them on every PR, and Ukasha on any human-read surface or `ARCHITECTURE.md` change. `/clear`.
-6. **`/slice S-12 cleanup`** once the reviews are in. On your yes it merges the stack from the top down, then closes the issue, removes the slice's worktrees and branches, updates `main`, and offers to put the dev server back on `main`.
+5. **`/slice S-12 done`.** The agent reports the Definition of done and puts every stage's discussion log in the top PR. GitHub has already requested the code owners' review. **You decide:** whether to ask another developer too. `/clear`.
+6. **`/slice S-12 cleanup`** once the reviews are in. On your yes it merges the stack from the top down, asking you to get the bottom PR approved again once the stack has folded into it, then closes the issue, removes the slice's worktrees and branches, updates `main`, and offers to put the dev server back on `main`.
 
 Never carry a stage's session into the next, never paste a log into a session, and never let an agent answer its own question.
