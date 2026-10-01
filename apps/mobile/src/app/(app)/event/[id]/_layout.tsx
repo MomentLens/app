@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useTabBarColors } from '@/components/app-tabs';
 import { EventHeader } from '@/features/event-shell/event-header';
+import { EventIdContext } from '@/features/event-shell/event-id';
 import { LoadFailed, Loading, NoAccess } from '@/features/event-shell/no-access';
 import { lostBody, shellBody } from '@/features/event-shell/shell-state';
 import { redirectFor, tabHref, tabsFor, type EventTab } from '@/features/event-shell/tabs';
@@ -65,7 +66,9 @@ export default function EventShellLayout() {
       redirect !== null ? (
         <Redirect href={tabHref(id, redirect)} />
       ) : (
-        <RoleTabs role={event.data.event.role} />
+        <EventIdContext.Provider value={id}>
+          <RoleTabs role={event.data.event.role} />
+        </EventIdContext.Provider>
       );
   } else if (view === 'failed') {
     body = (
