@@ -1,17 +1,19 @@
 import { subEventStatus, type SubEvent } from '@momentlens/shared-types';
 import WheelPicker, { type PickerItem } from '@quidone/react-native-wheel-picker';
-import { useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
-import { Sheet } from '@/components/ui/sheet';
 import { formatSubEventTimes } from '@/features/events/format';
 import { MINUTE_STEP } from '@/features/events/time';
 import { FieldLabel } from '@/features/events/wizard-frame';
-import { delayedTimes } from '@/features/schedule/schedule';
+import { delayedTimes, nextStatusChange } from '@/features/schedule/schedule';
+import { useSheetBottomPadding } from '@/features/schedule/sheet-inset';
 import { useSubEvents, writeSchedule } from '@/features/schedule/use-sub-events';
+import { useNow } from '@/hooks/use-now';
 import { updateSubEvent } from '@/lib/api';
 
 const MINUTE_MS = 60 * 1000;
@@ -47,38 +49,22 @@ function quickLabel(minutes: number): string {
 
 interface DelaySheetProps {
   eventId: string;
-  // The sub-event being delayed, by id, so the sheet always reads the latest copy.
-  subEventId: string | null;
-  // The Schedule's own clock, which decides whether the start moves.
-  now: Date;
-  onClose: () => void;
-}
-
-// The Admin's Delay (spec §2.5.5, D-121): a positive amount, turned into new absolute times and sent
-// through the edit endpoint. One button does two things depending on the clock, so the sheet shows
-// the times it will send before anything is sent.
-export function DelaySheet({ eventId, subEventId, now, onClose }: DelaySheetProps) {
-  return (
-    <Sheet target={subEventId} onClose={onClose}>
-      {(id) => <DelayContent eventId={eventId} subEventId={id} now={now} onClose={onClose} />}
-    </Sheet>
-  );
-}
-
-function DelayContent({
-  eventId,
-  subEventId,
-  now,
-  onClose,
-}: {
-  eventId: string;
   subEventId: string;
-  now: Date;
-  onClose: () => void;
-}) {
-  const subEvent = useSubEvents(eventId).data?.subEvents.find(
-    (candidate) => candidate.id === subEventId,
+}
+
+// The Admin's Delay (spec §2.5.5, D-121), a native sheet over the Schedule: a positive amount,
+// turned into new absolute times and sent through the edit endpoint. One button does two things
+// depending on the clock, so the sheet shows the times it will send before anything is sent.
+export function DelaySheet({ eventId, subEventId }: DelaySheetProps) {
+  const router = useRouter();
+  const bottom = useSheetBottomPadding();
+  const subEvents = useSubEvents(eventId).data?.subEvents;
+  // Moves on at the sub-event's start, so the preview switches to moving the end alone.
+  const now = useNow(
+    useCallback((at: Date) => (subEvents ? nextStatusChange(subEvents, at) : null), [subEvents]),
   );
+  const onClose = () => router.back();
+  const subEvent = subEvents?.find((candidate) => candidate.id === subEventId);
   const [minutes, setMinutes] = useState(DEFAULT_MINUTES);
   // The body last sent, kept so that trying again after a failure sends exactly the same times,
   // even if the cached schedule has since caught up with a first attempt that did land.
@@ -86,9 +72,16 @@ function DelayContent({
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
+  if (subEvents === undefined) {
+    return (
+      <View className="items-center bg-surface py-10" style={{ paddingBottom: bottom }}>
+        <ActivityIndicator className="text-accent" />
+      </View>
+    );
+  }
   if (subEvent === undefined) {
     return (
-      <View className="gap-4 px-4 pb-10 pt-6">
+      <View className="gap-4 bg-surface px-5 pt-6" style={{ paddingBottom: bottom }}>
         <Text accessibilityRole="header" className="font-h2 text-h2 text-textPrimary">
           This sub-event is gone
         </Text>
@@ -119,8 +112,14 @@ function DelayContent({
     setProblem(failure.message);
   }
 
+  // One view that never flattens away. A native sheet that holds a scroll view, as each wheel is,
+  // lays out its direct children itself, and with this view flattened it took the hours wheel out
+  // of its box (react-native-screens).
   return (
-    <View className="gap-5 px-4 pb-10 pt-6">
+    <View
+      collapsable={false}
+      className="gap-5 bg-surface px-5 pt-6"
+      style={{ paddingBottom: bottom }}>
       <View className="flex-row items-start justify-between gap-3">
         <Text
           accessibilityRole="header"
