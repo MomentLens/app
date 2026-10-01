@@ -7,13 +7,16 @@ import {
   HealthResponse,
   JoinEventResponse,
   ListEventsResponse,
+  ListSubEventsResponse,
   ProfileResponse,
   ResolveInviteResponse,
   SetEventCoverResponse,
+  type AddSubEventRequest,
   type CreateEventRequest,
   type ErrorCode,
   type JoinEventRequest,
   type ResolveInviteRequest,
+  type UpdateSubEventRequest,
 } from '@momentlens/shared-types';
 import {
   isAuthApiError,
@@ -50,7 +53,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface RequestOptions {
   method?: Method;
@@ -337,4 +340,60 @@ export async function cancelJoinRequest(eventId: string): Promise<CancelJoinRequ
     throw await errorFrom('DELETE /events/{eventId}/join-request', response);
   }
   return parseBody('DELETE /events/{eventId}/join-request', response, CancelJoinRequestResponse);
+}
+
+// The event's schedule, for every active role (D-121): 1 to 15 sub-events by start, then end, then
+// id. A caller who is not an active member gets 403 not_member, and a deleted or unknown event 404
+// not_found, as GET /events/{eventId} answers.
+export async function listSubEvents(
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<ListSubEventsResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/sub-events`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/sub-events', response);
+  }
+  return parseBody('GET /events/{eventId}/sub-events', response, ListSubEventsResponse);
+}
+
+// Adds a sub-event, for the event's Admin. A 201 added it and a 200 found the sheet's requestId
+// already used, and both answer with the schedule after the write. No signal, for the reason
+// createEvent has none: an add the screen stops waiting for may still land.
+export async function addSubEvent(
+  eventId: string,
+  body: AddSubEventRequest,
+): Promise<ListSubEventsResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/sub-events`;
+  const response = await authenticatedRequest(path, { method: 'POST', body });
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /events/{eventId}/sub-events', response);
+  }
+  return parseBody('POST /events/{eventId}/sub-events', response, ListSubEventsResponse);
+}
+
+// An edit or a Delay, which the server cannot tell apart: the body carries only what changes, as
+// absolute values, so a retry changes nothing more (D-121). Answers with the schedule.
+export async function updateSubEvent(
+  subEventId: string,
+  body: UpdateSubEventRequest,
+): Promise<ListSubEventsResponse> {
+  const path = `/sub-events/${encodeURIComponent(subEventId)}`;
+  const response = await authenticatedRequest(path, { method: 'PATCH', body });
+  if (response.status !== 200) {
+    throw await errorFrom('PATCH /sub-events/{subEventId}', response);
+  }
+  return parseBody('PATCH /sub-events/{subEventId}', response, ListSubEventsResponse);
+}
+
+// Deletes a sub-event and, in the same transaction, its venue if nothing else uses it (D-121).
+// The event's last one is 409 last_sub_event. A sub-event already gone is 404 not_found, which a
+// retry of a delete that landed also gets.
+export async function deleteSubEvent(subEventId: string): Promise<ListSubEventsResponse> {
+  const path = `/sub-events/${encodeURIComponent(subEventId)}`;
+  const response = await authenticatedRequest(path, { method: 'DELETE' });
+  if (response.status !== 200) {
+    throw await errorFrom('DELETE /sub-events/{subEventId}', response);
+  }
+  return parseBody('DELETE /sub-events/{subEventId}', response, ListSubEventsResponse);
 }

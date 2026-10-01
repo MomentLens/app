@@ -755,3 +755,170 @@ describe('invite endpoints', () => {
     await expect(api.cancelJoinRequest(EVENT_ID)).resolves.toEqual(approved);
   });
 });
+
+describe('sub-event endpoints', () => {
+  const EVENT_ID = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const SUB_EVENT_ID = '2d3e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a';
+  const subEvent = {
+    id: SUB_EVENT_ID,
+    name: 'Nikkah',
+    description: null,
+    startsAt: '2026-10-03T13:00:00.000Z',
+    endsAt: '2026-10-03T18:00:00.000Z',
+    verificationRadiusM: 200,
+    venue: {
+      id: '3e4f5a6b-7c8d-4e9f-8a0b-1c2d3e4f5a6b',
+      name: 'Pearl Continental',
+      lat: 31.5546,
+      lng: 74.3572,
+    },
+  };
+  const schedule = { subEvents: [subEvent] };
+  const addRequest = {
+    requestId: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b',
+    name: 'Walima',
+    startsAt: '2026-10-04T13:00:00.000Z',
+    endsAt: '2026-10-04T18:00:00.000Z',
+    venue: { id: subEvent.venue.id },
+    verificationRadiusM: 200,
+  };
+
+  function signedIn(accessToken: string): SessionResult {
+    return { data: { session: { access_token: accessToken } }, error: null };
+  }
+
+  function answersInTurn(...answers: [number, unknown][]) {
+    let call = 0;
+    return jest.fn<typeof fetch>(() => {
+      const [status, body] = answers[Math.min(call, answers.length - 1)]!;
+      call += 1;
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve(body),
+      } as unknown as Response);
+    });
+  }
+
+  function initOf(fetchMock: ReturnType<typeof answersInTurn>, call: number) {
+    return fetchMock.mock.calls[call]?.[1] ?? {};
+  }
+
+  function errorBody(code: string) {
+    return { error: { code, message: 'refused' } };
+  }
+
+  async function failure(promise: Promise<unknown>) {
+    return (await promise.catch((e: unknown) => e)) as InstanceType<Api['ApiError']>;
+  }
+
+  it('GETs the schedule on the event path and returns it parsed', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([200, schedule]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.listSubEvents(EVENT_ID)).resolves.toEqual(schedule);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${EVENT_ID}/sub-events`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('GET');
+  });
+
+  it('refuses a schedule with no sub-event, which no event has (D-88)', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([200, { subEvents: [] }]);
+    const api = loadApi(BASE_URL);
+
+    await expect(api.listSubEvents(EVENT_ID)).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('throws not_member for a removed member, so the shell can show the lost state', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([403, errorBody('not_member')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await failure(api.listSubEvents(EVENT_ID));
+    expect(error.status).toBe(403);
+    expect(error.code).toBe('not_member');
+  });
+
+  it('POSTs an add with its requestId and accepts a 201 and a 200 alike', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([201, schedule], [200, schedule]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.addSubEvent(EVENT_ID, addRequest)).resolves.toEqual(schedule);
+    await expect(api.addSubEvent(EVENT_ID, addRequest)).resolves.toEqual(schedule);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${EVENT_ID}/sub-events`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('POST');
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual(addRequest);
+  });
+
+  it('throws too_many_sub_events for a 16th', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([422, errorBody('too_many_sub_events')]);
+    const api = loadApi(BASE_URL);
+
+    expect((await failure(api.addSubEvent(EVENT_ID, addRequest))).code).toBe('too_many_sub_events');
+  });
+
+  it('PATCHes only the fields given, on the sub-event path', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([200, schedule]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.updateSubEvent(SUB_EVENT_ID, { name: 'Baraat' })).resolves.toEqual(schedule);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/sub-events/${SUB_EVENT_ID}`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('PATCH');
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual({ name: 'Baraat' });
+  });
+
+  it('throws wrong_role when a Guest tries to edit, so the app refetches the role (D-118)', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([403, errorBody('wrong_role')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await failure(api.updateSubEvent(SUB_EVENT_ID, { name: 'Baraat' }));
+    expect(error.status).toBe(403);
+    expect(error.code).toBe('wrong_role');
+  });
+
+  it('throws event_too_long for a Delay that stretches the event past 14 days', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([422, errorBody('event_too_long')]);
+    const api = loadApi(BASE_URL);
+
+    const body = { startsAt: subEvent.startsAt, endsAt: '2026-10-20T18:00:00.000Z' };
+    expect((await failure(api.updateSubEvent(SUB_EVENT_ID, body))).code).toBe('event_too_long');
+  });
+
+  it('deletes with a bodyless DELETE on the sub-event path', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answersInTurn([200, schedule]);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.deleteSubEvent(SUB_EVENT_ID)).resolves.toEqual(schedule);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/sub-events/${SUB_EVENT_ID}`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('DELETE');
+    expect(initOf(fetchMock, 0).body).toBeUndefined();
+  });
+
+  it('throws last_sub_event for the last one, never reading a schedule out of it', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answersInTurn([409, errorBody('last_sub_event')]);
+    const api = loadApi(BASE_URL);
+
+    const error = await failure(api.deleteSubEvent(SUB_EVENT_ID));
+    expect(error.status).toBe(409);
+    expect(error.code).toBe('last_sub_event');
+  });
+});
