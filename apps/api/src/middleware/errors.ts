@@ -18,8 +18,12 @@ const STATUS: Record<ErrorCode, number> = {
   album_closed: 409,
   unverified: 409,
   upload_missing: 409,
+  last_sub_event: 409,
+  sub_event_has_media: 409,
   event_full: 422,
   too_many_references: 422,
+  too_many_sub_events: 422,
+  event_too_long: 422,
   internal_error: 500,
 };
 
