@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTabBarColors } from '@/components/app-tabs';
 import { EventHeader } from '@/features/event-shell/event-header';
 import { LoadFailed, Loading, NoAccess } from '@/features/event-shell/no-access';
+import { lostBody, shellBody } from '@/features/event-shell/shell-state';
 import { redirectFor, tabHref, tabsFor, type EventTab } from '@/features/event-shell/tabs';
 import { lostAccess, useEvent, type LostAccess } from '@/features/event-shell/use-event';
 import { useEvents } from '@/features/events/use-events';
@@ -39,6 +40,12 @@ export default function EventShellLayout() {
   const tab = (useSegments() as string[])[3];
   const event = useEvent(id);
   const lost = lostAccess(event.error);
+  const view = shellBody({
+    lost,
+    hasData: event.data !== undefined,
+    isError: event.isError,
+    isFetching: event.isFetching,
+  });
 
   // Back to the Events tab from whichever tab is open. router.back() inside the tabs would step
   // back through them first on Android.
@@ -47,9 +54,9 @@ export default function EventShellLayout() {
   }
 
   let body: ReactNode;
-  if (lost !== null) {
+  if (view === 'lost' && lost !== null) {
     body = <AccessLost eventId={id} reason={lost} onBack={toEvents} />;
-  } else if (event.data) {
+  } else if (view === 'tabs' && event.data) {
     // A link to a tab this role lacks, or a role change while one was open, lands on the role's
     // first tab. It has to happen before the tabs render: native tabs refuse a focused route they
     // were not given.
@@ -60,7 +67,7 @@ export default function EventShellLayout() {
       ) : (
         <RoleTabs role={event.data.event.role} />
       );
-  } else if (event.isError) {
+  } else if (view === 'failed') {
     body = (
       <Body>
         <LoadFailed retrying={event.isFetching} onRetry={() => void event.refetch()} />
@@ -78,7 +85,10 @@ export default function EventShellLayout() {
     <View className="flex-1 bg-background">
       {/* SafeAreaView is not a React Native core component, so its layout stays in style. */}
       <SafeAreaView edges={['top', 'left', 'right']}>
-        <EventHeader name={lost === null ? event.data?.event.name : undefined} onBack={toEvents} />
+        <EventHeader
+          name={view === 'tabs' ? event.data?.event.name : undefined}
+          onBack={toEvents}
+        />
       </SafeAreaView>
       {body}
     </View>
@@ -104,8 +114,8 @@ function RoleTabs({ role }: { role: MembershipRole }) {
 }
 
 // The API said no. A pending join request is told apart by the Events list, which holds the
-// caller's own (D-118), so a not_member waits for a fresh copy of it. Mounting the list refetches
-// it, which also takes the event off the Events tab.
+// caller's own (D-118), so a not_member waits for a fresh copy of it (lostBody). Mounting the list
+// refetches it, which also takes the event off the Events tab.
 function AccessLost({
   eventId,
   reason,
@@ -117,19 +127,32 @@ function AccessLost({
 }) {
   const events = useEvents();
   const request = events.data?.joinRequests.find((candidate) => candidate.eventId === eventId);
+  const view = lostBody(reason, {
+    fetchedAfterMount: events.isFetchedAfterMount,
+    isSuccess: events.isSuccess,
+    isError: events.isError,
+    hasRequest: request !== undefined,
+  });
 
-  if (reason === 'not_member' && !events.isFetchedAfterMount) {
-    return (
-      <Body>
-        <Loading />
-      </Body>
-    );
-  }
-  if (reason === 'not_member' && request !== undefined) {
+  if (view === 'pending' && request !== undefined) {
     return (
       <Redirect
         href={{ pathname: '/join/pending/[eventId]', params: { eventId, name: request.eventName } }}
       />
+    );
+  }
+  if (view === 'failed') {
+    return (
+      <Body>
+        <LoadFailed retrying={events.isFetching} onRetry={() => void events.refetch()} />
+      </Body>
+    );
+  }
+  if (view === 'loading') {
+    return (
+      <Body>
+        <Loading />
+      </Body>
     );
   }
   return (
