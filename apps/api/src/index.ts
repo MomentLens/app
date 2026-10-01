@@ -9,6 +9,7 @@ import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createInviteStore } from './services/invites';
 import { createFindProfile } from './services/profiles';
+import { createSubEventStore } from './services/sub-events';
 
 const DEFAULT_PORT = 3000;
 
@@ -53,6 +54,7 @@ createApp({
   findProfile: createFindProfile(supabase),
   events: createEventStore(supabase),
   invites: createInviteStore(supabase),
+  subEvents: createSubEventStore(supabase),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,

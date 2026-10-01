@@ -18,6 +18,12 @@ import {
   resolveInviteController,
 } from './controllers/invites';
 import { getMyProfileController } from './controllers/profiles';
+import {
+  addSubEventController,
+  deleteSubEventController,
+  listSubEventsController,
+  updateSubEventController,
+} from './controllers/sub-events';
 import type { ObjectExists, PresignGet, PresignPut } from './lib/r2';
 import { optionalAuth, requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
@@ -26,10 +32,12 @@ import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
 import { invitesRouter } from './routes/invites';
 import { profilesRouter } from './routes/profiles';
+import { subEventsRouter } from './routes/sub-events';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { InviteStore } from './services/invites';
 import type { FindProfile } from './services/profiles';
+import type { SubEventStore } from './services/sub-events';
 
 // What the app needs from outside. index.ts builds the real ones from the environment, and tests
 // pass fakes, so no test needs a Supabase project or an R2 account.
@@ -40,6 +48,7 @@ export interface AppDeps {
   findProfile: FindProfile;
   events: EventStore;
   invites: InviteStore;
+  subEvents: SubEventStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
@@ -62,6 +71,14 @@ export function createApp(deps: AppDeps): Express {
       createCoverUpload: createCoverUploadController(deps.events, deps.presignPut),
       setCover: setEventCoverController(deps.events, deps.objectExists, deps.presignGet),
       cancelJoinRequest: cancelJoinRequestController(deps.invites),
+    }),
+  );
+  app.use(
+    subEventsRouter(auth, {
+      list: listSubEventsController(deps.events, deps.subEvents),
+      add: addSubEventController(deps.events, deps.subEvents),
+      update: updateSubEventController(deps.events, deps.subEvents),
+      remove: deleteSubEventController(deps.events, deps.subEvents),
     }),
   );
   app.use(
