@@ -7,6 +7,8 @@ This file names units of work and points at the spec sections that define them. 
 
 Create one GitHub issue per slice from the **Work slice** issue template, titled with the slice ID and name, body containing only the spec references and the dependency list. The board (Backlog / In Progress / Review / Done) is per Handbook §12.
 
+Each phase's table reads top to bottom in build order. A slice sits below every slice it depends on, and `pnpm docs:check` fails a row placed above one of its dependencies or naming a slice that does not exist.
+
 ## Why a slice is not a screen
 
 A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It does not give you the zod schema, the route, the rule deciding who can approve, the query hook and what it invalidates, the empty and error states, or what happens when the Admin approves the same person from two phones at once. An agent handed only the image invents all of that, differently for each of the three of you.

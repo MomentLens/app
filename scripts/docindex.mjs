@@ -340,6 +340,19 @@ const parse = (key, text) => {
     // mention a second slice silently detached it from the first.
     const NOTE = /^\*\*(S-\d+[a-z]?|P0-\d+)\b/;
     const byKey = new Map(rows.map((c) => [c.key, c]));
+
+    // The phases run in file order, so a dependency listed below its slice is either later
+    // in the same table or in a later phase, and the table no longer reads in build order.
+    // An id with no row at all is the dangling-citation check's.
+    for (const c of rows)
+      for (const d of c.deps) {
+        const dep = byKey.get(d);
+        if (dep && dep.line > c.line)
+          rowsBad.push({
+            line: c.line,
+            msg: `${c.key} depends on ${d}, which is listed below it at line ${dep.line}. Move ${c.key} below it so the table reads in build order`,
+          });
+      }
     let para = null;
     let inBlock = false;
     lines.forEach((line, i) => {
