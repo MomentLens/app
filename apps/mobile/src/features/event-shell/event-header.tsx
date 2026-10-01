@@ -32,8 +32,8 @@ function BackToEvents({ onPress }: { onPress: () => void }) {
 
 // The Event shell's persistent header, above every tab (spec §2.5.1, hb §16.5): the way back to
 // Events, the event's name, and S-29's slot. Each platform's bar sizes it (D-112). It shows no cover:
-// the name says which event this is, and the Figma frames leave the cover out (decided at S-08's
-// build mobile). The name stays on one line, so an 80-character one ends in an ellipsis (D-110).
+// the name says which event this is, and the Figma frames leave the cover out (D-119). The name
+// stays on one line, so an 80-character one ends in an ellipsis (D-110).
 export function EventHeader({ name, onBack, right }: EventHeaderProps) {
   return (
     <View className="gap-1 bg-background px-4 pb-3">
