@@ -2,9 +2,9 @@
 // membership and invite (D-73, docs/ARCHITECTURE.md §1), and the tests that need a real database or
 // real Auth: the trigger that creates a profile, the cascades, getClaims on a token the project
 // signed (D-109), create_event and list_my_events through the API's event store (D-110),
-// get_my_event through the same store (D-118), and
-// resolve_invite, join_event, the cancel and the join request list through the API's stores
-// (D-115). It needs a
+// get_my_event through the same store (D-118), resolve_invite, join_event, the cancel and the join
+// request list through the API's stores (D-115), and sub_event_schedule, add_sub_event,
+// update_sub_event and delete_sub_event through the API's sub-event store (D-121). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
 // dev project from the environment. Each test makes its own accounts under @momentlens.me and
 // deletes them after, and deletes the events it made. No email is sent, because the accounts are
@@ -26,7 +26,13 @@ import {
   SHORTCODE_ALPHABET,
   VERIFICATION_RADIUS_DEFAULT_M,
 } from '@momentlens/shared-types';
-import type { CreateEventRequest, SubEventInput } from '@momentlens/shared-types';
+import type {
+  AddSubEventRequest,
+  CreateEventRequest,
+  SubEvent,
+  SubEventInput,
+  VenueChoice,
+} from '@momentlens/shared-types';
 
 import { createServerClient } from '../../src/db/supabase';
 import { createTokenVerifier } from '../../src/middleware/auth';
@@ -39,6 +45,11 @@ import {
   resolveInviteParams,
 } from '../../src/services/invites';
 import { createFindProfile } from '../../src/services/profiles';
+import {
+  addSubEventParams,
+  createSubEventStore,
+  updateSubEventParams,
+} from '../../src/services/sub-events';
 
 // A test here makes up to about 20 requests in sequence to the dev project in Frankfurt, two of
 // them account creations, and from a GitHub runner that passed Jest's default 5 seconds.
@@ -1608,6 +1619,504 @@ if (project === null) {
           },
         ]);
         await expect(store.listJoinRequests(a.id)).resolves.toEqual([]);
+      });
+    });
+
+    describe('the schedule and sub-event writes', () => {
+      const subEvents = createSubEventStore(admin);
+
+      // The schedule, failing the test when the event has none to read.
+      async function scheduleOf(eventId: string): Promise<SubEvent[]> {
+        const schedule = await subEvents.schedule(eventId);
+        if (schedule === null) {
+          throw new Error(`no schedule for event ${eventId}`);
+        }
+        return schedule;
+      }
+
+      // The schedule a write answered with, failing the test when it answered a refusal.
+      function written(result: { outcome: string; subEvents?: SubEvent[] }): SubEvent[] {
+        if (result.subEvents === undefined) {
+          throw new Error(`expected a schedule, got ${result.outcome}`);
+        }
+        return result.subEvents;
+      }
+
+      function named(schedule: SubEvent[], name: string): SubEvent {
+        const subEvent = schedule.find((s) => s.name === name);
+        if (subEvent === undefined) {
+          throw new Error(`no sub-event named ${name}`);
+        }
+        return subEvent;
+      }
+
+      async function venuesOf(eventId: string) {
+        const result = await admin
+          .from('venue')
+          .select('id, name, qr_secret')
+          .eq('event_id', eventId)
+          .order('name');
+        expect(result.error).toBeNull();
+        return (result.data ?? []) as { id: string; name: string; qr_secret: string }[];
+      }
+
+      async function countSubEvents(eventId: string) {
+        const result = await admin
+          .from('sub_event')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId);
+        expect(result.error).toBeNull();
+        return result.count;
+      }
+
+      async function softDelete(eventId: string) {
+        const result = await admin
+          .from('event')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', eventId);
+        expect(result.error).toBeNull();
+      }
+
+      // A dholki the day before request()'s mehndi, unless the case sets its own fields.
+      function addRequest(
+        venue: VenueChoice,
+        overrides: Partial<AddSubEventRequest> = {},
+      ): AddSubEventRequest {
+        return {
+          requestId: randomUUID(),
+          name: 'Dholki',
+          startsAt: iso(T0 - 24 * HOUR),
+          endsAt: iso(T0 - 20 * HOUR),
+          venue,
+          verificationRadiusM: VERIFICATION_RADIUS_DEFAULT_M,
+          ...overrides,
+        };
+      }
+
+      it('reads the schedule in order, each with its own radius and its venue, and never qr_secret', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const schedule = await scheduleOf(event.id);
+        expect(
+          schedule.map((s) => [
+            s.name,
+            s.description,
+            s.startsAt,
+            s.endsAt,
+            s.verificationRadiusM,
+            s.venue.name,
+            s.venue.lat,
+            s.venue.lng,
+          ]),
+        ).toEqual([
+          [
+            'Mehndi',
+            'Yellow dress code',
+            iso(T0),
+            iso(T0 + 4 * HOUR),
+            300,
+            'Family Home',
+            31.52,
+            74.35,
+          ],
+          [
+            'Baraat',
+            null,
+            iso(T0 + 24 * HOUR),
+            iso(T0 + 30 * HOUR),
+            150,
+            'Pearl Continental',
+            31.5546,
+            74.3572,
+          ],
+          [
+            'Walima',
+            null,
+            iso(T0 + 48 * HOUR),
+            iso(T0 + 52 * HOUR),
+            VERIFICATION_RADIUS_DEFAULT_M,
+            'Pearl Continental',
+            31.5546,
+            74.3572,
+          ],
+        ]);
+        // Two sub-events at one hall share its venue, and so its QR (spec §4.3).
+        expect(named(schedule, 'Walima').venue.id).toBe(named(schedule, 'Baraat').venue.id);
+        const venues = await venuesOf(event.id);
+        expect(venues.map((v) => v.id).sort()).toEqual(
+          [...new Set(schedule.map((s) => s.venue.id))].sort(),
+        );
+
+        const raw = await admin.rpc('sub_event_schedule', { p_event_id: event.id });
+        expect(raw.error).toBeNull();
+        expect(JSON.stringify(raw.data)).not.toMatch(/qr_?secret/i);
+        for (const venue of venues) {
+          expect(JSON.stringify(raw.data)).not.toContain(venue.qr_secret.replace(/^\\x/, ''));
+        }
+
+        await expect(subEvents.findEventId(named(schedule, 'Mehndi').id)).resolves.toBe(event.id);
+        await expect(subEvents.findEventId(randomUUID())).resolves.toBeNull();
+        await expect(subEvents.schedule(randomUUID())).resolves.toBeNull();
+      });
+
+      it('orders sub-events that start together by their end, then by id', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(
+          a.id,
+          request({
+            subEvents: [
+              subEvent({
+                name: 'Long',
+                startsAt: iso(T0),
+                endsAt: iso(T0 + 6 * HOUR),
+                venueIndex: 0,
+              }),
+              subEvent({
+                name: 'Short',
+                startsAt: iso(T0),
+                endsAt: iso(T0 + 2 * HOUR),
+                venueIndex: 1,
+              }),
+              subEvent({
+                name: 'Twin A',
+                startsAt: iso(T0),
+                endsAt: iso(T0 + 4 * HOUR),
+                venueIndex: 0,
+              }),
+              subEvent({
+                name: 'Twin B',
+                startsAt: iso(T0),
+                endsAt: iso(T0 + 4 * HOUR),
+                venueIndex: 0,
+              }),
+            ],
+          }),
+        );
+        const schedule = await scheduleOf(event.id);
+        // Postgres orders uuids as their lower-case strings sort.
+        const twins = schedule
+          .filter((s) => s.name.startsWith('Twin'))
+          .sort((x, y) => (x.id < y.id ? -1 : 1));
+        expect(schedule.map((s) => s.name)).toEqual(['Short', ...twins.map((s) => s.name), 'Long']);
+      });
+
+      it('adds at an existing venue and at a new one, and a repeated requestId adds nothing', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const hall = named(await scheduleOf(event.id), 'Baraat').venue;
+
+        const atHall = addRequest({ id: hall.id }, { name: 'Nikah', description: '' });
+        const added = await subEvents.add(event.id, atHall);
+        expect(added.outcome).toBe('added');
+        const nikah = named(written(added), 'Nikah');
+        expect(nikah).toMatchObject({ description: null, venue: hall });
+        expect(written(added).map((s) => s.name)).toEqual(['Nikah', 'Mehndi', 'Baraat', 'Walima']);
+
+        // A retry after a lost answer: same requestId, whatever else it carries.
+        const repeat = await subEvents.add(event.id, { ...atHall, name: 'Changed' });
+        expect(repeat).toEqual({ outcome: 'repeated', subEvents: written(added) });
+        await expect(countSubEvents(event.id)).resolves.toBe(4);
+
+        const garden = await subEvents.add(
+          event.id,
+          addRequest(
+            { name: 'Garden', lat: 31.7, lng: 74.5 },
+            { name: 'Mayun', startsAt: iso(T0 - 48 * HOUR), endsAt: iso(T0 - 44 * HOUR) },
+          ),
+        );
+        expect(named(written(garden), 'Mayun').venue).toMatchObject({
+          name: 'Garden',
+          lat: 31.7,
+          lng: 74.5,
+        });
+        const venues = await venuesOf(event.id);
+        expect(venues.map((v) => v.name)).toEqual(['Family Home', 'Garden', 'Pearl Continental']);
+        // A new venue gets its own 32-byte QR secret, as one the wizard made does.
+        const secret = venues.find((v) => v.name === 'Garden')?.qr_secret ?? '';
+        expect(secret).toMatch(/^\\x[0-9a-f]{64}$/);
+
+        // Another event's sub-event holds this requestId, and nothing about it comes back.
+        const other = await createdEvent(a.id);
+        const otherHall = named(await scheduleOf(other.id), 'Baraat').venue;
+        await expect(
+          subEvents.add(other.id, { ...atHall, venue: { id: otherHall.id } }),
+        ).resolves.toEqual({ outcome: 'taken' });
+        await expect(countSubEvents(other.id)).resolves.toBe(3);
+      });
+
+      it('refuses a 16th sub-event, lets one of two adds take the last place, and still finds a retried 15th', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const hall = named(await scheduleOf(event.id), 'Baraat').venue;
+        const at = (i: number) =>
+          addRequest(
+            { id: hall.id },
+            {
+              name: `Extra ${i}`,
+              startsAt: iso(T0 + i * HOUR),
+              endsAt: iso(T0 + i * HOUR + HOUR / 2),
+            },
+          );
+        for (let i = 4; i <= 14; i += 1) {
+          await expect(subEvents.add(event.id, at(i))).resolves.toMatchObject({ outcome: 'added' });
+        }
+        await expect(countSubEvents(event.id)).resolves.toBe(14);
+
+        const [first, second] = [at(15), at(16)];
+        const results = await Promise.all([
+          subEvents.add(event.id, first),
+          subEvents.add(event.id, second),
+        ]);
+        expect(results.map((r) => r.outcome).sort()).toEqual(['added', 'too_many']);
+        await expect(countSubEvents(event.id)).resolves.toBe(15);
+
+        await expect(subEvents.add(event.id, at(17))).resolves.toEqual({ outcome: 'too_many' });
+        const winner = results[0].outcome === 'added' ? first : second;
+        await expect(subEvents.add(event.id, winner)).resolves.toMatchObject({
+          outcome: 'repeated',
+        });
+        await expect(countSubEvents(event.id)).resolves.toBe(15);
+      });
+
+      it('allows a span of exactly 336 hours and refuses one minute more, on an add and on an edit', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const schedule = await scheduleOf(event.id);
+        const hall = named(schedule, 'Baraat').venue;
+        const mehndi = named(schedule, 'Mehndi');
+        const walima = named(schedule, 'Walima');
+        // The event starts at T0, with the mehndi.
+        const lastEnd = T0 + MAX_EVENT_SPAN_MS;
+
+        await expect(
+          subEvents.add(
+            event.id,
+            addRequest(
+              { id: hall.id },
+              { startsAt: iso(lastEnd - HOUR), endsAt: iso(lastEnd + 60_000) },
+            ),
+          ),
+        ).resolves.toEqual({ outcome: 'too_long' });
+        await expect(countSubEvents(event.id)).resolves.toBe(3);
+
+        await expect(
+          subEvents.update(event.id, walima.id, {
+            startsAt: walima.startsAt,
+            endsAt: iso(lastEnd + 60_000),
+          }),
+        ).resolves.toEqual({ outcome: 'too_long' });
+        const added = await subEvents.add(
+          event.id,
+          addRequest({ id: hall.id }, { startsAt: iso(lastEnd - HOUR), endsAt: iso(lastEnd) }),
+        );
+        expect(added.outcome).toBe('added');
+        // The span is now exactly 336 hours, so moving the first start one minute earlier passes it
+        // from the other end.
+        await expect(
+          subEvents.update(event.id, mehndi.id, {
+            startsAt: iso(T0 - 60_000),
+            endsAt: mehndi.endsAt,
+          }),
+        ).resolves.toEqual({ outcome: 'too_long' });
+        expect(named(await scheduleOf(event.id), 'Mehndi').startsAt).toBe(iso(T0));
+
+        const edited = await subEvents.update(event.id, walima.id, {
+          startsAt: iso(lastEnd - 2 * HOUR),
+          endsAt: iso(lastEnd),
+        });
+        expect(named(written(edited), 'Walima').endsAt).toBe(iso(lastEnd));
+      });
+
+      it("refuses another event's venue on an add and on an edit, and changes nothing", async () => {
+        const a = await createNamedUser();
+        const [event, other] = [await createdEvent(a.id), await createdEvent(a.id)];
+        const before = await scheduleOf(event.id);
+        const foreign = named(await scheduleOf(other.id), 'Baraat').venue;
+
+        await expect(subEvents.add(event.id, addRequest({ id: foreign.id }))).resolves.toEqual({
+          outcome: 'no_venue',
+        });
+        await expect(
+          subEvents.update(event.id, named(before, 'Mehndi').id, {
+            name: 'Moved',
+            venue: { id: foreign.id },
+          }),
+        ).resolves.toEqual({ outcome: 'no_venue' });
+        await expect(subEvents.add(event.id, addRequest({ id: randomUUID() }))).resolves.toEqual({
+          outcome: 'no_venue',
+        });
+
+        await expect(scheduleOf(event.id)).resolves.toEqual(before);
+        await expect(venuesOf(event.id)).resolves.toHaveLength(2);
+      });
+
+      it('edits only the fields sent, clears an empty description, and deletes a venue it leaves unused', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const schedule = await scheduleOf(event.id);
+        const mehndi = named(schedule, 'Mehndi');
+        const hall = named(schedule, 'Baraat').venue;
+
+        const renamed = named(
+          written(await subEvents.update(event.id, mehndi.id, { name: 'Mayun' })),
+          'Mayun',
+        );
+        expect(renamed).toEqual({ ...mehndi, name: 'Mayun' });
+
+        const cleared = await subEvents.update(event.id, mehndi.id, { description: '' });
+        expect(named(written(cleared), 'Mayun').description).toBeNull();
+
+        // A Delay once it has started: the start stays and the end moves (D-121).
+        const delayed = await subEvents.update(event.id, mehndi.id, {
+          startsAt: mehndi.startsAt,
+          endsAt: iso(T0 + 5 * HOUR),
+        });
+        expect(named(written(delayed), 'Mayun')).toMatchObject({
+          startsAt: iso(T0),
+          endsAt: iso(T0 + 5 * HOUR),
+          verificationRadiusM: 300,
+        });
+
+        // Off the family home, which no other sub-event uses, so its venue goes.
+        const moved = await subEvents.update(event.id, mehndi.id, {
+          venue: { id: hall.id },
+          verificationRadiusM: 500,
+        });
+        expect(named(written(moved), 'Mayun')).toMatchObject({
+          venue: hall,
+          verificationRadiusM: 500,
+        });
+        await expect(venuesOf(event.id)).resolves.toMatchObject([{ name: 'Pearl Continental' }]);
+
+        // Off the hall to a new lawn: the hall stays, because two sub-events still use it.
+        const lawn = await subEvents.update(event.id, mehndi.id, {
+          venue: { name: 'Lawn', lat: 31.8, lng: 74.6 },
+        });
+        expect(named(written(lawn), 'Mayun').venue).toMatchObject({ name: 'Lawn' });
+        await expect(venuesOf(event.id)).resolves.toMatchObject([
+          { name: 'Lawn' },
+          { name: 'Pearl Continental' },
+        ]);
+
+        // A sub-event of another event, reached through this one.
+        const other = await createdEvent(a.id);
+        const foreign = named(await scheduleOf(other.id), 'Mehndi');
+        await expect(subEvents.update(event.id, foreign.id, { name: 'Hijack' })).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        expect(named(await scheduleOf(other.id), 'Mehndi')).toEqual(foreign);
+      });
+
+      it('deletes a sub-event and the venue it leaves unused, and never the last one', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const schedule = await scheduleOf(event.id);
+        const mehndi = named(schedule, 'Mehndi');
+        const baraat = named(schedule, 'Baraat');
+        const walima = named(schedule, 'Walima');
+
+        const first = await subEvents.remove(event.id, mehndi.id);
+        expect(written(first).map((s) => s.name)).toEqual(['Baraat', 'Walima']);
+        await expect(venuesOf(event.id)).resolves.toMatchObject([{ name: 'Pearl Continental' }]);
+        // A retried delete finds nothing to delete.
+        await expect(subEvents.remove(event.id, mehndi.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+
+        // The hall stays while the walima uses it.
+        await subEvents.remove(event.id, baraat.id);
+        await expect(venuesOf(event.id)).resolves.toHaveLength(1);
+        await expect(subEvents.remove(event.id, walima.id)).resolves.toEqual({ outcome: 'last' });
+        await expect(scheduleOf(event.id)).resolves.toEqual([walima]);
+
+        const other = await createdEvent(a.id);
+        const foreign = named(await scheduleOf(other.id), 'Mehndi');
+        await expect(subEvents.remove(event.id, foreign.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(countSubEvents(other.id)).resolves.toBe(3);
+      });
+
+      it('leaves one sub-event when deletes of the last two arrive at once', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const schedule = await scheduleOf(event.id);
+        await subEvents.remove(event.id, named(schedule, 'Mehndi').id);
+
+        const results = await Promise.all([
+          subEvents.remove(event.id, named(schedule, 'Baraat').id),
+          subEvents.remove(event.id, named(schedule, 'Walima').id),
+        ]);
+        expect(results.map((r) => r.outcome).sort()).toEqual(['deleted', 'last']);
+        await expect(countSubEvents(event.id)).resolves.toBe(1);
+        // list_my_events still finds the event's span (D-121).
+        await expect(store.listForMember(a.id)).resolves.toMatchObject([{ id: event.id }]);
+      });
+
+      it('refuses every write to a soft-deleted event, and reads no schedule for it', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const schedule = await scheduleOf(event.id);
+        const mehndi = named(schedule, 'Mehndi');
+        await softDelete(event.id);
+
+        await expect(subEvents.schedule(event.id)).resolves.toBeNull();
+        await expect(subEvents.add(event.id, addRequest({ id: mehndi.venue.id }))).resolves.toEqual(
+          { outcome: 'not_found' },
+        );
+        await expect(subEvents.update(event.id, mehndi.id, { name: 'Late' })).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(subEvents.remove(event.id, mehndi.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(countSubEvents(event.id)).resolves.toBe(3);
+      });
+
+      it('lets neither the publishable key nor a signed-in Admin call the four functions', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const before = await scheduleOf(event.id);
+        const mehndi = named(before, 'Mehndi');
+        const clients = [
+          createServerClient(project.url, project.publishableKey),
+          // The event's own Admin, who still writes nothing directly (root invariant 14).
+          await signedInClient(a),
+        ];
+
+        for (const client of clients) {
+          const read = await client.rpc('sub_event_schedule', { p_event_id: event.id });
+          expect(read.error).not.toBeNull();
+          expect(read.data).toBeNull();
+          const add = await client.rpc(
+            'add_sub_event',
+            addSubEventParams(event.id, addRequest({ id: mehndi.venue.id })),
+          );
+          expect(add.error).not.toBeNull();
+          const update = await client.rpc(
+            'update_sub_event',
+            updateSubEventParams(event.id, mehndi.id, { name: 'Changed' }),
+          );
+          expect(update.error).not.toBeNull();
+          const remove = await client.rpc('delete_sub_event', {
+            p_event_id: event.id,
+            p_sub_event_id: mehndi.id,
+          });
+          expect(remove.error).not.toBeNull();
+          const direct = await client
+            .from('sub_event')
+            .update({ create_request_id: randomUUID() })
+            .eq('event_id', event.id);
+          expect(direct.error).not.toBeNull();
+        }
+
+        await expect(scheduleOf(event.id)).resolves.toEqual(before);
+        const stamped = await admin
+          .from('sub_event')
+          .select('id')
+          .eq('event_id', event.id)
+          .not('create_request_id', 'is', null);
+        expect(stamped.data).toEqual([]);
       });
     });
   });
