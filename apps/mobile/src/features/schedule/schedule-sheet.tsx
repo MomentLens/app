@@ -40,7 +40,7 @@ interface ScheduleSheetProps {
 // mobile).
 export function ScheduleSheet({ eventId, target, onClose, onDeleted }: ScheduleSheetProps) {
   return (
-    <Sheet target={target} onClose={onClose} full>
+    <Sheet target={target} onClose={onClose}>
       {(shown) => (
         <SheetContent eventId={eventId} target={shown} onClose={onClose} onDeleted={onDeleted} />
       )}

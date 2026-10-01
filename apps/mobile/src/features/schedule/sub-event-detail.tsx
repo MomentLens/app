@@ -1,7 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Platform, Pressable, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/button';
 import { Icon, type IconName } from '@/components/ui/icon';
@@ -10,6 +9,7 @@ import { formatSubEventTimes } from '@/features/events/format';
 import { FieldLabel } from '@/features/events/wizard-frame';
 import { directionsUrl, romanNumeral, schedulePermissions } from '@/features/schedule/schedule';
 import { ScheduleSheet, type ScheduleSheetTarget } from '@/features/schedule/schedule-sheet';
+import { useSheetBottomPadding } from '@/features/schedule/sheet-inset';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 
 interface ActionRowProps {
@@ -53,7 +53,7 @@ interface SubEventDetailProps {
 // build mobile). It reads the schedule the list already holds.
 export function SubEventDetail({ eventId, subEventId }: SubEventDetailProps) {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const bottom = useSheetBottomPadding();
   const event = useEvent(eventId);
   const schedule = useSubEvents(eventId);
   const [editing, setEditing] = useState<ScheduleSheetTarget | null>(null);
@@ -160,7 +160,7 @@ export function SubEventDetail({ eventId, subEventId }: SubEventDetailProps) {
   }
 
   return (
-    <View className="gap-5 bg-surface px-5 pt-4" style={{ paddingBottom: insets.bottom + 24 }}>
+    <View className="gap-5 bg-surface px-5 pt-4" style={{ paddingBottom: bottom }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Close"

@@ -19,7 +19,6 @@ import { Icon } from '@/components/ui/icon';
 import { useEvent } from '@/features/event-shell/use-event';
 import { formatDay, formatEventDates } from '@/features/events/format';
 import { LiveCard } from '@/features/schedule/live-card';
-import { DelaySheet } from '@/features/schedule/delay-sheet';
 import { nextStatusChange, scheduleDays, schedulePermissions } from '@/features/schedule/schedule';
 import { ScheduleRow } from '@/features/schedule/schedule-row';
 import {
@@ -50,7 +49,6 @@ export function ScheduleScreen({ eventId }: { eventId: string }) {
   );
   const can = event.data ? schedulePermissions(event.data.event.role) : NO_PERMISSIONS;
   const [sheet, setSheet] = useState<ScheduleSheetTarget | null>(null);
-  const [delaying, setDelaying] = useState<string | null>(null);
 
   const days = useMemo(() => (subEvents ? scheduleDays(subEvents) : []), [subEvents]);
   const live = subEvents ? currentSubEvent(subEvents, now) : null;
@@ -66,6 +64,13 @@ export function ScheduleScreen({ eventId }: { eventId: string }) {
   function open(subEventId: string) {
     router.push({
       pathname: '/event/[id]/schedule/[subEventId]',
+      params: { id: eventId, subEventId },
+    });
+  }
+
+  function delay(subEventId: string) {
+    router.push({
+      pathname: '/event/[id]/schedule/delay/[subEventId]',
       params: { id: eventId, subEventId },
     });
   }
@@ -171,7 +176,7 @@ export function ScheduleScreen({ eventId }: { eventId: string }) {
                       status={subEventStatus(subEvent, now)}
                       first={i === 0}
                       onOpen={() => open(subEvent.id)}
-                      onDelay={can.edit ? () => setDelaying(subEvent.id) : undefined}
+                      onDelay={can.edit ? () => delay(subEvent.id) : undefined}
                     />
                   ))}
                 </View>
@@ -182,15 +187,7 @@ export function ScheduleScreen({ eventId }: { eventId: string }) {
       </ScrollView>
 
       {can.edit ? (
-        <>
-          <ScheduleSheet eventId={eventId} target={sheet} onClose={() => setSheet(null)} />
-          <DelaySheet
-            eventId={eventId}
-            subEventId={delaying}
-            now={now}
-            onClose={() => setDelaying(null)}
-          />
-        </>
+        <ScheduleSheet eventId={eventId} target={sheet} onClose={() => setSheet(null)} />
       ) : null}
     </View>
   );

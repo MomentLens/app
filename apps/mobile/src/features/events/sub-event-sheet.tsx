@@ -26,7 +26,7 @@ interface SubEventSheetProps {
 // already added. Saving writes to the draft only; nothing reaches the API until step 3.
 export function SubEventSheet({ target, onClose }: SubEventSheetProps) {
   return (
-    <Sheet target={target} onClose={onClose} full>
+    <Sheet target={target} onClose={onClose}>
       {(shown) => <SheetContent target={shown} onClose={onClose} />}
     </Sheet>
   );
