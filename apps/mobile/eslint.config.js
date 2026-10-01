@@ -7,15 +7,14 @@
 // eslint-config-prettier come from the workspace root, shared with apps/api
 // and packages/shared-types.
 //
-// The custom rules below aren't generic TS hygiene — they encode specific
-// rules from the root CLAUDE.md and Engineering Handbook §16 that are easy
-// for a person (or an agent) to reach past out of habit under deadline
-// pressure:
+// The custom rules below aren't generic TS hygiene. They encode rules from
+// apps/mobile/AGENTS.md and Engineering Handbook §16 that are easy for a
+// person (or an agent) to reach past out of habit under deadline pressure:
 //   - FlatList/SectionList are banned. "The album grid must use FlashList
 //     v2, never FlatList" — an album can hit the 2,000-photo cap in spec
 //     §4.17, and FlatList's virtualization isn't close at that scale.
 //   - @react-native-async-storage/async-storage is banned outright.
-//     CLAUDE.md's "Model traps" section: "No AsyncStorage patterns." This
+//     apps/mobile/AGENTS.md, "Local rules": "No AsyncStorage patterns." This
 //     stack uses expo-sqlite for structured data and react-native-mmkv for
 //     key-value state.
 //   - The RN-core Animated API is discouraged (warn, not error) in favor of
@@ -30,7 +29,7 @@ const RESTRICTED_IMPORT_MESSAGES = {
   flatList:
     "Use @shopify/flash-list (FlashList v2) instead — Handbook §16. FlatList's virtualization does not hold up at the 2,000-photo album cap (spec §4.17).",
   asyncStorage:
-    'No AsyncStorage patterns in this stack (CLAUDE.md, "Model traps"). Use expo-sqlite for structured/queued data or react-native-mmkv for key-value state.',
+    'No AsyncStorage patterns in this stack (apps/mobile/AGENTS.md, "Local rules"). Use expo-sqlite for structured/queued data or react-native-mmkv for key-value state.',
 };
 
 module.exports = defineConfig([
@@ -77,7 +76,7 @@ module.exports = defineConfig([
     // only. Any rule from it in a block that also matches .js files crashes ESLint.
     files: ['**/*.{ts,tsx}'],
     rules: {
-      // CLAUDE.md: "Correctness and efficiency come first... do not drop
+      // Root AGENTS.md: "Correctness and efficiency come first... do not drop
       // error handling or an edge case to shorten a diff." A stray `any`
       // is exactly that kind of shortcut, so flag it rather than forbid it.
       '@typescript-eslint/no-explicit-any': 'warn',

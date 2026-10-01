@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/auth';
 
 // Uncaught errors and native crashes only: no tracing, no session replay. Screenshots, the view
 // hierarchy and replay would all send what is on screen to Sentry, and on this app that is photos of
-// faces, including people who turned on Do Not Publish. They stay off (apps/mobile/CLAUDE.md).
+// faces, including people who turned on Do Not Publish. They stay off (apps/mobile/AGENTS.md).
 // With EXPO_PUBLIC_SENTRY_DSN unset the SDK reports nothing. Both variables are read with dot
 // notation, the only form Expo inlines at build time.
 Sentry.init({

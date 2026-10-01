@@ -52,7 +52,7 @@ interface SubEventSheetProps {
 
 // The Add Sub-Event sheet on step 2 (spec §2.1.2, D-111): name, start and end, venue and radius.
 // The pencil reopens it on a sub-event already added. React Native content sits in RNHostView
-// inside @expo/ui's BottomSheet (apps/mobile/CLAUDE.md).
+// inside @expo/ui's BottomSheet (apps/mobile/AGENTS.md).
 export function SubEventSheet({ target, onClose }: SubEventSheetProps) {
   // What the sheet shows, which outlives `target` so the content stays put while the sheet slides
   // away instead of blanking first. Each opening gets its own number, so a second "Add" starts
