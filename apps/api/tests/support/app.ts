@@ -23,6 +23,7 @@ const noEvents: EventStore = {
   create: () => Promise.reject(new Error('no event store in this test')),
   listForMember: () => Promise.resolve([]),
   listJoinRequests: () => Promise.resolve([]),
+  findForCaller: () => Promise.resolve(null),
   findAccess: () => Promise.resolve(null),
   setCover: () => Promise.resolve(false),
 };

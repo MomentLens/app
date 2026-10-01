@@ -43,6 +43,12 @@ export interface EventAccess {
   membership: { role: MembershipRole; status: MembershipStatus } | null;
 }
 
+// One event read for one caller by get_my_event. `event` is null unless the caller's membership is
+// active and the event is not deleted, so the store never returns an event the caller may not see.
+export interface CallerEvent extends EventAccess {
+  event: EventRecord | null;
+}
+
 // Every read and write of event, venue, sub_event and membership that S-02 makes, and S-03's list
 // of join requests. It checks nothing about who asks; the functions below do.
 export interface EventStore {
@@ -51,6 +57,8 @@ export interface EventStore {
   listForMember(userId: string): Promise<EventRecord[]>;
   // Every one of the user's own pending memberships, soft-deleted events left out (D-115).
   listJoinRequests(userId: string): Promise<JoinRequest[]>;
+  // Null when no event has this id.
+  findForCaller(eventId: string, userId: string): Promise<CallerEvent | null>;
   // Null when no event has this id.
   findAccess(eventId: string, userId: string): Promise<EventAccess | null>;
   // False when the event does not exist or is soft-deleted, and then nothing was written.
@@ -104,6 +112,14 @@ const JoinRequestRow = z.object({
   role: InviteRole,
   requested_at: z.string().transform(toTimestamp),
   event: z.object({ id: z.uuid(), name: z.string(), deleted_at: z.null() }),
+});
+
+// The access half of a get_my_event row. role and status are null together, when the caller has
+// no membership.
+const CallerRow = z.object({
+  deleted: z.boolean(),
+  role: MembershipRole.nullable(),
+  status: MembershipStatus.nullable(),
 });
 
 const AccessRows = {
@@ -179,6 +195,39 @@ export function createEventStore(supabase: Supabase): EventStore {
         .array(EventRow)
         .parse(result.data as unknown)
         .map(toRecord);
+    },
+
+    async findForCaller(eventId, userId) {
+      // An rpc for the span, as in listForMember, and so the access and the event come from one
+      // snapshot: a membership changed between two reads cannot pair one answer with the other.
+      const result = await supabase.rpc('get_my_event', {
+        p_event_id: eventId,
+        p_user_id: userId,
+      });
+      if (result.error) {
+        throw result.error;
+      }
+      const rows = z.array(z.unknown()).parse(result.data as unknown);
+      if (rows.length > 1) {
+        throw new Error(`get_my_event returned ${rows.length} rows, expected at most 1`);
+      }
+      const [row] = rows;
+      if (row === undefined) {
+        return null;
+      }
+      const access = CallerRow.parse(row);
+      const membership =
+        access.role === null || access.status === null
+          ? null
+          : { role: access.role, status: access.status };
+      // EventRow refuses the null columns get_my_event sends anyone else, so a function that
+      // stopped nulling them for an active member would fail here rather than send a blank event.
+      const shown = !access.deleted && membership?.status === 'active';
+      return {
+        deleted: access.deleted,
+        membership,
+        event: shown ? toRecord(EventRow.parse(row)) : null,
+      };
     },
 
     async listJoinRequests(userId) {

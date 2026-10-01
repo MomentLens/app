@@ -27,6 +27,7 @@ import type {
 import type { AppDeps } from '../../src/app';
 import type { VerifyToken } from '../../src/middleware/auth';
 import type {
+  CallerEvent,
   CreateEventResult,
   EventAccess,
   EventRecord,
@@ -161,6 +162,20 @@ class FakeEvents implements EventStore {
         return [{ eventId: e.id, eventName: e.name, role: member.role, requestedAt: REQUESTED_AT }];
       }),
     );
+  }
+
+  // Hands back the event to every caller of an event that exists, deleted or not, where the real
+  // get_my_event returns it only to an active member of a live event. So each refusal of
+  // GET /events/{eventId} below is the service's own check holding, not the store's.
+  findForCaller(eventId: string, userId: string): Promise<CallerEvent | null> {
+    if (this.failWith) return Promise.reject(this.failWith);
+    const event = this.events.get(eventId.toLowerCase());
+    if (event === undefined) return Promise.resolve(null);
+    return Promise.resolve({
+      deleted: event.deleted,
+      membership: event.members.get(userId) ?? null,
+      event: this.record(event, userId),
+    });
   }
 
   findAccess(eventId: string, userId: string): Promise<EventAccess | null> {
