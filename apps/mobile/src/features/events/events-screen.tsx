@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Fab } from '@/components/ui/fab';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
+import { eventHref } from '@/features/event-shell/tabs';
 import { EventCard } from '@/features/events/event-card';
 import { groupByTiming } from '@/features/events/list';
 import { showEventsTab, useEventsTab } from '@/features/events/tab-store';
@@ -167,9 +168,7 @@ export function EventsScreen() {
                   <EventCard
                     key={event.id}
                     event={event}
-                    onPress={() =>
-                      router.push({ pathname: '/event/[id]', params: { id: event.id } })
-                    }
+                    onPress={() => router.push(eventHref(event.id, event.role))}
                   />
                 ))
               )}
