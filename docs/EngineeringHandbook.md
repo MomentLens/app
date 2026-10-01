@@ -726,9 +726,9 @@ The two-tier navigation model is the most architecturally significant UI piece i
 
 **Native tabs cannot add or remove a tab once mounted, and cannot measure their own bar.** The Event layout keys its tab bar on the role, so a role change (D-102) remounts it with the new set. A route the role lacks, such as `home` reached by a Photographer through a link, redirects to the role's landing tab. A screen that floats a button over the bar, as My Media does with the camera, clears it with `BottomTabInset` from `lib/platform.ts`.
 
-**The event query survives a restart.** TanStack Query's persister keeps the queries marked to persist in MMKV, and a logout or an ended session clears them, so a guest who reopens the app with no signal still reaches My Media and the camera (spec §4.14, D-118).
+**The event query and the Events list survive a restart.** TanStack Query's persister, `@tanstack/query-async-storage-persister`, keeps the queries marked to persist in MMKV, and a logout or an ended session clears them, so a guest who reopens the app with no signal can still open the event from the Events list and reach My Media and the camera (spec §4.14, D-118, D-119).
 
-**Persistent Event header.** A custom header component in the Event layout, not Expo Router's default stack header: event cover thumbnail, name, a "‹ Events" back affordance, and the user's avatar, which S-29 adds (spec §2.5.9). It stays above the tabs the whole time.
+**Persistent Event header.** A custom header component in the Event layout, not Expo Router's default stack header: a "‹ Events" back affordance, the event's name, and the user's avatar, which S-29 adds (spec §2.5.9). No cover (D-119). It stays above the tabs the whole time.
 
 **Camera FAB.** Not a tab. A positioned `Pressable` inside the My Media screen that launches a full-screen modal route. Its visibility is a derived boolean from the schedule data: is any sub-event currently In Progress, per spec §4.3's rule. A sub-event is In Progress from its start to its end (D-88), so between sub-events the FAB is hidden; overlapping ones tag a capture to the most recently started.
 
