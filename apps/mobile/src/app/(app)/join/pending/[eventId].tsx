@@ -1,3 +1,4 @@
+import type { MembershipRole } from '@momentlens/shared-types';
 import { useMutation } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
@@ -8,6 +9,7 @@ import { AppHeader } from '@/components/ui/app-header';
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
+import { eventHref } from '@/features/event-shell/tabs';
 import { ROLE_LABEL } from '@/features/events/event-card';
 import { EVENTS_QUERY_KEY, forgetJoinRequest, useEvents } from '@/features/events/use-events';
 import { RolePill } from '@/features/join/role-pill';
@@ -27,7 +29,8 @@ export default function PendingApprovalScreen() {
   const eventId = params.eventId;
   const events = useEvents({ refetchInterval: POLL_MS });
   const request = events.data?.joinRequests.find((candidate) => candidate.eventId === eventId);
-  const approved = events.data?.events.some((event) => event.id === eventId) ?? false;
+  const approvedEvent = events.data?.events.find((event) => event.id === eventId);
+  const approved = approvedEvent !== undefined;
   // Only an answer fetched since this screen opened can say the request is gone. The list cached
   // before a join does not have it yet.
   const gone =
@@ -51,17 +54,17 @@ export default function PendingApprovalScreen() {
     router.dismissTo('/');
   }
 
-  function toEvent() {
+  function toEvent(role: MembershipRole) {
     if (leaving.current) {
       return;
     }
     leaving.current = true;
-    router.replace({ pathname: '/event/[id]', params: { id: eventId } });
+    router.replace(eventHref(eventId, role));
   }
 
   useEffect(() => {
-    if (approved) {
-      toEvent();
+    if (approvedEvent) {
+      toEvent(approvedEvent.role);
     } else if (gone) {
       toEvents();
     }
@@ -73,7 +76,7 @@ export default function PendingApprovalScreen() {
       // An approve that got there first leaves the member active, and they go in (arch:membership).
       if (membership?.status === 'active') {
         void queryClient.invalidateQueries({ queryKey: EVENTS_QUERY_KEY });
-        toEvent();
+        toEvent(membership.role);
         return;
       }
       forgetJoinRequest(eventId);

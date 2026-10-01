@@ -2,6 +2,7 @@ import type { InviteLookup, ResolveInviteResponse } from '@momentlens/shared-typ
 import { useRouter } from 'expo-router';
 import { useCallback } from 'react';
 
+import { eventHref } from '@/features/event-shell/tabs';
 import { EVENTS_QUERY_KEY } from '@/features/events/use-events';
 import { clearPendingInvite, savePendingInvite } from '@/features/join/pending-invite';
 import { joinDestination } from '@/features/join/route';
@@ -49,7 +50,10 @@ export function useFollowInvite() {
       void queryClient.invalidateQueries({ queryKey: EVENTS_QUERY_KEY });
       switch (destination) {
         case 'event':
-          router.dismissTo({ pathname: '/event/[id]', params: { id: event.id } });
+          // An active member always has a membership, which joinDestination read.
+          if (answer.membership !== null) {
+            router.dismissTo(eventHref(event.id, answer.membership.role));
+          }
           return;
         case 'pending':
           router.dismissTo({

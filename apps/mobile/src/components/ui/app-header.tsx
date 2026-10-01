@@ -12,7 +12,7 @@ export const HEADER_AVATAR_SIZE = Platform.OS === 'ios' ? 36 : 32;
 
 // The bar's height, and the square each button in it takes. Tailwind finds these classes here.
 export const HEADER_BAR = 'ios:h-11 android:h-16';
-const SLOT = 'ios:h-11 ios:w-11 android:h-12 android:w-12';
+export const HEADER_SLOT = 'ios:h-11 ios:w-11 android:h-12 android:w-12';
 
 export interface HeaderAction {
   icon: IconName;
@@ -36,7 +36,7 @@ function Action({ icon, label, onPress, disabled = false }: HeaderAction) {
       disabled={disabled || onPress === undefined}
       hitSlop={8}
       onPress={onPress}
-      className={`${SLOT} justify-center ${disabled ? 'opacity-40' : ''}`}>
+      className={`${HEADER_SLOT} justify-center ${disabled ? 'opacity-40' : ''}`}>
       <Icon name={icon} size={HEADER_ICON_SIZE} className="text-textPrimary" />
     </Pressable>
   );
@@ -64,9 +64,9 @@ export function Wordmark() {
 export function AppHeader({ left, right }: AppHeaderProps) {
   return (
     <View className={`flex-row items-center justify-between ${HEADER_BAR}`}>
-      {left ? <Action {...left} /> : <View className={SLOT} />}
+      {left ? <Action {...left} /> : <View className={HEADER_SLOT} />}
       <Wordmark />
-      <View className={`${SLOT} items-end justify-center`}>{right}</View>
+      <View className={`${HEADER_SLOT} items-end justify-center`}>{right}</View>
     </View>
   );
 }

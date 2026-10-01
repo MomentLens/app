@@ -11,6 +11,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { eventHref } from '@/features/event-shell/tabs';
 import { ROLE_LABEL } from '@/features/events/event-card';
 import { formatEventDates } from '@/features/events/format';
 import { EVENTS_QUERY_KEY, rememberJoinRequest } from '@/features/events/use-events';
@@ -97,7 +98,7 @@ function JoinConfirmation({ invite }: { invite: PendingInvite }) {
       const { event, role } = answer;
       if (membership.status === 'active') {
         void queryClient.invalidateQueries({ queryKey: EVENTS_QUERY_KEY });
-        router.replace({ pathname: '/event/[id]', params: { id: event.id } });
+        router.replace(eventHref(event.id, membership.role));
         return;
       }
       rememberJoinRequest({
