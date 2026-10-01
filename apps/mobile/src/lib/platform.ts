@@ -10,3 +10,9 @@ export function tabBarHasActionSlot(os: string, version: string | number): boole
 // The Global shell puts Create Event in that slot, and falls back to a floating button everywhere
 // else: Android, where Material 3 has the FAB, and older iOS (D-112).
 export const CREATE_IN_TAB_BAR = tabBarHasActionSlot(Platform.OS, Platform.Version);
+
+// The native tab bar's height above the bottom safe area, which a button floating over a tab's
+// content clears, as the Events FAB and My Media's camera button do (hb §16.5). Native tabs cannot
+// measure their own bar, so it is the platform's: iOS's 49pt bar, rounded up, and Material 3's
+// 80dp navigation bar.
+export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
