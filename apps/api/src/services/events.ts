@@ -387,10 +387,14 @@ export async function getEvent(
   return { event: await toSummary(found.event, presignGet) };
 }
 
-// The check both cover endpoints make before anything else: the event exists and is not deleted,
-// the caller is an active member of it, and that member is its Admin (hb §5.3). A 403 on an event
-// is how the app learns its user was removed or blocked.
-async function requireAdmin(store: EventStore, eventId: string, userId: string): Promise<void> {
+// The check an endpoint on one event makes before anything else: the event exists and is not
+// deleted, and the caller is an active member of it (hb §5.3). A 403 on an event is how the app
+// learns its user was removed or blocked. Returns the caller's role.
+export async function requireMember(
+  store: EventStore,
+  eventId: string,
+  userId: string,
+): Promise<MembershipRole> {
   const access = await store.findAccess(eventId, userId);
   if (access === null || access.deleted) {
     throw new ApiError('not_found', 'No such event');
@@ -398,10 +402,23 @@ async function requireAdmin(store: EventStore, eventId: string, userId: string):
   if (access.membership?.status !== 'active') {
     throw new ApiError('not_member', 'Not an active member of this event');
   }
-  if (access.membership.role !== 'admin') {
-    throw new ApiError('wrong_role', "Only the event's Admin sets its cover");
+  return access.membership.role;
+}
+
+// requireMember, and then that member is the event's Admin. `refusal` is the 403 wrong_role
+// message, for logs.
+export async function requireAdmin(
+  store: EventStore,
+  eventId: string,
+  userId: string,
+  refusal: string,
+): Promise<void> {
+  if ((await requireMember(store, eventId, userId)) !== 'admin') {
+    throw new ApiError('wrong_role', refusal);
   }
 }
+
+const COVER_REFUSAL = "Only the event's Admin sets its cover";
 
 // POST /events/{eventId}/cover-upload. A presigned PUT for a new cover key. Nothing is written:
 // the cover changes only when PUT /events/{eventId}/cover finds the object.
@@ -411,7 +428,7 @@ export async function startCoverUpload(
   userId: string,
   eventId: string,
 ): Promise<CreateCoverUploadResponse> {
-  await requireAdmin(store, eventId, userId);
+  await requireAdmin(store, eventId, userId, COVER_REFUSAL);
   const uploadId = randomUUID();
   return {
     uploadId,
@@ -430,7 +447,7 @@ export async function setEventCover(
   eventId: string,
   uploadId: string,
 ): Promise<SetEventCoverResponse> {
-  await requireAdmin(store, eventId, userId);
+  await requireAdmin(store, eventId, userId, COVER_REFUSAL);
   const key = coverKey(eventId, uploadId);
   if (!(await objectExists(key))) {
     throw new ApiError('upload_missing', 'No cover has been uploaded for this uploadId');
