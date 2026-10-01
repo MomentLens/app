@@ -187,9 +187,9 @@ const plan = (slice) => {
     // Never expand a retracted decision into a brief. D-45 reaches S-21 through D-57,
     // the slice holding the image-serving authorization check.
     if (C[id].flags.includes('superseded')) next.push(id);
-    // A brief carries the rows of the slices it depends on. S-25's note names S-03, S-07
-    // and S-24 as places it touches, and printing those rows and their notes cost 235
-    // tokens of other slices' warnings.
+    // A brief carries the rows of the slices it depends on. A slice a note only names goes
+    // one hop out: S-25's note names S-03 as a place it touches, and printing S-03's row
+    // and notes would spend tokens on another slice's warnings.
     else if (C[id].flags.includes('row') && !slice.deps.includes(C[id].key)) next.push(id);
     else expand.push(id);
   }
