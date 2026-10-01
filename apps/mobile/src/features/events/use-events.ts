@@ -7,7 +7,7 @@ import type {
 import { useQuery } from '@tanstack/react-query';
 
 import { ApiError, listEvents } from '@/lib/api';
-import { queryClient } from '@/lib/query-client';
+import { PERSISTED_QUERY, queryClient } from '@/lib/query-client';
 
 export const EVENTS_QUERY_KEY = ['events'] as const;
 
@@ -17,7 +17,9 @@ interface UseEventsOptions {
 }
 
 // GET /events as server state (apps/mobile/CLAUDE.md). api.ts has already refreshed and retried
-// once by the time a 401 reaches here, so it is not retried again.
+// once by the time a 401 reaches here, so it is not retried again. It survives a restart like the
+// event does, because a cold start with no signal reaches an event only through this list (decided
+// at S-08's build mobile, D-118).
 export function useEvents({ refetchInterval }: UseEventsOptions = {}) {
   return useQuery({
     queryKey: EVENTS_QUERY_KEY,
@@ -25,6 +27,7 @@ export function useEvents({ refetchInterval }: UseEventsOptions = {}) {
     retry: (failureCount, error) =>
       !(error instanceof ApiError && error.status === 401) && failureCount < 1,
     refetchInterval,
+    ...PERSISTED_QUERY,
   });
 }
 

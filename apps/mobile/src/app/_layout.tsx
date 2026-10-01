@@ -6,7 +6,7 @@ import { Manrope_500Medium } from '@expo-google-fonts/manrope/500Medium';
 import { Manrope_600SemiBold } from '@expo-google-fonts/manrope/600SemiBold';
 import { Manrope_700Bold } from '@expo-google-fonts/manrope/700Bold';
 import * as Sentry from '@sentry/react-native';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -16,7 +16,7 @@ import { useColorScheme } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { startSessionSync } from '@/features/auth/session';
-import { queryClient } from '@/lib/query-client';
+import { persistOptions, queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
 
 // Uncaught errors and native crashes only: no tracing, no session replay. Screenshots, the view
@@ -71,8 +71,10 @@ function RootLayout() {
   // view sends the user to the first one open (Expo Router's protected routes). The rest are always
   // open: the recovery link and an invite link have to work in every state, and Manual Join Entry,
   // Join Error and Join Blocked are reached signed in and signed out alike (spec §2.4).
+  //
+  // The provider restores the queries saved for an offline start before any query fetches (D-118).
   return (
-    <QueryClientProvider client={queryClient}>
+    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         {/* Dark icons on the light palette and light on the dark one. Without it Android kept the
             template theme's white icons, which vanished on the cream background. */}
@@ -95,7 +97,7 @@ function RootLayout() {
           <Stack.Screen name="join-blocked" />
         </Stack>
       </ThemeProvider>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   );
 }
 
