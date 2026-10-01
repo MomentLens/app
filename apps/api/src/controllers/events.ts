@@ -4,6 +4,7 @@ import {
   CreateCoverUploadResponse,
   CreateEventRequest,
   CreateEventResponse,
+  GetEventResponse,
   ListEventsResponse,
   SetEventCoverRequest,
   SetEventCoverResponse,
@@ -12,7 +13,13 @@ import {
 import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { authenticatedUser } from '../middleware/auth';
 import { parseInput, PathId } from '../middleware/body';
-import { createEvent, listEvents, setEventCover, startCoverUpload } from '../services/events';
+import {
+  createEvent,
+  getEvent,
+  listEvents,
+  setEventCover,
+  startCoverUpload,
+} from '../services/events';
 import type { EventStore } from '../services/events';
 
 // Every response is parsed with its contract before sending, so a stored row the contract rejects
@@ -38,6 +45,16 @@ export function listEventsController(events: EventStore, presignGet: PresignGet)
     const { id } = authenticatedUser(req);
     const list = await listEvents(events, presignGet, id);
     res.set('Cache-Control', 'no-store').json(ListEventsResponse.parse(list));
+  };
+}
+
+// GET /events/{eventId}. One event for an active member of it, with the caller's role (D-118).
+export function getEventController(events: EventStore, presignGet: PresignGet) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const result = await getEvent(events, presignGet, id, eventId);
+    res.set('Cache-Control', 'no-store').json(GetEventResponse.parse(result));
   };
 }
 

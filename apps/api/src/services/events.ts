@@ -7,6 +7,7 @@ import type {
   CreateCoverUploadResponse,
   CreateEventRequest,
   EventSummary,
+  GetEventResponse,
   JoinRequest,
   ListEventsResponse,
   PresignedImage,
@@ -361,6 +362,29 @@ export async function listEvents(
     events: await Promise.all(records.map((record) => toSummary(record, presignGet))),
     joinRequests,
   };
+}
+
+// GET /events/{eventId}, the Event shell's one read of the caller's role (D-118). The checks run
+// before the cover is presigned, so a refused caller gets no URL (root invariant 3). A deleted event
+// is 404 to everyone, its Admin included. Any caller who is not active, pending included, is 403
+// not_member; the app finds a pending caller's request in GET /events (hb §5.3).
+export async function getEvent(
+  store: EventStore,
+  presignGet: PresignGet,
+  userId: string,
+  eventId: string,
+): Promise<GetEventResponse> {
+  const found = await store.findForCaller(eventId, userId);
+  if (found === null || found.deleted) {
+    throw new ApiError('not_found', 'No such event');
+  }
+  if (found.membership?.status !== 'active') {
+    throw new ApiError('not_member', 'Not an active member of this event');
+  }
+  if (found.event === null) {
+    throw new Error('The event store found an active member of a live event but no event');
+  }
+  return { event: await toSummary(found.event, presignGet) };
 }
 
 // The check both cover endpoints make before anything else: the event exists and is not deleted,

@@ -6,6 +6,7 @@ import { jsonBody } from '../middleware/body';
 export interface EventHandlers {
   create: RequestHandler;
   list: RequestHandler;
+  get: RequestHandler;
   createCoverUpload: RequestHandler;
   setCover: RequestHandler;
   cancelJoinRequest: RequestHandler;
@@ -17,6 +18,7 @@ export function eventsRouter(auth: RequestHandler, handlers: EventHandlers): Rou
   const router = Router();
   router.post('/events', auth, jsonBody, handlers.create);
   router.get('/events', auth, handlers.list);
+  router.get('/events/:eventId', auth, handlers.get);
   router.post('/events/:eventId/cover-upload', auth, handlers.createCoverUpload);
   router.put('/events/:eventId/cover', auth, jsonBody, handlers.setCover);
   router.delete('/events/:eventId/join-request', auth, handlers.cancelJoinRequest);
