@@ -3,6 +3,7 @@ import {
   CreateCoverUploadResponse,
   CreateEventResponse,
   ErrorResponse,
+  GetEventResponse,
   HealthResponse,
   JoinEventResponse,
   ListEventsResponse,
@@ -259,6 +260,17 @@ export async function listEvents(signal?: AbortSignal): Promise<ListEventsRespon
     throw await errorFrom('GET /events', response);
   }
   return parseBody('GET /events', response, ListEventsResponse);
+}
+
+// One event and the caller's role in it, for the Event shell (D-118). A caller who is not an active
+// member gets 403 not_member, and a deleted or unknown event 404 not_found.
+export async function getEvent(eventId: string, signal?: AbortSignal): Promise<GetEventResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}', response);
+  }
+  return parseBody('GET /events/{eventId}', response, GetEventResponse);
 }
 
 // A presigned PUT for a new cover, for the event's Admin only. The API builds the key; the app
