@@ -49,6 +49,25 @@ export function formatSubEventTimes(startsAt: Date, endsAt: Date): string {
   return `${date(startsAt, WEEKDAY_DAY)} · ${time(startsAt)} – ${date(endsAt, WEEKDAY_DAY)} · ${time(endsAt)}`;
 }
 
+// A time alone, as the Schedule's rows show a start: "5:30 PM".
+export function formatTime(value: Date): string {
+  return time(value);
+}
+
+// A day heading in the Schedule: "Sat, Oct 3".
+export function formatDay(value: Date): string {
+  return date(value, WEEKDAY_DAY);
+}
+
+// A sub-event's times with no date when it ends on the day it starts: "5:30 PM – 7:00 PM", or
+// "11:00 PM – Sun, Oct 4 · 1:00 AM" past midnight.
+export function formatTimeRange(startsAt: Date, endsAt: Date): string {
+  if (dayKey(startsAt) === dayKey(lastDay(endsAt))) {
+    return `${time(startsAt)} – ${time(endsAt)}`;
+  }
+  return `${time(startsAt)} – ${date(endsAt, WEEKDAY_DAY)} · ${time(endsAt)}`;
+}
+
 // A verification radius: metres below a kilometre, kilometres from there. The slider moves in
 // 10 m steps, so a kilometre value keeps two decimals rather than rounding a step away.
 export function formatRadius(metres: number): string {
