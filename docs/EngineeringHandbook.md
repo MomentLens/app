@@ -170,7 +170,7 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 
 ## 4. Frontend architecture
 
-**Navigation.** Expo Router, file-based. `app/event/[id]/album.tsx` is the route `/event/:id/album`. This makes "spec section to actual file" mechanical rather than a design exercise.
+**Navigation.** Expo Router, file-based. `src/app/(app)/event/[id]/home.tsx` is the route `/event/:id/home`. This makes "spec section to actual file" mechanical rather than a design exercise.
 
 **State: two tools for two kinds of state, and do not blur them.**
 - *Server state* (the event, the album, attendees) goes to **TanStack Query**. Loading and error states, caching, retries, background refetch, all free. Do not copy server data into Zustand "just in case." That is the classic mistake that reintroduces exactly the synchronization bugs TanStack Query exists to prevent.
@@ -228,7 +228,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 - **Paths** are plural nouns under the resource that owns them: `GET /events/{eventId}/media`, `POST /events/{eventId}/media/preflight`, `POST /media/{mediaId}/complete`. Ids are uuids in the path, never in a query string.
 - **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
 - **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
-- **A 403 on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1). A join answers a blocked person 403 `blocked` instead, and the app shows Join Blocked, never Access Removed (D-115).
+- **A 403 `not_member` on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1). A 403 `wrong_role` means the role changed (D-102), so the app refetches the event and the Event shell redraws its tabs (D-118). `not_uploader` fails only the action that drew it. A join answers a blocked person 403 `blocked` instead, and the app shows Join Blocked, never Access Removed (D-115).
 - A failure no other row covers is a 500 with `internal_error`, which Sentry reports. Its `message` names no cause, because the cause goes to Sentry and the logs.
 
 | Status | Means | `code` values so far |
@@ -722,9 +722,13 @@ The way this gets violated on a real team: someone adds "just a quick" resize or
 
 The two-tier navigation model is the most architecturally significant UI piece in the app.
 
-**Global shell versus Event shell.** A nested layout in Expo Router: the root `_layout.tsx` defines the Global shell tabs (Events, Scan, Profile), and opening an event pushes into `event/[id]/_layout.tsx` which defines its own tab set. The Event shell's tabs differ by role (Guest: Home, My Media, Schedule; Admin adds Manage; Photographer gets My Media and Schedule only). The role is server state, so it comes from the TanStack Query that fetches the user's membership for this event, and the layout renders the tab set from it (§4). Not three separate layout files, and not a copy of the role in Zustand.
+**Global shell versus Event shell.** Two sibling layouts in Expo Router. `src/app/(app)/(tabs)/_layout.tsx` defines the Global shell tabs (Events and Profile, with Scan from S-16). `src/app/(app)/_layout.tsx` is a Stack holding `(tabs)` and `event/[id]`, so opening an event covers the Global tab bar with `event/[id]/_layout.tsx` and its own tab set, rather than nesting a second bar inside the first. Both are Expo Router's native tabs (D-112, D-118). The Event shell's tabs differ by role (Guest: Home, My Media, Schedule; Admin adds Manage; Photographer gets My Media and Schedule only), and one function in `features/event-shell/` maps a role to its tabs and its landing tab. The role is server state, so it comes from `GET /events/{eventId}` through one TanStack Query, `useEvent(id)`, that every tab reads (§4, D-118). Not three separate layout files, and not a copy of the role in Zustand.
 
-**Persistent Event header.** A custom header component in the Event layout, not Expo Router's default stack header: event cover thumbnail, name, and a "‹ Events" back affordance, visible above the tabs the whole time.
+**Native tabs cannot add or remove a tab once mounted, and cannot measure their own bar.** The Event layout keys its tab bar on the role, so a role change (D-102) remounts it with the new set. A route the role lacks, such as `home` reached by a Photographer through a link, redirects to the role's landing tab. A screen that floats a button over the bar, as My Media does with the camera, clears it with `BottomTabInset` from `lib/platform.ts`.
+
+**The event query survives a restart.** TanStack Query's persister keeps the queries marked to persist in MMKV, and a logout or an ended session clears them, so a guest who reopens the app with no signal still reaches My Media and the camera (spec §4.14, D-118).
+
+**Persistent Event header.** A custom header component in the Event layout, not Expo Router's default stack header: event cover thumbnail, name, a "‹ Events" back affordance, and the user's avatar, which S-29 adds (spec §2.5.9). It stays above the tabs the whole time.
 
 **Camera FAB.** Not a tab. A positioned `Pressable` inside the My Media screen that launches a full-screen modal route. Its visibility is a derived boolean from the schedule data: is any sub-event currently In Progress, per spec §4.3's rule. A sub-event is In Progress from its start to its end (D-88), so between sub-events the FAB is hidden; overlapping ones tag a capture to the most recently started.
 
