@@ -349,7 +349,7 @@ Home and Album are one screen, not two, and not per-sub-event folders. Every sub
 
 #### 2.5.5 Schedule
 
-One list component reused for every role, permission-gated rather than forked: ordered sub-events with an auto-computed status badge (Upcoming / In Progress / Completed). Admin-only inline "Delay" action per row. Tap a row → Sub-event Detail (name, date/time, venue, "Get Directions," "View photos from this session" → Home, pre-filtered to that sub-event's chip, shown to every role but the Photographer, who has no Home).
+One list component reused for every role, permission-gated rather than forked: ordered sub-events with an auto-computed status badge (Upcoming / In Progress / Completed). Admin-only inline "Delay" action per row, and an Admin-only "+" in the header that adds a sub-event. Tap a row → Sub-event Detail (name, date/time, venue, "Get Directions," "View photos from this session" → Home, pre-filtered to that sub-event's chip, shown to every role but the Photographer, who has no Home). The Admin edits or deletes a sub-event from its Detail screen, and Delete is disabled while it is the event's only one (D-121).
 
 #### 2.5.6 Single photo view
 
@@ -484,7 +484,7 @@ A lightweight substitute for a full history: event cards on the global Events li
 - Album state (open / closed) is always a manual Admin action.
 - Two role-specific invite links per event (Guest, Photographer), each a URL plus its own 6-character shortcode. No QR image. Both are revocable and regenerable.
 - One Venue Check-In QR per venue. Sub-events at the same venue share it (§4.5).
-- Admin can delay a sub-event by any amount of time.
+- Admin can delay a sub-event by any amount of time. Before it starts, a delay moves its start and its end. Once it has started, a delay moves its end only (D-121).
 - Admin can delete a sub-event only while it has no photos, and never the event's last one. Editing a sub-event's name, venue or times moves no photo and no verification. Other phones see an edit or a Delay the next time they fetch the event, on foreground or reconnect (D-100).
 - Delete event (soft delete, §4.21), archive event.
 

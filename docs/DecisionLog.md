@@ -733,6 +733,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Nothing said what deleting or moving a sub-event does to the photos in it, and a guess either deletes photos or leaves them with no section.
 **Rejected.** Moving a deleted sub-event's photos into another one, which mislabels them without telling anyone. Realtime on `sub_event`, which needs a third RLS policy (D-73).
 **Cost.** A sub-event that already has photos can only be renamed or moved, not removed.
+**Amended (see D-121).** Other phones learn of an edit or a Delay from `GET /events/{eventId}/sub-events`, which the app refetches on foreground and on reconnect. The photo check on delete arrives with S-12's `media` table.
 
 ### D-101: The invite link is the `momentlens://` scheme, for now
 **Decision.** An invite link is `momentlens://invite/{token}`. It opens the app when the app is installed and the chat app hands the link to the system. Where it does not, the person types the 6-character shortcode (spec §4.1). https App Links and Universal Links wait.
@@ -775,6 +776,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** `packages/shared-types` holds one function besides its schemas.
 **Amended (see D-109).** S-01 adds `@aws-sdk/s3-request-presigner`, with `@aws-sdk/client-s3`, for the avatar function, so S-12 finds both installed.
 **Amended (see D-110).** `packages/shared-types` holds a second function, the one that sorts an event into Active, Upcoming or Past.
+**Amended (see D-121).** The status function is two, `subEventStatus(subEvent, at)` and `currentSubEvent(subEvents, at)`. Both take an instant, so the API can ask at a reading's time.
 
 ### D-106: The RLS negative test runs in CI against the dev project
 **Decision.** Keeps D-73's access model and changes where its test runs. A workflow runs `apps/api`'s `test:rls` against the dev project on every pull request that touches `supabase/` or `apps/api/`, with the dev project's URL, publishable key and secret key as repository secrets. The stable project's secret key never reaches GitHub.
@@ -987,6 +989,27 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Each stage's log in that stage's own PR instead of the issue, for every developer, which leaves no single record in the top PR and rewrites the done stage. Each log in its own PR and the top PR both, which puts every log in two places.
 **Cost.** A code owner's session spends a few hundred tokens a stage writing the log, and the code owner's top PR gets longer.
 **Reopen if.** Code owners' logs go unread in review, or a top PR's logs pass GitHub's 65,536-character cap on a description.
+
+### D-121: Sub-event writes, Delay and the schedule read, from S-04's read-back
+**Decision.** Amends D-100 and D-105. Ukasha ruled on each of these on 2026-10-02.
+- A Delay is a positive amount. Before a sub-event starts it moves the start and the end together. Once the sub-event has started it moves the end only. The app sends the new times through the edit endpoint, so a retried Delay changes nothing.
+- When an edit or a delete leaves a venue with no sub-event, the same transaction deletes the venue, so every venue stays in use (D-111). A venue's name and pin are never edited in place. The Admin moves its sub-events to another venue or a new one.
+- The Schedule reads `GET /events/{eventId}/sub-events`, a query of its own that the app persists as it does the event (D-118). It returns each sub-event's radius and its venue's id, name, lat and lng, never `qr_secret`.
+- Three SQL functions write sub-events, `add_sub_event`, `update_sub_event` and `delete_sub_event`. Each locks the event row `FOR NO KEY UPDATE` before it counts sub-events or computes the span (D-95). An add carries a `requestId`, as `POST /events` does.
+- Four error codes, in hb §5.3: 422 `too_many_sub_events`, 422 `event_too_long`, 409 `last_sub_event`, and 409 `sub_event_has_media`, which the API sends from S-12 on.
+- `packages/shared-types` exports `subEventStatus(subEvent, at)` and `currentSubEvent(subEvents, at)`. `currentSubEvent` picks the most recently started of the sub-events In Progress at `at`, and on a tie the one that ends first, then the lower id. The API passes one venue's sub-events for a QR scan (D-85).
+- `media` arrives with S-12, after S-04. S-12 gives `media.sub_event_id` no `ON DELETE` action and replaces `delete_sub_event` with one that refuses a sub-event with any `media` row. S-15 gives `venue_verification.sub_event_id` `ON DELETE CASCADE`.
+- Routine calls:
+  - The Admin's writes need a connection and are never queued.
+  - An add or an edit may set a start in the past, as a create may (D-110).
+  - Edits are allowed on an archived event.
+  - Two of the Admin's phones editing one sub-event resolve as last write wins.
+  - The Schedule header holds Add, each row holds Delay, and Sub-event Detail holds Edit and Delete. Delete is disabled while only one sub-event is left.
+  - "View photos from this session" passes the sub-event's id to Home, and S-13 reads it.
+**Why.** S-04's read-back found no endpoint that returns sub-events, no writer documented besides `create_event`, no error codes for refusals that depend on rows, and a Delay that sent a running sub-event back to Upcoming. Without the lock, two phones deleting an event's last two sub-events leave it with none, and `list_my_events` then returns a null span that breaks `GET /events` for every member.
+**Rejected.** A Delay that always moves both times, which hides the capture FAB in the middle of a sub-event and leaves offline readings from its first part matching nothing (D-85). Keeping a venue no sub-event uses, which breaks the cap of 15 venues and leaves S-16 printing a QR for nothing. Sub-events inside `GET /events/{eventId}`, which replaces `get_my_event`. 400 `invalid_request` for the new refusals, which hides a state conflict behind a validation error.
+**Cost.** One Delay button does two things, so its confirm shows the new times. Moving a venue's sub-events away and back makes a new QR. Fixing a pin that three sub-events share takes three edits. A write invalidates two queries, and the span and the schedule can disagree for one fetch. A Guest verified for a deleted sub-event loses that row, which unlocked no photo. A photo queued offline for a sub-event deleted since is S-11's and S-12's to handle, and no doc says how yet.
+**Reopen if.** An Admin needs to move a running sub-event's start, or a tester reports a printed QR that stopped working.
 
 ## Open items that are not decisions yet
 

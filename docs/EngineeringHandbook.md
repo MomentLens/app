@@ -238,8 +238,8 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 401 | No session, or it expired | `no_session` |
 | 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |
-| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing` |
-| 422 | A limit reached | `event_full`, `too_many_references` |
+| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media` |
+| 422 | A limit reached | `event_full`, `too_many_references`, `too_many_sub_events`, `event_too_long` |
 | 500 | Anything else, including a dependency the API could not reach | `internal_error` |
 | 503 | A dependency is down | `GET /health` only, with its own body |
 

@@ -105,7 +105,8 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - `event_id`, `name`, `lat`, `lng`, `qr_secret` (32 random bytes)
 - `qr_secret` is `bytea`, filled by `gen_random_bytes(32)` and held at 32 bytes by a check. No S-02 endpoint returns it (D-110). `lat` and `lng` are checked to -90..90 and -180..180
 - `(id, event_id)` is unique so `sub_event` can point at it, which keeps a sub-event's venue inside the sub-event's own event. `venue_event_id_idx` indexes `event_id`
-- A sub-event's venue is one an earlier sub-event added in the wizard, or a new one. Every venue is used by at least one sub-event, so an event has at most 15 (D-110, D-111)
+- A sub-event's venue is one an earlier sub-event added in the wizard, or a new one. Every venue is used by at least one sub-event, so an event has at most 15 (D-110, D-111). When a sub-event edit or delete leaves a venue with no sub-event, the same function deletes that venue, and its printed QR stops working (D-121)
+- A venue's name and pin are never edited in place. To fix one, the Admin moves its sub-events to another venue or a new one (D-121)
 - No radius. Each sub-event at the venue carries its own, so two at one hall may differ (D-111)
 - One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3). The payload carries the venue and its secret; a scan verifies the sub-event at this venue that was In Progress at the scan time (D-85)
 
@@ -114,9 +115,14 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - `event_id`, `name`, `description`, `starts_at`, `ends_at`, `venue_id`
 - `sub_event_time_check` requires `ends_at` after `starts_at`. The foreign key is `(venue_id, event_id)` to `venue (id, event_id)`, so a venue's QR never verifies a sub-event of another event. The key has no `ON DELETE` action, so a venue still used by a sub-event cannot be deleted. `sub_event_event_id_idx` and `sub_event_venue_id_idx` index both columns
 - `verification_radius_m` (50 to 2000, default 200, §4.3, D-111), an integer. The GPS check for this sub-event compares against it (§4.5)
-- At most 15 per event (§4.3). A delay moves `starts_at` and `ends_at`
-- Status is computed on read and never stored: In Progress from `starts_at` until `ends_at` (§4.3, D-88). Inside the event there can be times when none is In Progress. One pure function in `packages/shared-types` computes it for the app and the API (D-105)
-- Deleted only while it has no photos, and never the event's last one. An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the event; there is no Realtime on this table (D-100)
+- At most 15 per event (§4.3)
+- A delay is a positive amount. Before the sub-event starts it moves `starts_at` and `ends_at` together. Once the sub-event has started it moves `ends_at` only, so a running sub-event never goes back to Upcoming and a reading from its first part still matches it (D-85, D-121). The app sends a delay as the new times through the edit endpoint, so a retry changes nothing
+- `create_request_id`, the uuid the app sends with an add, unique across all sub-events. A repeat inserts nothing and returns the schedule, as a repeated `event.create_request_id` returns the event (D-110, D-121)
+- Status is computed on read and never stored: In Progress from `starts_at` until `ends_at` (§4.3, D-88). Inside the event there can be times when none is In Progress. `subEventStatus(subEvent, at)` in `packages/shared-types` computes it for the app and the API. `currentSubEvent(subEvents, at)` picks the one In Progress at an instant, which is the most recently started, and on a tie the one that ends first, then the lower id. The capture button passes every sub-event of the event, and the API passes one venue's sub-events for a QR scan and asks at the reading's time (D-85, D-89, D-105, D-121)
+- Read through `GET /events/{eventId}/sub-events`, which every active role may call. It returns each sub-event with its own radius and its venue's id, name, lat and lng, never `qr_secret`. The app persists it and refetches it on foreground and reconnect, as it does the event (D-118, D-121)
+- Three SQL functions called with `rpc` write it: `add_sub_event`, `update_sub_event` and `delete_sub_event` (D-95). Each locks the event row `FOR NO KEY UPDATE`, as `join_event` does, before it counts sub-events or computes the span, so two of the Admin's phones cannot together pass the cap of 15 or the 336-hour span, or delete the last sub-event. Each returns the whole schedule (D-121)
+- The API answers 422 `too_many_sub_events` for a 16th, 422 `event_too_long` for an add, edit or delay that takes the span past 336 hours, 409 `last_sub_event` for a delete of the last one, and 409 `sub_event_has_media` for a delete of one with photos (hb §5.3, D-121)
+- Deleted only while it has no photos, and never the event's last one. `media` arrives with S-12, so `delete_sub_event` checks only the last-one rule until S-12 replaces it with one that also refuses a sub-event with any `media` row (D-121). An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the schedule; there is no Realtime on this table (D-100)
 
 ### `membership`
 Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`. `requested_at` comes from `supabase/migrations/20260929184331_invite_and_join.sql`.
@@ -155,9 +161,11 @@ Migration `supabase/migrations/20260929184331_invite_and_join.sql`.
 The spec's `VenueVerification`, renamed to the naming convention.
 - `user_id`, `sub_event_id`, unique together; `method` (`gps`, `qr`), `verified_at`
 - Written only by the API, after it re-validates the GPS reading or QR payload (D-16, D-17)
+- `sub_event_id` references `sub_event` with `ON DELETE CASCADE`. Only a sub-event with no photos can be deleted, so its verifications unlocked nothing (D-121)
 
 ### `media`
 - `event_id`, copied from the sub-event at pre-flight and never taken from the request; `sub_event_id`, `uploader_user_id`, `uploader_role_at_upload` (display only, D-13)
+- `sub_event_id` references `sub_event` with no `ON DELETE` action, so a sub-event with any `media` row, unfinished or soft-deleted included, cannot be deleted. S-12 replaces `delete_sub_event` with one that checks for such a row first and answers 409 `sub_event_has_media` (D-100, D-121)
 - `captured_at`, the photo's EXIF capture time sent with pre-flight, or the pre-flight time when it has none (D-98)
 - `content_hash`, SHA-256, unique per event among rows with `uploaded_at` set, soft-deleted rows included (D-53, D-96)
 - `size_bytes`, from R2's HEAD at completion (D-95). The Photographer's storage figure sums it (§4.10)
