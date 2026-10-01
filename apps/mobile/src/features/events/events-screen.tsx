@@ -18,7 +18,6 @@ import { Button } from '@/components/ui/button';
 import { Fab } from '@/components/ui/fab';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
-import { BottomTabInset } from '@/constants/theme';
 import { EventCard } from '@/features/events/event-card';
 import { groupByTiming } from '@/features/events/list';
 import { showEventsTab, useEventsTab } from '@/features/events/tab-store';
@@ -28,7 +27,7 @@ import { useEvents } from '@/features/events/use-events';
 import { useTimingNow } from '@/features/events/use-timing-now';
 import { JoinRequestCard } from '@/features/join/join-request-card';
 import { usePullRefresh } from '@/hooks/use-pull-refresh';
-import { CREATE_IN_TAB_BAR } from '@/lib/platform';
+import { BottomTabInset, CREATE_IN_TAB_BAR } from '@/lib/platform';
 
 // The FAB's 56 points and the 16 below it, which the end of the list scrolls clear of.
 const FAB_CLEARANCE = 56 + 16;
