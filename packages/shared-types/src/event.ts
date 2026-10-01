@@ -237,6 +237,24 @@ export const ListEventsResponse = z.object({
 export type ListEventsResponse = z.infer<typeof ListEventsResponse>;
 
 /**
+ * GET /events/{eventId}. The event as GET /events lists it, read for one event by the Event shell
+ * through `useEvent(id)`, which every tab shares (D-118). The request has no body.
+ *
+ * - `role` is the caller's own, and the shell picks its tabs and landing tab from it.
+ * - `cover` is presigned only after the membership check passes (root invariant 3).
+ * - A caller whose membership is not `active` gets 403 `not_member`: pending, removed, blocked or
+ *   never a member. The app tells a pending caller apart by the event's id in GET /events'
+ *   `joinRequests`, and sends them to Pending Approval instead (D-118).
+ * - A soft-deleted or unknown event is 404 `not_found`, the Admin's own included.
+ * - The event sits under a key of its own so S-15 can add the caller's verification state beside
+ *   it (spec §4.5).
+ */
+export const GetEventResponse = z.object({
+  event: EventSummary,
+});
+export type GetEventResponse = z.infer<typeof GetEventResponse>;
+
+/**
  * POST /events/{eventId}/cover-upload, for the event's Admin only. The request has no body.
  *
  * The app PUTs the JPEG to `uploadUrl` with `Content-Type: image/jpeg` within 15 minutes
