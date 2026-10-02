@@ -3,8 +3,9 @@
 // real Auth: the trigger that creates a profile, the cascades, getClaims on a token the project
 // signed (D-109), create_event and list_my_events through the API's event store (D-110),
 // get_my_event through the same store (D-118), resolve_invite, join_event, the cancel and the join
-// request list through the API's stores (D-115), and sub_event_schedule, add_sub_event,
-// update_sub_event and delete_sub_event through the API's sub-event store (D-121). It needs a
+// request list through the API's stores (D-115), sub_event_schedule, add_sub_event,
+// update_sub_event and delete_sub_event through the API's sub-event store (D-121), and media,
+// start_upload and complete_upload through the API's media store (D-95, D-122). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
 // dev project from the environment. Each test makes its own accounts under @momentlens.me and
 // deletes them after, and deletes the events it made. No email is sent, because the accounts are
@@ -35,6 +36,7 @@ import type {
 } from '@momentlens/shared-types';
 
 import { createServerClient } from '../../src/db/supabase';
+import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
 import { createEventParams, createEventStore } from '../../src/services/events';
 import { createDatabaseCheck } from '../../src/services/health';
@@ -44,6 +46,8 @@ import {
   MAX_ACTIVE_GUESTS,
   resolveInviteParams,
 } from '../../src/services/invites';
+import { createMediaStore, MAX_EVENT_MEDIA, startUploadParams } from '../../src/services/media';
+import type { NewUpload, StartResult } from '../../src/services/media';
 import { createFindProfile } from '../../src/services/profiles';
 import {
   addSubEventParams,
@@ -964,6 +968,7 @@ if (project === null) {
 
       await expect(store.findAccess(event.id, a.id)).resolves.toEqual({
         deleted: false,
+        albumOpen: false,
         membership: { role: 'admin', status: 'active' },
       });
       await admin.from('event').update({ deleted_at: new Date().toISOString() }).eq('id', event.id);
@@ -972,6 +977,7 @@ if (project === null) {
       ).resolves.toBe(false);
       await expect(store.findAccess(event.id, a.id)).resolves.toEqual({
         deleted: true,
+        albumOpen: false,
         membership: { role: 'admin', status: 'active' },
       });
       await expect(store.findAccess(randomUUID(), a.id)).resolves.toBeNull();
@@ -2119,6 +2125,473 @@ if (project === null) {
           .eq('event_id', event.id)
           .not('create_request_id', 'is', null);
         expect(stamped.data).toEqual([]);
+      });
+    });
+
+    describe('media, start_upload and complete_upload', () => {
+      const media = createMediaStore(admin);
+      const subEvents = createSubEventStore(admin);
+
+      // A SHA-256 as the phone sends it: 64 lowercase hex characters.
+      const hash = () => (randomUUID() + randomUUID()).replaceAll('-', '');
+
+      // An event made by `adminId`, with its three sub-event ids by name.
+      async function eventWithSchedule(adminId: string) {
+        const event = await createdEvent(adminId);
+        const schedule = (await subEvents.schedule(event.id)) ?? [];
+        const id = (name: string) => {
+          const found = schedule.find((s) => s.name === name);
+          if (found === undefined) throw new Error(`no sub-event named ${name}`);
+          return found.id;
+        };
+        return { event, mehndi: id('Mehndi'), baraat: id('Baraat'), walima: id('Walima') };
+      }
+
+      // A pre-flight's offer to start_upload, with a fresh id and the keys built from it, as the
+      // service makes one.
+      function newUpload(
+        eventId: string,
+        subEventId: string,
+        userId: string,
+        fields: Partial<NewUpload> = {},
+      ): NewUpload {
+        const mediaId = randomUUID();
+        const keys = uploadKeys(mediaId);
+        return {
+          mediaId,
+          eventId,
+          subEventId,
+          userId,
+          role: 'guest',
+          contentHash: hash(),
+          capturedAt: '2026-12-10T15:42:07.000Z',
+          uploadKey: keys.photo,
+          uploadThumbKey: keys.thumbnail,
+          ...fields,
+        };
+      }
+
+      // The media id start_upload created or resumed, failing the test on a refusal.
+      function started(result: StartResult): string {
+        if (!('mediaId' in result)) throw new Error(`expected a row, got ${result.outcome}`);
+        return result.mediaId;
+      }
+
+      async function mediaRow(mediaId: string) {
+        const result = await admin
+          .from('media')
+          .select(
+            'id, event_id, sub_event_id, uploader_user_id, uploader_role_at_upload, captured_at, content_hash, size_bytes, upload_key, upload_thumb_key, uploaded_at, variant_version, processed_at, deleted_at',
+          )
+          .eq('id', mediaId)
+          .maybeSingle();
+        expect(result.error).toBeNull();
+        return result.data as Record<string, unknown> | null;
+      }
+
+      async function countMedia(eventId: string): Promise<number> {
+        const result = await admin
+          .from('media')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId);
+        expect(result.error).toBeNull();
+        return result.count ?? -1;
+      }
+
+      async function softDeleteMedia(mediaId: string) {
+        const result = await admin
+          .from('media')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', mediaId);
+        expect(result.error).toBeNull();
+      }
+
+      async function softDeleteEvent(eventId: string) {
+        const result = await admin
+          .from('event')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', eventId);
+        expect(result.error).toBeNull();
+      }
+
+      it("creates the row with the keys built from its id, and resumes the caller's unfinished row with its own id and keys", async () => {
+        const a = await createNamedUser();
+        const g = await createNamedUser();
+        const { event, mehndi, baraat } = await eventWithSchedule(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+
+        const first = newUpload(event.id, mehndi, g.id);
+        await expect(media.start(first, MAX_EVENT_MEDIA)).resolves.toEqual({
+          outcome: 'created',
+          mediaId: first.mediaId,
+          uploadKey: `${first.mediaId}/upload.jpg`,
+          uploadThumbKey: `${first.mediaId}/upload_thumb.webp`,
+        });
+        const row = await mediaRow(first.mediaId);
+        expect(row).toMatchObject({
+          event_id: event.id,
+          sub_event_id: mehndi,
+          uploader_user_id: g.id,
+          uploader_role_at_upload: 'guest',
+          content_hash: first.contentHash,
+          size_bytes: null,
+          uploaded_at: null,
+          variant_version: 0,
+          processed_at: null,
+          deleted_at: null,
+        });
+        expect(new Date(row?.captured_at as string).toISOString()).toBe(first.capturedAt);
+
+        // The app was killed after pre-flight. The retry offers a new id, another sub-event and
+        // another time, and gets the first row back as it was.
+        const retry = newUpload(event.id, baraat, g.id, {
+          contentHash: first.contentHash,
+          capturedAt: null,
+        });
+        await expect(media.start(retry, MAX_EVENT_MEDIA)).resolves.toEqual({
+          outcome: 'resumed',
+          mediaId: first.mediaId,
+          uploadKey: first.uploadKey,
+          uploadThumbKey: first.uploadThumbKey,
+        });
+        await expect(countMedia(event.id)).resolves.toBe(1);
+        await expect(mediaRow(first.mediaId)).resolves.toMatchObject({ sub_event_id: mehndi });
+      });
+
+      it('stamps the time of the pre-flight on a photo with no capture time (D-98)', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const before = Date.now();
+        const upload = newUpload(event.id, mehndi, a.id, { role: 'admin', capturedAt: null });
+        started(await media.start(upload, MAX_EVENT_MEDIA));
+        const at = Date.parse((await mediaRow(upload.mediaId))?.captured_at as string);
+        // A minute either side, for the clocks of this machine and the database.
+        expect(Math.abs(at - before)).toBeLessThan(60_000);
+      });
+
+      it("refuses another event's sub-event and a deleted one, and a soft-deleted event, writing nothing", async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const other = await eventWithSchedule(a.id);
+
+        await expect(
+          media.start(newUpload(event.id, other.mehndi, a.id), MAX_EVENT_MEDIA),
+        ).resolves.toEqual({ outcome: 'sub_event_missing' });
+        await expect(
+          media.start(newUpload(event.id, randomUUID(), a.id), MAX_EVENT_MEDIA),
+        ).resolves.toEqual({ outcome: 'sub_event_missing' });
+
+        await softDeleteEvent(event.id);
+        await expect(
+          media.start(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA),
+        ).resolves.toEqual({ outcome: 'not_found' });
+        await expect(countMedia(event.id)).resolves.toBe(0);
+        await expect(countMedia(other.event.id)).resolves.toBe(0);
+      });
+
+      it("treats another user's unfinished row as no duplicate, and a finished one as a duplicate, soft-deleted or not", async () => {
+        const a = await createNamedUser();
+        const g = await createNamedUser();
+        const p = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        const contentHash = hash();
+
+        const mine = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
+        const theirs = newUpload(event.id, mehndi, g.id, { contentHash });
+        started(await media.start(mine, MAX_EVENT_MEDIA));
+        await expect(media.start(theirs, MAX_EVENT_MEDIA)).resolves.toMatchObject({
+          outcome: 'created',
+          mediaId: theirs.mediaId,
+        });
+
+        await expect(media.complete(mine.mediaId, a.id, 1000)).resolves.toMatchObject({
+          outcome: 'completed',
+        });
+        // The Guest's own unfinished row resumes, and completion answers that one (D-122).
+        await expect(
+          media.start(newUpload(event.id, mehndi, g.id, { contentHash }), MAX_EVENT_MEDIA),
+        ).resolves.toMatchObject({ outcome: 'resumed', mediaId: theirs.mediaId });
+        await expect(
+          media.start(
+            newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash }),
+            MAX_EVENT_MEDIA,
+          ),
+        ).resolves.toEqual({ outcome: 'duplicate' });
+
+        await softDeleteMedia(mine.mediaId);
+        await expect(
+          media.start(
+            newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash }),
+            MAX_EVENT_MEDIA,
+          ),
+        ).resolves.toEqual({ outcome: 'duplicate' });
+        await expect(media.complete(theirs.mediaId, g.id, 1000)).resolves.toEqual({
+          outcome: 'duplicate',
+        });
+        await expect(mediaRow(theirs.mediaId)).resolves.toBeNull();
+        await expect(countMedia(event.id)).resolves.toBe(1);
+      });
+
+      it('completes once: one message, the size and uploaded_at set, processed_at still null, and a repeat changes nothing', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const upload = newUpload(event.id, mehndi, a.id, { role: 'admin' });
+        started(await media.start(upload, MAX_EVENT_MEDIA));
+
+        const first = await media.complete(upload.mediaId, a.id, 2_481_337);
+        expect(first).toEqual({ outcome: 'completed', messageId: expect.any(Number) });
+        const row = await mediaRow(upload.mediaId);
+        expect(row).toMatchObject({ size_bytes: 2_481_337, processed_at: null });
+        expect(row?.uploaded_at).not.toBeNull();
+
+        await expect(media.complete(upload.mediaId, a.id, 99)).resolves.toEqual({
+          outcome: 'completed',
+          messageId: null,
+        });
+        await expect(mediaRow(upload.mediaId)).resolves.toEqual(row);
+
+        // Two completions of one fresh row at once send one message between them.
+        const next = newUpload(event.id, mehndi, a.id, { role: 'admin' });
+        started(await media.start(next, MAX_EVENT_MEDIA));
+        const both = await Promise.all([
+          media.complete(next.mediaId, a.id, 10),
+          media.complete(next.mediaId, a.id, 10),
+        ]);
+        const sent = both.filter((r) => r.outcome === 'completed' && r.messageId !== null);
+        expect(both.map((r) => r.outcome)).toEqual(['completed', 'completed']);
+        expect(sent).toHaveLength(1);
+      });
+
+      it('answers not_uploader to anyone else, not_found for a soft-deleted event, and gone for no row, changing nothing', async () => {
+        const a = await createNamedUser();
+        const g = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        const upload = newUpload(event.id, mehndi, g.id);
+        started(await media.start(upload, MAX_EVENT_MEDIA));
+
+        // The event's Admin included.
+        await expect(media.complete(upload.mediaId, a.id, 10)).resolves.toEqual({
+          outcome: 'not_uploader',
+        });
+        await expect(media.complete(randomUUID(), g.id, 10)).resolves.toEqual({ outcome: 'gone' });
+        await softDeleteEvent(event.id);
+        await expect(media.complete(upload.mediaId, g.id, 10)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(mediaRow(upload.mediaId)).resolves.toMatchObject({
+          uploaded_at: null,
+          size_bytes: null,
+        });
+      });
+
+      it('ends two users completing one hash at once as one completed and one duplicate, the loser deleted', async () => {
+        const a = await createNamedUser();
+        const g = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        const contentHash = hash();
+        const mine = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
+        const theirs = newUpload(event.id, mehndi, g.id, { contentHash });
+        started(await media.start(mine, MAX_EVENT_MEDIA));
+        started(await media.start(theirs, MAX_EVENT_MEDIA));
+
+        const results = await Promise.all([
+          media.complete(mine.mediaId, a.id, 10),
+          media.complete(theirs.mediaId, g.id, 10),
+        ]);
+        expect(results.map((r) => r.outcome).sort()).toEqual(['completed', 'duplicate']);
+        const loser = results[0]?.outcome === 'duplicate' ? mine : theirs;
+        await expect(mediaRow(loser.mediaId)).resolves.toBeNull();
+        await expect(countMedia(event.id)).resolves.toBe(1);
+      });
+
+      it('ends two devices on one account sending one photo at once with one row', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const contentHash = hash();
+        const results = await Promise.all([
+          media.start(newUpload(event.id, mehndi, a.id, { contentHash }), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, a.id, { contentHash }), MAX_EVENT_MEDIA),
+        ]);
+        expect(results.map((r) => r.outcome).sort()).toEqual(['created', 'resumed']);
+        expect(started(results[0])).toBe(started(results[1]));
+        await expect(countMedia(event.id)).resolves.toBe(1);
+      });
+
+      it('refuses the 2,001st row, lets one of two pre-flights take the last place, counts unfinished rows and not soft-deleted ones, and still resumes at the cap', async () => {
+        const a = await createNamedUser();
+        const g = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+
+        // 1,999 unfinished rows from the Guest, inserted directly in four batches.
+        const filler = Array.from({ length: MAX_EVENT_MEDIA - 1 }, () => {
+          const id = randomUUID();
+          const keys = uploadKeys(id);
+          return {
+            id,
+            event_id: event.id,
+            sub_event_id: mehndi,
+            uploader_user_id: g.id,
+            uploader_role_at_upload: 'guest',
+            captured_at: '2026-12-10T15:00:00.000Z',
+            content_hash: hash(),
+            upload_key: keys.photo,
+            upload_thumb_key: keys.thumbnail,
+          };
+        });
+        for (let i = 0; i < filler.length; i += 500) {
+          const insert = await admin.from('media').insert(filler.slice(i, i + 500));
+          expect(insert.error).toBeNull();
+        }
+
+        const offers = [
+          newUpload(event.id, mehndi, a.id, { role: 'admin' }),
+          newUpload(event.id, mehndi, a.id, { role: 'admin' }),
+        ];
+        const results = await Promise.all(offers.map((o) => media.start(o, MAX_EVENT_MEDIA)));
+        expect(results.map((r) => r.outcome).sort()).toEqual(['created', 'full']);
+        await expect(countMedia(event.id)).resolves.toBe(MAX_EVENT_MEDIA);
+
+        // The winner's own retry resumes at the cap.
+        const winner = offers[results.findIndex((r) => r.outcome === 'created')];
+        await expect(
+          media.start(
+            newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash: winner?.contentHash }),
+            MAX_EVENT_MEDIA,
+          ),
+        ).resolves.toMatchObject({ outcome: 'resumed', mediaId: winner?.mediaId });
+        await expect(
+          media.start(newUpload(event.id, mehndi, g.id), MAX_EVENT_MEDIA),
+        ).resolves.toEqual({ outcome: 'full' });
+
+        // A soft-deleted row frees its place.
+        await softDeleteMedia(filler[0]?.id ?? '');
+        await expect(
+          media.start(newUpload(event.id, mehndi, g.id), MAX_EVENT_MEDIA),
+        ).resolves.toMatchObject({ outcome: 'created' });
+        await expect(
+          media.start(newUpload(event.id, mehndi, g.id), MAX_EVENT_MEDIA),
+        ).resolves.toEqual({ outcome: 'full' });
+      }, 60_000);
+
+      it('refuses to delete a sub-event with an unfinished or a soft-deleted photo, and deletes one with none', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi, baraat, walima } = await eventWithSchedule(a.id);
+        started(await media.start(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA));
+        const finished = newUpload(event.id, baraat, a.id);
+        started(await media.start(finished, MAX_EVENT_MEDIA));
+        await media.complete(finished.mediaId, a.id, 10);
+        await softDeleteMedia(finished.mediaId);
+
+        await expect(subEvents.remove(event.id, mehndi)).resolves.toEqual({
+          outcome: 'has_media',
+        });
+        await expect(subEvents.remove(event.id, baraat)).resolves.toEqual({
+          outcome: 'has_media',
+        });
+        await expect(subEvents.remove(event.id, walima)).resolves.toMatchObject({
+          outcome: 'deleted',
+        });
+        await expect(countMedia(event.id)).resolves.toBe(2);
+      });
+
+      it("refuses, in the table itself, another event's sub-event, a key outside the row's own family, a bad hash, and a row published before its upload", async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const other = await eventWithSchedule(a.id);
+        const valid = () => {
+          const id = randomUUID();
+          const keys = uploadKeys(id);
+          return {
+            id,
+            event_id: event.id,
+            sub_event_id: mehndi,
+            uploader_user_id: a.id,
+            uploader_role_at_upload: 'admin',
+            captured_at: '2026-12-10T15:00:00.000Z',
+            content_hash: hash(),
+            upload_key: keys.photo,
+            upload_thumb_key: keys.thumbnail,
+          };
+        };
+        const insert = (row: Record<string, unknown>) => admin.from('media').insert(row);
+
+        await expect(insert({ ...valid(), sub_event_id: other.mehndi })).resolves.toMatchObject({
+          error: { code: '23503' },
+        });
+        const stolen = valid();
+        await expect(insert({ ...valid(), upload_key: stolen.upload_key })).resolves.toMatchObject({
+          error: { code: '23514' },
+        });
+        await expect(
+          insert({ ...valid(), upload_thumb_key: `events/${event.id}/cover_${randomUUID()}.jpg` }),
+        ).resolves.toMatchObject({ error: { code: '23514' } });
+        await expect(
+          insert({ ...valid(), content_hash: hash().toUpperCase() }),
+        ).resolves.toMatchObject({ error: { code: '23514' } });
+        await expect(
+          insert({ ...valid(), processed_at: new Date().toISOString() }),
+        ).resolves.toMatchObject({ error: { code: '23514' } });
+        await expect(
+          insert({ ...valid(), uploaded_at: new Date().toISOString() }),
+        ).resolves.toMatchObject({ error: { code: '23514' } });
+        await expect(countMedia(event.id)).resolves.toBe(0);
+      });
+
+      it('blocks deleting an account that has photos (Ukasha, S-12 api build)', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        started(await media.start(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA));
+
+        const deleted = await admin.auth.admin.deleteUser(a.id);
+        expect(deleted.error).not.toBeNull();
+        const still = await admin.auth.admin.getUserById(a.id);
+        expect(still.data.user?.id).toBe(a.id);
+        // The event's delete in afterAll removes the row, and the account goes after it.
+      });
+
+      it('shows the publishable key and a signed-in uploader no media rows, and lets neither write or call the functions', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const upload = newUpload(event.id, mehndi, a.id, { role: 'admin' });
+        started(await media.start(upload, MAX_EVENT_MEDIA));
+        const before = await mediaRow(upload.mediaId);
+        const clients = [
+          createServerClient(project.url, project.publishableKey),
+          // The row's own uploader, who still reads and writes nothing directly (root invariant 14).
+          await signedInClient(a),
+        ];
+
+        for (const client of clients) {
+          const read = await client.from('media').select('id').eq('event_id', event.id);
+          expect(read.error).toBeNull();
+          expect(read.data).toEqual([]);
+          const write = await client
+            .from('media')
+            .update({ processed_at: new Date().toISOString() })
+            .eq('id', upload.mediaId);
+          expect(write.error).not.toBeNull();
+          const insert = await client.from('media').insert({ ...upload, id: randomUUID() });
+          expect(insert.error).not.toBeNull();
+          const start = await client.rpc(
+            'start_upload',
+            startUploadParams(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA),
+          );
+          expect(start.error).not.toBeNull();
+          const complete = await client.rpc('complete_upload', {
+            p_media_id: upload.mediaId,
+            p_user_id: a.id,
+            p_size_bytes: 10,
+          });
+          expect(complete.error).not.toBeNull();
+        }
+
+        await expect(mediaRow(upload.mediaId)).resolves.toEqual(before);
+        await expect(countMedia(event.id)).resolves.toBe(1);
       });
     });
   });
