@@ -349,7 +349,7 @@ Home and Album are one screen, not two, and not per-sub-event folders. Every sub
 
 #### 2.5.5 Schedule
 
-One list component reused for every role, permission-gated rather than forked: ordered sub-events with an auto-computed status badge (Upcoming / In Progress / Completed). Admin-only inline "Delay" action per row, and an Admin-only "+" in the header that adds a sub-event. Tap a row → Sub-event Detail (name, date/time, venue, "Get Directions," "View photos from this session" → Home, pre-filtered to that sub-event's chip, shown to every role but the Photographer, who has no Home). The Admin edits or deletes a sub-event from its Detail screen, and Delete is disabled while it is the event's only one (D-121).
+One list component reused for every role, permission-gated rather than forked: ordered sub-events with an auto-computed status badge (Upcoming / In Progress / Completed). Admin-only inline "Delay" action per row, and an Admin-only "+" in the header that adds a sub-event. Tap a row → Sub-event Detail (name, date/time, venue, "Get Directions," "View photos from this session" → Home, pre-filtered to that sub-event's chip, shown to every role but the Photographer, who has no Home). The Admin edits a sub-event from its Detail screen and deletes it from the foot of the Edit sheet, and Delete is disabled while it is the event's only one (D-121).
 
 #### 2.5.6 Single photo view
 
