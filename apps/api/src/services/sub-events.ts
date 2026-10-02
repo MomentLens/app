@@ -14,8 +14,9 @@ import { requireAdmin, requireMember, toTimestamp } from './events';
 import type { EventStore } from './events';
 
 // What add_sub_event, update_sub_event and delete_sub_event did
-// (supabase/migrations/..._sub_event_writes.sql). A refusal carries no schedule and wrote nothing.
-// not_found is an event soft-deleted, or a sub-event deleted, after the service's check.
+// (supabase/migrations/..._sub_event_writes.sql, and ..._media_upload.sql for the delete). A refusal
+// carries no schedule and wrote nothing. not_found is an event soft-deleted, or a sub-event deleted,
+// after the service's check.
 export type AddResult =
   | { outcome: 'added' | 'repeated'; subEvents: SubEvent[] }
   | { outcome: 'not_found' | 'taken' | 'no_venue' | 'too_many' | 'too_long' };
@@ -25,7 +26,7 @@ export type UpdateResult =
   | { outcome: 'not_found' | 'no_venue' | 'too_long' };
 
 export type DeleteResult =
-  { outcome: 'deleted'; subEvents: SubEvent[] } | { outcome: 'not_found' | 'last' };
+  { outcome: 'deleted'; subEvents: SubEvent[] } | { outcome: 'not_found' | 'last' | 'has_media' };
 
 // Every read and write of an event's schedule. It checks nothing about who asks; the functions
 // below check the caller against the event store first, and pass each write the event they checked.
@@ -97,7 +98,7 @@ const DeleteRow = z.union([
     .object({ outcome: z.literal('deleted'), schedule: Schedule })
     .transform((row) => ({ outcome: row.outcome, subEvents: row.schedule })),
   z
-    .object({ outcome: z.enum(['not_found', 'last']), schedule: z.null() })
+    .object({ outcome: z.enum(['not_found', 'last', 'has_media']), schedule: z.null() })
     .transform((row) => ({ outcome: row.outcome })),
 ]);
 
@@ -249,6 +250,9 @@ function refuse(outcome: string): never {
       throw new ApiError('event_too_long', 'An event runs at most 336 hours');
     case 'last':
       throw new ApiError('last_sub_event', "An event's last sub-event cannot be deleted");
+    case 'has_media':
+      // Any media row, unfinished or soft-deleted included, keeps its sub-event (D-121).
+      throw new ApiError('sub_event_has_media', 'A sub-event with photos cannot be deleted');
     default:
       throw new Error(`No answer for the refusal ${outcome}`);
   }

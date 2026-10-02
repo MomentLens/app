@@ -17,7 +17,7 @@ import type {
 } from '@momentlens/shared-types';
 
 import type { VerifyToken } from '../../src/middleware/auth';
-import type { EventAccess, EventStore } from '../../src/services/events';
+import type { EventStore, MemberAccess } from '../../src/services/events';
 import type {
   AddResult,
   DeleteResult,
@@ -83,11 +83,12 @@ class FakeEvents implements EventStore {
   findForCaller = () => Promise.reject(new Error('not used here'));
   setCover = () => Promise.reject(new Error('not used here'));
 
-  findAccess(eventId: string, userId: string): Promise<EventAccess | null> {
+  findAccess(eventId: string, userId: string): Promise<MemberAccess | null> {
     const event = this.events.get(eventId);
     if (event === undefined) return Promise.resolve(null);
     return Promise.resolve({
       deleted: event.deleted,
+      albumOpen: false,
       membership: event.members.get(userId) ?? null,
     });
   }
@@ -624,6 +625,8 @@ describe('DELETE /sub-events/{subEventId}', () => {
   it.each([
     ['last', 409, 'last_sub_event'],
     ['not_found', 404, 'not_found'],
+    // Any media row, unfinished or soft-deleted included, keeps its sub-event (D-121, S-12).
+    ['has_media', 409, 'sub_event_has_media'],
   ])('answers the store refusing with %s as %i %s', async (outcome, status, code) => {
     subEvents.answer = { outcome };
     const response = await send('DELETE', subEventPath(), 'token-admin');
