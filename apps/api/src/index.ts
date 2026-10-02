@@ -8,6 +8,7 @@ import { createTokenVerifier } from './middleware/auth';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createInviteStore } from './services/invites';
+import { createMediaStore } from './services/media';
 import { createFindProfile } from './services/profiles';
 import { createSubEventStore } from './services/sub-events';
 
@@ -55,9 +56,12 @@ createApp({
   events: createEventStore(supabase),
   invites: createInviteStore(supabase),
   subEvents: createSubEventStore(supabase),
+  media: createMediaStore(supabase),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,
+  objectSize: r2.objectSize,
+  deleteObject: r2.deleteObject,
 }).listen(config.port, (error) => {
   if (error) {
     logger.fatal(error, 'API failed to start');

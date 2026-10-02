@@ -44,6 +44,11 @@ export interface EventAccess {
   membership: { role: MembershipRole; status: MembershipStatus } | null;
 }
 
+// What findAccess reads: the access, and whether the album is open, which pre-flight checks (D-122).
+export interface MemberAccess extends EventAccess {
+  albumOpen: boolean;
+}
+
 // One event read for one caller by get_my_event. `event` is null unless the caller's membership is
 // active and the event is not deleted, so the store never returns an event the caller may not see.
 export interface CallerEvent extends EventAccess {
@@ -61,7 +66,7 @@ export interface EventStore {
   // Null when no event has this id.
   findForCaller(eventId: string, userId: string): Promise<CallerEvent | null>;
   // Null when no event has this id.
-  findAccess(eventId: string, userId: string): Promise<EventAccess | null>;
+  findAccess(eventId: string, userId: string): Promise<MemberAccess | null>;
   // False when the event does not exist or is soft-deleted, and then nothing was written.
   setCover(eventId: string, key: string): Promise<boolean>;
 }
@@ -124,7 +129,7 @@ const CallerRow = z.object({
 });
 
 const AccessRows = {
-  event: z.object({ deleted_at: z.string().nullable() }),
+  event: z.object({ deleted_at: z.string().nullable(), album_open: z.boolean() }),
   membership: z.object({ role: MembershipRole, status: MembershipStatus }),
 };
 
@@ -257,7 +262,7 @@ export function createEventStore(supabase: Supabase): EventStore {
     async findAccess(eventId, userId) {
       // Two indexed reads, by primary key and by the (event_id, user_id) unique key.
       const [event, membership] = await Promise.all([
-        supabase.from('event').select('deleted_at').eq('id', eventId).maybeSingle(),
+        supabase.from('event').select('deleted_at, album_open').eq('id', eventId).maybeSingle(),
         supabase
           .from('membership')
           .select('role, status')
@@ -274,8 +279,10 @@ export function createEventStore(supabase: Supabase): EventStore {
       if (event.data === null) {
         return null;
       }
+      const row = AccessRows.event.parse(event.data);
       return {
-        deleted: AccessRows.event.parse(event.data).deleted_at !== null,
+        deleted: row.deleted_at !== null,
+        albumOpen: row.album_open,
         membership: membership.data === null ? null : AccessRows.membership.parse(membership.data),
       };
     },
@@ -389,12 +396,13 @@ export async function getEvent(
 
 // The check an endpoint on one event makes before anything else: the event exists and is not
 // deleted, and the caller is an active member of it (hb §5.3). A 403 on an event is how the app
-// learns its user was removed or blocked. Returns the caller's role.
-export async function requireMember(
+// learns its user was removed or blocked. Returns the caller's role, and whether the album is open
+// for pre-flight, which checks it after this (D-122).
+export async function requireActiveMember(
   store: EventStore,
   eventId: string,
   userId: string,
-): Promise<MembershipRole> {
+): Promise<{ role: MembershipRole; albumOpen: boolean }> {
   const access = await store.findAccess(eventId, userId);
   if (access === null || access.deleted) {
     throw new ApiError('not_found', 'No such event');
@@ -402,7 +410,16 @@ export async function requireMember(
   if (access.membership?.status !== 'active') {
     throw new ApiError('not_member', 'Not an active member of this event');
   }
-  return access.membership.role;
+  return { role: access.membership.role, albumOpen: access.albumOpen };
+}
+
+// requireActiveMember, for an endpoint that needs only the caller's role.
+export async function requireMember(
+  store: EventStore,
+  eventId: string,
+  userId: string,
+): Promise<MembershipRole> {
+  return (await requireActiveMember(store, eventId, userId)).role;
 }
 
 // requireMember, and then that member is the event's Admin. `refusal` is the 403 wrong_role

@@ -17,6 +17,7 @@ import {
   joinEventController,
   resolveInviteController,
 } from './controllers/invites';
+import { completeUploadController, preflightUploadController } from './controllers/media';
 import { getMyProfileController } from './controllers/profiles';
 import {
   addSubEventController,
@@ -24,18 +25,20 @@ import {
   listSubEventsController,
   updateSubEventController,
 } from './controllers/sub-events';
-import type { ObjectExists, PresignGet, PresignPut } from './lib/r2';
+import type { DeleteObject, ObjectExists, ObjectSize, PresignGet, PresignPut } from './lib/r2';
 import { optionalAuth, requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
 import { errorHandler, notFound } from './middleware/errors';
 import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
 import { invitesRouter } from './routes/invites';
+import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
 import { subEventsRouter } from './routes/sub-events';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { InviteStore } from './services/invites';
+import type { MediaStore } from './services/media';
 import type { FindProfile } from './services/profiles';
 import type { SubEventStore } from './services/sub-events';
 
@@ -49,9 +52,12 @@ export interface AppDeps {
   events: EventStore;
   invites: InviteStore;
   subEvents: SubEventStore;
+  media: MediaStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
+  objectSize: ObjectSize;
+  deleteObject: DeleteObject;
 }
 
 // Built separately from index.ts so tests get an app without a listening port.
@@ -79,6 +85,20 @@ export function createApp(deps: AppDeps): Express {
       add: addSubEventController(deps.events, deps.subEvents),
       update: updateSubEventController(deps.events, deps.subEvents),
       remove: deleteSubEventController(deps.events, deps.subEvents),
+    }),
+  );
+  const mediaDeps = {
+    events: deps.events,
+    media: deps.media,
+    presignPut: deps.presignPut,
+    objectSize: deps.objectSize,
+    deleteObject: deps.deleteObject,
+    logger: deps.logger,
+  };
+  app.use(
+    mediaRouter(auth, {
+      preflight: preflightUploadController(mediaDeps),
+      complete: completeUploadController(mediaDeps),
     }),
   );
   app.use(
