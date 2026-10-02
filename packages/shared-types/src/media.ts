@@ -18,14 +18,14 @@ export type ContentHash = z.infer<typeof ContentHash>;
  *   path's event and never from the body (D-122).
  * - `capturedAt` is the photo's EXIF capture time in UTC. The phone converts an EXIF time with no
  *   zone before sending it. Any instant is accepted, and the API uses the time of the pre-flight
- *   when it is left out (D-98, D-122).
+ *   when it is null or left out (D-98, D-122).
  * - The verification records the device holds are not here yet. S-15 adds them along with the
  *   check that reads them and its 409 `unverified` (D-122).
  */
 export const PreflightUploadRequest = z.object({
   contentHash: ContentHash,
   subEventId: z.uuid(),
-  capturedAt: Timestamp.optional(),
+  capturedAt: Timestamp.nullish(),
 });
 export type PreflightUploadRequest = z.infer<typeof PreflightUploadRequest>;
 
@@ -40,7 +40,8 @@ export type PreflightUploadRequest = z.infer<typeof PreflightUploadRequest>;
  * - The API built both object keys from `mediaId` and stored them on the row, so the app never
  *   sees or sends a key (root invariant 12).
  * - A resume returns the row's existing id and keys, re-signed, and keeps its own sub-event,
- *   capture time and role whatever this request sent (D-122).
+ *   capture time and role whatever this request sent. A soft-deleted unfinished row never
+ *   resumes, and the photo gets a new row (D-122).
  *
  * The other answers, each the error body from Handbook §5.3, in the order the API checks:
  * - 404 `not_found` when the event is soft-deleted or unknown. 403 `not_member` when the caller is
@@ -50,9 +51,12 @@ export type PreflightUploadRequest = z.infer<typeof PreflightUploadRequest>;
  * - 409 `sub_event_missing` when the sub-event is not one of this event's, or was deleted after
  *   the photo was queued (D-122).
  * - 409 `duplicate` when a finished photo in this event has the hash, a soft-deleted one included
- *   (D-96). The app drops the photo from its queue with no prompt.
+ *   (D-96), unless the caller has an unfinished row with the hash, which resumes first (D-122).
+ *   The app drops the photo from its queue with no prompt.
  * - 422 `event_full` when the event already holds 2,000 media rows that are not soft-deleted,
  *   unfinished ones included (spec §4.17). A resume skips this check.
+ * - 422 `too_many_unfinished` when the caller already holds 50 unfinished rows in this event that
+ *   are not soft-deleted (D-122). A resume skips this check too.
  */
 export const PreflightUploadResponse = z.object({
   mediaId: z.uuid(),
@@ -66,16 +70,17 @@ export type PreflightUploadResponse = z.infer<typeof PreflightUploadResponse>;
  * in R2, then marks the row uploaded and enqueues its processing job in one transaction (D-95).
  *
  * A 200 means the photo is uploaded. A repeat answers 200 again and enqueues nothing. The photo is
- * not in the album yet: the worker sets `processed_at` last, and Realtime then delivers the row
+ * not in the album yet. The worker sets `processed_at` last, and Realtime then delivers the row
  * (D-55).
  *
  * The other answers, in the order the API checks (D-122):
- * - 409 `duplicate` when no row has this id, because a duplicate completion is the only thing
- *   that deletes one.
- * - 403 `not_uploader` to anyone but the uploader. 403 `not_member` to an uploader who is no
- *   longer an `active` member, and 404 `not_found` when the event was deleted since pre-flight.
- * - 409 `upload_missing` when either object is not in R2. The row stays unfinished, nothing is
- *   enqueued, and the app uploads both files again (arch §4).
+ * - 409 `duplicate` when no row has this id, which only a duplicate completion causes, or when the
+ *   row was soft-deleted. The app drops the photo with no prompt (D-122).
+ * - 403 `not_uploader` to anyone but the uploader. Then 404 `not_found` when the event was deleted
+ *   since pre-flight, then 403 `not_member` to an uploader who is no longer an `active` member.
+ * - 409 `upload_missing` when either object is not in R2 or is empty. The row stays unfinished,
+ *   nothing is enqueued, and the app uploads both files again. Once the PUT URLs have expired, it
+ *   gets fresh ones from a pre-flight, which resumes the row (arch §3, arch §4).
  * - 409 `duplicate` when another finished row in the event already has the hash. The API has
  *   deleted this row and its two objects, and the app drops the photo with no prompt (D-96).
  */
