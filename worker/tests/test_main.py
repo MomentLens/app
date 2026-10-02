@@ -46,6 +46,23 @@ def test_sentry_starts_from_the_workers_dsn_with_nothing_automatic(inits):
     ]
 
 
+def test_a_setup_hook_that_raises_stops_the_start(monkeypatch, caplog):
+    monkeypatch.setattr(config, "load_env_file", lambda: None)
+    monkeypatch.setattr(config, "load", lambda: config.Settings(**SETTINGS))
+    monkeypatch.setattr(main.signal, "signal", lambda *_args: None)
+    monkeypatch.setattr(main, "start_health_server", lambda *_args: None)
+
+    def broken_hook():
+        raise RuntimeError("the model file is missing")
+
+    monkeypatch.setattr(main, "run_setup_hooks", broken_hook)
+
+    assert main.main() == 1
+    assert any(
+        r.levelname == "ERROR" and r.getMessage().startswith("cannot start") for r in caplog.records
+    )
+
+
 @pytest.fixture
 def sent(monkeypatch):
     calls = []
