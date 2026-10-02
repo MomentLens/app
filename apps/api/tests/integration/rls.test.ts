@@ -85,10 +85,20 @@ if (project === null) {
   const created: string[] = [];
 
   // One delete per account the file made, in sequence. With S-04's tests that ran past the 30
-  // seconds above from a laptop, which failed the suite after every test had passed.
+  // seconds above from a laptop, which failed the suite after every test had passed. A failed
+  // delete fails the suite. An account whose media rows outlived their event cannot be deleted, and
+  // would otherwise stay on the shared dev project unnoticed. An account a test already deleted
+  // answers 404.
   afterAll(async () => {
+    const failed: string[] = [];
     for (const id of created) {
-      await admin.auth.admin.deleteUser(id);
+      const { error } = await admin.auth.admin.deleteUser(id);
+      if (error && error.status !== 404) {
+        failed.push(`${id}: ${error.message}`);
+      }
+    }
+    if (failed.length > 0) {
+      throw new Error(`Could not delete ${failed.length} test accounts:\n${failed.join('\n')}`);
     }
   }, 120_000);
 
@@ -374,9 +384,13 @@ if (project === null) {
     const iso = (ms: number) => new Date(ms).toISOString();
 
     afterAll(async () => {
-      // Deleting the event deletes its venues, sub-events and memberships with it.
+      // Deleting the event deletes its venues, sub-events, memberships and media with it. A failure
+      // fails the suite, since the accounts behind those rows cannot be deleted either.
       if (events.length > 0) {
-        await admin.from('event').delete().in('id', events);
+        const { error } = await admin.from('event').delete().in('id', events);
+        if (error) {
+          throw new Error(`Could not delete the test events: ${error.message}`);
+        }
       }
     });
 
