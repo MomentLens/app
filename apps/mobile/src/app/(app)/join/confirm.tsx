@@ -265,8 +265,7 @@ function Account() {
     <View className="flex-row items-center justify-center gap-2">
       <Avatar size={28} />
       <Text className="font-caption text-caption text-textSecondary">
-        Joining as{' '}
-        <Text className="font-manrope-semibold text-textPrimary">{profile.data.fullName}</Text>
+        Joining as <Text className="font-semibold text-textPrimary">{profile.data.fullName}</Text>
       </Text>
     </View>
   );

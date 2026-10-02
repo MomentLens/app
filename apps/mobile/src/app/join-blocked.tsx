@@ -3,6 +3,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Button } from '@/components/ui/button';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { useAuthStore } from '@/stores/auth';
+import { byPlatform } from '@/lib/copy';
 
 // Join Blocked (spec §2.5.8, D-115): the event's Admin blocked this person, so they cannot join
 // through any invite. It says so plainly and offers no join action. Never Join Error, whose
@@ -26,10 +27,20 @@ export default function JoinBlockedScreen() {
 
   return (
     <AuthScreen
+      variant="status"
       icon="ban"
       title="You can't join this event"
       subtitle={`The organizer of ${event} has blocked you from joining it. If you think this is a mistake, contact them.`}
-      footer={<Button label={signedIn ? 'Back to events' : 'Back to log in'} onPress={leave} />}
+      footer={
+        <Button
+          label={
+            signedIn
+              ? byPlatform('Back to Events', 'Back to events')
+              : byPlatform('Back to Log In', 'Back to log in')
+          }
+          onPress={leave}
+        />
+      }
     />
   );
 }

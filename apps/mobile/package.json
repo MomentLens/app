@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "dependencies": {
     "@expo-google-fonts/fraunces": "0.4.1",
-    "@expo-google-fonts/manrope": "0.4.2",
     "@expo/ui": "~57.0.18",
     "@momentlens/shared-types": "workspace:*",
     "@quidone/react-native-wheel-picker": "1.7.1",

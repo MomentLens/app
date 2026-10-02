@@ -4,14 +4,16 @@ import { Text, TextInput, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
+import { FieldGroup } from '@/components/ui/field-group';
 import { TextField } from '@/components/ui/text-field';
 import { TextLink } from '@/components/ui/text-link';
-import { AuthScreen } from '@/features/auth/auth-screen';
+import { AuthScreen, Inset } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
 import { JoinBanner } from '@/features/join/join-banner';
+import { byPlatform } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
-// Email and password (spec §4.1), laid out as the Figma LoginScreen frame. A successful login sends
+// Email and password (spec §4.1), under the brand lockup with its actions in thumb reach (D-124). A successful login sends
 // SIGNED_IN, and the root layout swaps this group for the app, so nothing here navigates on success.
 // With an invite waiting, the banner says which event, and the app opens Join Confirmation after
 // the login ((app)/_layout.tsx).
@@ -50,30 +52,52 @@ export default function LoginScreen() {
   }
 
   return (
-    <AuthScreen title="Log in to MomentLens" tagline="Weddings & celebrations">
+    <AuthScreen
+      variant="brand"
+      title="Log in to MomentLens"
+      subtitle="Every guest's photos from the wedding, in one album."
+      footer={
+        <>
+          <Button label={byPlatform('Log In', 'Log in')} busy={busy} onPress={() => void logIn()} />
+          {/* Spec §2.4 step 2: Manual Join Entry, for a code or a pasted link. */}
+          <Button
+            label={byPlatform('Join with Invite Code', 'Join with invite code')}
+            icon="ticket"
+            variant="secondary"
+            disabled={busy}
+            onPress={() => router.push('/join-code')}
+          />
+          <Text className="pt-1 text-center font-bodySecondary text-bodySecondary text-textSecondary">
+            New here?{' '}
+            <TextLink
+              label={byPlatform('Create Account', 'Create account')}
+              disabled={busy}
+              onPress={() => router.push('/signup')}
+            />
+          </Text>
+        </>
+      }>
       <JoinBanner />
-      <View className="gap-4">
-        <TextField
-          label="Email address"
-          icon="mail"
-          placeholder="name@email.com"
-          value={email}
-          onChangeText={setEmail}
-          autoCapitalize="none"
-          autoCorrect={false}
-          autoComplete="email"
-          textContentType="emailAddress"
-          keyboardType="email-address"
-          returnKeyType="next"
-          submitBehavior="submit"
-          onSubmitEditing={() => passwordRef.current?.focus()}
-          editable={!busy}
-        />
-        <View className="gap-2">
+      <View className="gap-2">
+        <FieldGroup>
+          <TextField
+            label="Email"
+            placeholder="name@email.com"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            textContentType="emailAddress"
+            keyboardType="email-address"
+            returnKeyType="next"
+            submitBehavior="submit"
+            onSubmitEditing={() => passwordRef.current?.focus()}
+            editable={!busy}
+          />
           <TextField
             ref={passwordRef}
             label="Password"
-            icon="lock"
             secure
             value={password}
             onChangeText={setPassword}
@@ -85,40 +109,21 @@ export default function LoginScreen() {
             onSubmitEditing={() => void logIn()}
             editable={!busy}
           />
-          <View className="items-end">
-            <TextLink
-              label="Forgot password?"
-              tone="muted"
-              disabled={busy}
-              onPress={() => router.push('/forgot-password')}
-            />
-          </View>
+        </FieldGroup>
+        <View className="items-end ios:px-9 android:px-6">
+          <TextLink
+            label="Forgot password?"
+            disabled={busy}
+            onPress={() => router.push('/forgot-password')}
+          />
         </View>
       </View>
 
-      {error ? <FormMessage message={error} /> : null}
-
-      <Button label="Log in" busy={busy} onPress={() => void logIn()} />
-
-      <View className="flex-row items-center gap-3">
-        <View className="h-px flex-1 bg-border" />
-        <Text className="font-caption text-caption text-textMuted">or</Text>
-        <View className="h-px flex-1 bg-border" />
-      </View>
-
-      {/* Spec §2.4 step 2: Manual Join Entry, for a code or a pasted link. */}
-      <Button
-        label="Join with invite code"
-        icon="ticket"
-        variant="secondary"
-        disabled={busy}
-        onPress={() => router.push('/join-code')}
-      />
-
-      <Text className="text-center font-caption text-caption text-textSecondary">
-        New here?{' '}
-        <TextLink label="Create account" disabled={busy} onPress={() => router.push('/signup')} />
-      </Text>
+      {error ? (
+        <Inset>
+          <FormMessage message={error} />
+        </Inset>
+      ) : null}
     </AuthScreen>
   );
 }

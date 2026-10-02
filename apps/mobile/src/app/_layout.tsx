@@ -1,10 +1,6 @@
 import '../../global.css';
 
 import { Fraunces_600SemiBold } from '@expo-google-fonts/fraunces/600SemiBold';
-import { Manrope_400Regular } from '@expo-google-fonts/manrope/400Regular';
-import { Manrope_500Medium } from '@expo-google-fonts/manrope/500Medium';
-import { Manrope_600SemiBold } from '@expo-google-fonts/manrope/600SemiBold';
-import { Manrope_700Bold } from '@expo-google-fonts/manrope/700Bold';
 import * as Sentry from '@sentry/react-native';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { useFonts } from 'expo-font';
@@ -40,13 +36,9 @@ startSessionSync();
 
 // The keys are the family names tailwind.config.js uses, so `font-h1` resolves to Fraunces_600SemiBold.
 // Each weight is imported from its own path, which keeps the package's other font files out of the
-// bundle. A weight added to the type scale has to be added here too.
+// bundle. Everything else uses the system font (D-124), which needs no loading.
 const FONTS = {
   Fraunces_600SemiBold,
-  Manrope_400Regular,
-  Manrope_500Medium,
-  Manrope_600SemiBold,
-  Manrope_700Bold,
 };
 
 function RootLayout() {

@@ -1,15 +1,26 @@
-import { cssInterop } from 'nativewind';
-import { Switch, type SwitchProps } from 'react-native';
+import { Switch } from '@expo/ui';
 
-type SwitchWithColorProps = SwitchProps & { onColor?: string };
+import { TintedHost } from '@/components/ui/tinted-host';
 
-function SwitchWithColor({ onColor, ...props }: SwitchWithColorProps) {
-  return <Switch trackColor={{ false: undefined, true: onColor }} {...props} />;
+interface ToggleProps {
+  value: boolean;
+  onValueChange: (value: boolean) => void;
+  accessibilityLabel: string;
+  disabled?: boolean;
 }
 
-// React Native's Switch takes its colors as props, which a class cannot reach. This moves the
-// color of a text-* token class onto the "on" track, as icon.tsx does for an Svg, so the switch
-// follows the tokens in dark mode with no hex. The "off" track keeps the platform's own.
-export const Toggle = cssInterop(SwitchWithColor, {
-  className: { target: 'style', nativeStyleToProp: { color: 'onColor' } },
-});
+// Each platform's own switch through @expo/ui: SwiftUI's toggle on iOS and Material 3's switch on
+// Android, gold in both modes (D-124). React Native's Switch drew AppCompat's thumb-over-track on
+// Android.
+export function Toggle({
+  value,
+  onValueChange,
+  accessibilityLabel,
+  disabled = false,
+}: ToggleProps) {
+  return (
+    <TintedHost matchContents accessibilityLabel={accessibilityLabel} className="text-accent">
+      <Switch value={value} onValueChange={onValueChange} disabled={disabled} />
+    </TintedHost>
+  );
+}

@@ -1,4 +1,4 @@
-import { eventTiming, type EventSummary } from '@momentlens/shared-types';
+import type { EventSummary } from '@momentlens/shared-types';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState, type ReactNode } from 'react';
@@ -13,7 +13,6 @@ import { markCreated, renewRequestId, useEventDraft } from '@/features/events/dr
 import { buildCreateEventRequest, sortSubEvents } from '@/features/events/request';
 import { SubEventCard } from '@/features/events/sub-event-card';
 import { SubEventSheet, type SheetTarget } from '@/features/events/sub-event-sheet';
-import { showEventsTab } from '@/features/events/tab-store';
 import { EVENT_TYPE_LABEL } from '@/features/events/type-select';
 import { rememberCover, rememberCreatedEvent } from '@/features/events/use-events';
 import { subEventsProblem } from '@/features/events/validation';
@@ -136,7 +135,6 @@ export default function ReviewStep() {
     }
     markCreated(event);
     rememberCreatedEvent(event);
-    showEventsTab(eventTiming(event, new Date()));
     await sendCover(event);
   }
 

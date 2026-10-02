@@ -13,14 +13,16 @@
  * the bottom of this file). Do not replace the `rgb(var(...) / <alpha-value>)`
  * pattern with plain hex strings — that's what makes `bg-accent/20` etc. work.
  *
- * Font weight is NOT set via a `font-weight` utility. Each role token in
- * `fontFamily` points at a specific loaded font FILE (e.g. Manrope_600SemiBold),
- * because React Native does not synthesize weights for custom fonts the way
- * the web does. Always pair a `font-*` class with a `text-*` class from the
- * same role, e.g. className="font-h1 text-h1".
+ * Type follows D-124: Fraunces for event names, sub-event names and large titles, and the system
+ * font (SF Pro on iOS, Roboto on Android) for everything else. A Fraunces role points at a loaded
+ * font FILE (Fraunces_600SemiBold), because React Native does not synthesize weights for a custom
+ * font. A system-font role sets no family at all, so each platform draws its own face, and carries
+ * its weight through the plugin at the bottom. Either way, pair a `font-*` class with the `text-*`
+ * class of the same role, e.g. className="font-h2 text-h2".
  */
 
 const { platformSelect } = require('nativewind/theme');
+const plugin = require('tailwindcss/plugin');
 
 // One size per platform, resolved when the style is read on the phone. iOS takes Apple's default
 // Dynamic Type sizes and Android the Material 3 type scale, so body text reads at the size each
@@ -62,29 +64,21 @@ module.exports = {
         danger: 'rgb(var(--color-danger) / <alpha-value>)', // destructive actions (Delete event)
         dangerTint: 'rgb(var(--color-dangerTint) / <alpha-value>)', // destructive row/banner backgrounds
         success: 'rgb(var(--color-success) / <alpha-value>)', // confirmations, success states
+
+        // --- Platform chrome and the Live card (D-124) ---
+        surfaceContainer: 'rgb(var(--color-surfaceContainer) / <alpha-value>)', // Android's navigation bar, one tone off the page
+        hero: 'rgb(var(--color-hero) / <alpha-value>)', // the Live card: ink in light mode, a raised warm surface in dark
+        onHero: 'rgb(var(--color-onHero) / <alpha-value>)', // text on hero
+        onPhoto: 'rgb(var(--color-onPhoto) / <alpha-value>)', // text over a cover or photo
+        scrim: 'rgb(var(--color-scrim) / <alpha-value>)', // the shade under that text, used with an alpha
       },
 
       fontFamily: {
-        // Low-level family tokens — reach for these only when a role token
-        // below doesn't fit.
+        // Fraunces, the brand's serif. The system-font roles are in the plugin below.
         'fraunces-semibold': ['Fraunces_600SemiBold'],
-        'manrope-regular': ['Manrope_400Regular'],
-        'manrope-medium': ['Manrope_500Medium'],
-        'manrope-semibold': ['Manrope_600SemiBold'],
-        'manrope-bold': ['Manrope_700Bold'], // card titles, which have no role token
-
-        // Role tokens — matches the type scale 1:1. Pair with the fontSize
-        // token of the same name.
-        display: ['Fraunces_600SemiBold'], // Display (splash, rare)
-        h1: ['Fraunces_600SemiBold'], // H1 / Screen title
-        h2: ['Manrope_600SemiBold'], // H2 / Section header
-        body: ['Manrope_400Regular'], // Body (default)
-        bodySecondary: ['Manrope_400Regular'], // Body secondary/muted
-        buttonLabel: ['Manrope_700Bold'], // Button label
-        fieldLabel: ['Manrope_500Medium'], // Field label
-        caption: ['Manrope_400Regular'], // Caption / timestamp
-        micro: ['Manrope_600SemiBold'], // Micro / badge
-        wordmark: ['Manrope_600SemiBold'], // The MOMENTLENS wordmark in the header
+        display: ['Fraunces_600SemiBold'], // Display (launch, rare)
+        title: ['Fraunces_600SemiBold'], // A tab's large title (D-125)
+        h1: ['Fraunces_600SemiBold'], // H1: an event or sub-event name
       },
 
       fontSize: {
@@ -96,6 +90,8 @@ module.exports = {
         // Footnote, Caption 1. Android column: Display Small, Headline Medium, Title Large, Body
         // Large, Body Medium, a medium button's label, Label Large, Body Small, Label Small.
         display: sized('34px', '36px'),
+        // iOS's Large Title and Material 3's large top app bar title (Headline Medium).
+        title: sized('34px', '28px'),
         h1: '28px',
         h2: sized('20px', '22px'),
         body: sized('17px', '16px'),
@@ -108,5 +104,20 @@ module.exports = {
       },
     },
   },
-  plugins: [],
+  // The system-font roles. They set a weight and no family, so iOS draws SF Pro and Android Roboto
+  // at that weight (D-124).
+  plugins: [
+    plugin(({ addUtilities }) => {
+      addUtilities({
+        '.font-body': { 'font-weight': '400' },
+        '.font-bodySecondary': { 'font-weight': '400' },
+        '.font-h2': { 'font-weight': '600' },
+        '.font-buttonLabel': { 'font-weight': '600' },
+        '.font-fieldLabel': { 'font-weight': '500' },
+        '.font-caption': { 'font-weight': '400' },
+        '.font-micro': { 'font-weight': '600' },
+        '.font-wordmark': { 'font-weight': '600' },
+      });
+    }),
+  ],
 };

@@ -53,7 +53,7 @@ export function ScheduleRow({
           </Text>
           <Text
             numberOfLines={1}
-            className={`flex-1 font-manrope-semibold text-body ${done ? 'text-textMuted' : 'text-textPrimary'}`}>
+            className={`flex-1 font-semibold text-body ${done ? 'text-textMuted' : 'text-textPrimary'}`}>
             {subEvent.name}
           </Text>
         </View>

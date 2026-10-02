@@ -8,8 +8,9 @@ interface TextLinkProps {
   disabled?: boolean;
 }
 
-// An underlined link inside a sentence ("New here? Create account") or on its own line. A Text,
-// so it can sit inside another Text and wrap with it.
+// A text button inside a sentence ("New here? Create account") or on its own line, in the tint
+// with no underline, as both platforms draw one (D-124). A Text, so it can sit inside another Text
+// and wrap with it.
 export function TextLink({ label, onPress, tone = 'accent', disabled = false }: TextLinkProps) {
   return (
     <Text
@@ -17,7 +18,7 @@ export function TextLink({ label, onPress, tone = 'accent', disabled = false }: 
       accessibilityState={{ disabled }}
       suppressHighlighting
       onPress={disabled ? undefined : onPress}
-      className={`font-caption text-caption underline ${tone === 'accent' ? 'text-accentText' : 'text-textSecondary'} ${disabled ? 'opacity-60' : ''}`}>
+      className={`font-fieldLabel text-bodySecondary ${tone === 'accent' ? 'text-accentText' : 'text-textSecondary'} ${disabled ? 'opacity-60' : ''}`}>
       {label}
     </Text>
   );

@@ -36,7 +36,7 @@ export function Avatar({ size = 32 }: AvatarProps) {
         />
       ) : name ? (
         <Text
-          className={`text-textSecondary ${size >= 64 ? 'font-h1 text-h1' : 'font-manrope-semibold text-fieldLabel'}`}>
+          className={`text-textSecondary ${size >= 64 ? 'font-h1 text-h1' : 'font-semibold text-fieldLabel'}`}>
           {initials(name)}
         </Text>
       ) : (

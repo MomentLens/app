@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import { Button } from '@/components/ui/button';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { useAuthStore } from '@/stores/auth';
+import { byPlatform } from '@/lib/copy';
 
 // Join Error (spec §2.5.8), for a dead link only: revoked, or its event deleted or archived. An
 // invite has no time limit, so "expired" means one of those (arch:invite). The copy is spec §5.1's.
@@ -23,15 +24,23 @@ export default function JoinErrorScreen() {
 
   return (
     <AuthScreen
+      variant="status"
       icon="link-2-off"
       title="This invite has expired"
       subtitle="This link has expired or been revoked. Contact the event organizer."
       footer={
         <>
-          <Button label={signedIn ? 'Back to events' : 'Back to log in'} onPress={leave} />
           <Button
-            label="Join with a code instead"
-            variant="secondary"
+            label={
+              signedIn
+                ? byPlatform('Back to Events', 'Back to events')
+                : byPlatform('Back to Log In', 'Back to log in')
+            }
+            onPress={leave}
+          />
+          <Button
+            label={byPlatform('Join with a Code Instead', 'Join with a code instead')}
+            variant="quiet"
             onPress={() => router.replace('/join-code')}
           />
         </>

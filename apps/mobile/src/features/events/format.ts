@@ -76,3 +76,18 @@ export function formatRadius(metres: number): string {
   }
   return `${Math.round(metres / 10) / 100} km`;
 }
+
+// How far off an Upcoming event's first day is, on its card: "Today", "Tomorrow", "In 5 days",
+// "In 4 weeks", "In 3 months". Counted in calendar days in the phone's zone, so an event at 9 AM
+// tomorrow is "Tomorrow" at 11 PM tonight.
+export function formatStartsIn(startsAt: Date, now: Date): string {
+  const midnight = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  // Rounded, because a day across a daylight saving change is 23 or 25 hours long.
+  const days = Math.round((midnight(startsAt) - midnight(now)) / 86_400_000);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days < 14) return `In ${days} days`;
+  if (days < 60) return `In ${Math.floor(days / 7)} weeks`;
+  return `In ${Math.round(days / 30.44)} months`;
+}
