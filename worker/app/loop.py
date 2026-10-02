@@ -11,8 +11,9 @@ The rules are arch §5's, from D-103, D-108 and D-123:
   transaction, then logs it and reports it to Sentry. A missing upload object, a message that
   does not parse and an unknown job are archived on their first try.
 - A message whose photo row is gone is deleted as done, with no archive and no report.
-- A lost connection to Postgres or R2 is waited out here, never by exiting, because systemd
-  stops restarting a unit that fails 5 times in 10 seconds.
+- A lost connection to Postgres or R2 is waited out here, never by exiting, because every exit
+  costs the unit's 10-second RestartSec and a fresh start. R2 refusing the worker's key or
+  bucket is waited out the same way.
 """
 
 from __future__ import annotations
@@ -310,7 +311,11 @@ class Worker:
                     log.info("R2 answers again")
                 return
             failed = True
-            log.warning("R2 does not answer, checking again in %.0fs before the next read", wait)
+            log.warning(
+                "R2 does not answer or refuses the worker's R2_* settings, checking again in"
+                " %.0fs before the next read",
+                wait,
+            )
             self.stop.wait(wait)
             wait = min(wait * 2, self.storage_wait_s[1])
 
