@@ -616,6 +616,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Inserting the row at completion, which breaks D-70, because the upload keys go onto the row before the PUT URLs are signed. Asking R2 whether the object exists, which puts a network call inside the endpoint that must stay cheap.
 **Cost.** The album-open check blocks every upload until an Admin opens the album, and the toggle only arrives in S-31. S-12 builds the check switched off and S-31 turns it on, as Phase 3 does with the verification gate.
 **Amended (see D-95 and D-96).** Pre-flight's insert and completion run in SQL functions, completion checks both objects in R2, and another user's unfinished row with the same hash is not a duplicate.
+**Amended (see D-122).** Verification comes before the cap, which `start_upload` counts. When the caller's own unfinished row and another user's finished row share the hash, pre-flight resumes and completion answers `duplicate`.
 
 ### D-83: Tap-to-blur is removed; a missed face is fixed with a blur region anyone can draw ⚠
 **Decision.** Supersedes D-23, D-25, D-47, D-52 and D-54; amends D-24, D-26, D-64 and D-74. Automatic matching blurs a face that matches a Do Not Publish subject at or above the match threshold, and nothing else is blurred automatically. There is no tap-to-blur and no Admin queue for loose matches. Any Guest or the Admin can draw a rectangular blur region on a photo in the album. It applies at once to the public file, every subject's file and all their thumbnails, is stored in `manual_blur_region`, and every later regeneration applies it (root invariant 6). The person who drew it and the Admin can remove it. With no tap-to-blur there are no auto-added references, so every reference is one the user uploaded.
@@ -703,12 +704,14 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Updating the row and enqueueing in two calls looks right, throws nothing, and loses the job on a crash between them. An unlocked count lets two pre-flights at 1,999 both insert. A completion with nothing behind it in R2 leaves a row the worker can never process, which never gets `processed_at` and fails in silence.
 **Rejected.** Two supabase-js calls. The HEAD in pre-flight, which D-82 rejected for cost; completion runs once per photo.
 **Cost.** Two migrations in S-12, two R2 requests per completion, and a row lock on every new-row pre-flight.
+**Amended (see D-122).** Both functions lock the event row `FOR NO KEY UPDATE` and decide the hash outcome under the lock. Completion looks up the row and checks the uploader, the membership and the event before the HEAD, and a row that no longer exists answers `duplicate`.
 
 ### D-96: A duplicate is a finished photo with the same bytes, deleted or not
 **Decision.** Amends D-53 and D-82. `media.content_hash` is unique per event among rows with `uploaded_at` set, soft-deleted rows included. Pre-flight treats a finished row with the hash as a duplicate even when it was deleted. The caller's own unfinished row is a resume (D-82). Another user's unfinished row is not a duplicate: both upload, the first to complete wins, and the second completion deletes its own row and objects and answers `duplicate`.
 **Why.** One guest's crashed upload blocked every other guest's copy of the same photo, often the same forwarded image, until that guest reopened the app, which might be never. Treating a deleted photo as new would let a restored photo collide with its re-upload.
 **Rejected.** An index that skips deleted rows, which makes Restore fail once the photo was uploaded again.
 **Cost.** A photo someone deleted can never be uploaded to that event again. Two guests can both spend the upload on the same photo before one of them loses.
+**Amended (see D-122).** Two completions of one hash take turns on the event lock, so the second answers `duplicate` instead of failing on the unique index.
 
 ### D-97: S-11 owns the phone's upload loop and its queue states
 **Decision.** S-11 builds the loop that sends pre-flight, PUTs both files, calls completion and moves each queue item to the state its answer leads to. `docs/ARCHITECTURE.md` §4 holds the table from each answer to a state. S-10 builds the queue's storage and its badges. S-11 is a human-read slice (D-68). It depends on S-12, and S-12 now depends on S-03 and S-04 for its tables instead of on S-11.
@@ -1010,6 +1013,32 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A Delay that always moves both times, which hides the capture FAB in the middle of a sub-event and leaves offline readings from its first part matching nothing (D-85). Keeping a venue no sub-event uses, which breaks the cap of 15 venues and leaves S-16 printing a QR for nothing. Sub-events inside `GET /events/{eventId}`, which replaces `get_my_event`. 400 `invalid_request` for the new refusals, which hides a state conflict behind a validation error.
 **Cost.** One Delay button does two things, so its confirm shows the new times. Moving a venue's sub-events away and back makes a new QR. Fixing a pin that three sub-events share takes three edits. A write invalidates two queries, and the span and the schedule can disagree for one fetch. A Guest verified for a deleted sub-event loses that row, which unlocked no photo. A photo queued offline for a sub-event deleted since is S-11's and S-12's to handle, and no doc says how yet.
 **Reopen if.** An Admin needs to move a running sub-event's start, or a tester reports a printed QR that stopped working.
+**Amended (see D-122).** A photo queued for a sub-event deleted since answers 409 `sub_event_missing` at pre-flight and stays stopped in My Media.
+
+### D-122: Upload pre-flight and completion, from S-12's read-back
+**Decision.** Amends D-82, D-95, D-96 and D-121. Ukasha ruled on each of these on 2026-10-02.
+- Pre-flight checks, in order: the caller is an active member, the event is not deleted and the album is open; the sub-event; the hash; then, for a new row, verification and the cap, which `start_upload` counts. An archived event takes uploads like any other, and the album check decides.
+- The sub-event must belong to the event in the path. One that does not, or that was deleted after the photo was queued, answers 409 `sub_event_missing`, and the phone keeps the photo stopped in My Media, where the person can delete it.
+- Pre-flight answers 201 for a new row and 200 for a resume, each with two PUT URLs.
+- When the caller's own unfinished row and another user's finished row share the hash, pre-flight resumes the caller's row. Completion then answers `duplicate` and deletes it.
+- `start_upload` and `complete_upload` each lock the event row `FOR NO KEY UPDATE`, as D-121's functions do, and decide the hash outcome under the lock. `start_upload` returns the caller's own unfinished row rather than inserting a second, so two devices on one account sending the same photo at once end with one row. Two completions of one hash end as one `completed` and one `duplicate`.
+- Completion looks up the row before anything else. A row that no longer exists answers 409 `duplicate`, because a duplicate completion is the only thing that deletes one. Then completion answers 403 `not_uploader` to anyone but the uploader, 403 `not_member` to an uploader who is no longer an active member, and 404 `not_found` when the event was deleted, all before the HEAD.
+- S-12 writes the album check behind one constant, switched off, with a test for each setting, and S-31 switches it on. S-12 writes no verification query. S-15 adds the check along with `venue_verification`.
+- S-12's migration enables `pgmq` and creates the `jobs` queue.
+- Routine calls:
+  - `capturedAt` is optional, UTC with milliseconds, and any value is accepted (D-98). The phone converts an EXIF time that carries no zone.
+  - A resume keeps the row's own sub-event, capture time and role, whatever the request sends.
+  - Pre-flight accepts any sub-event of the event, an Upcoming one included.
+  - `size_bytes` is the photo's size and leaves out the thumbnail. `variant_version` is 0 at insert, so the worker's first write makes it 1.
+  - On a `duplicate` completion the API deletes the two objects after the row. A failed delete is logged and the answer is still `duplicate`.
+**Why.** S-12's read-back found five ways the documented pipeline went wrong without an error. A member of one event could insert a photo into another through the path. A photo queued for a deleted sub-event had nowhere to go. A removed user's in-flight photo published. A retried completion after a lost `duplicate` answer sent the phone to upload to a deleted row's keys. Two completions of one hash ended in a 500 from the unique index. D-82 and Handbook §7 also put the cap before verification, where the spec and `docs/ARCHITECTURE.md` §4 put it after.
+**Rejected.** 404 `not_found` for a missing sub-event, which lands on the queue row that waits for the membership and never clears. Answering `duplicate` at pre-flight when the caller also has an unfinished row with the hash, which leaves that row behind for good.
+**Cost.** Accepted for the demo:
+- An abandoned unfinished row, from an app never relaunched after a crash or a cancel in My Media after pre-flight, holds a cap slot, blocks deleting its sub-event and keeps its R2 objects. Cleaning them up needs a scheduled job, and no slice owns one (`docs/ARCHITECTURE.md` §5).
+- A PUT URL keeps working for up to 15 minutes after completion, so a modified app can replace `upload_key` or `upload_thumb_key` after the worker has processed the photo. That breaks D-60 for that photo and can put an unblurred face behind its public keys.
+- No size limit applies to an upload. The presigned PUT binds the content type and not the length.
+- A resume that loses to another user's finished copy spends one upload for nothing.
+**Reopen if.** A tester's event fills with unfinished rows, or the build moves to a public deployment, where the PUT window and the missing size limit stop being acceptable.
 
 ## Open items that are not decisions yet
 

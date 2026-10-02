@@ -166,14 +166,14 @@ The spec's `VenueVerification`, renamed to the naming convention.
 - `sub_event_id` references `sub_event` with `ON DELETE CASCADE`. Only a sub-event with no photos can be deleted, so its verifications unlocked nothing (D-121)
 
 ### `media`
-- `event_id`, copied from the sub-event at pre-flight and never taken from the request; `sub_event_id`, `uploader_user_id`, `uploader_role_at_upload` (display only, D-13)
+- `event_id`, copied from the sub-event at pre-flight and never taken from the request, and the sub-event must belong to the event in the path (D-122); `sub_event_id`, `uploader_user_id`, `uploader_role_at_upload` (display only, D-13)
 - `sub_event_id` references `sub_event` with no `ON DELETE` action, so a sub-event with any `media` row, unfinished or soft-deleted included, cannot be deleted. S-12 replaces `delete_sub_event` with one that checks for such a row first and answers 409 `sub_event_has_media` (D-100, D-121)
 - `captured_at`, the photo's EXIF capture time sent with pre-flight, or the pre-flight time when it has none (D-98)
 - `content_hash`, SHA-256, unique per event among rows with `uploaded_at` set, soft-deleted rows included (D-53, D-96)
-- `size_bytes`, from R2's HEAD at completion (D-95). The Photographer's storage figure sums it (§4.10)
+- `size_bytes`, the photo's size from R2's HEAD at completion, the thumbnail not included (D-95, D-122). The Photographer's storage figure sums it (§4.10)
 - `upload_key`, `upload_thumb_key`, written by the API at pre-flight (D-70)
 - `uploaded_at`, set by `complete_upload` only while it is null, in the same transaction as the enqueue (D-82, D-95)
-- `public_key`, `public_thumb_key`, `variant_version` (integer), `width`, `height`, written by the worker (D-22, D-60, D-69, D-70)
+- `public_key`, `public_thumb_key`, `variant_version` (integer, 0 at insert, so the worker's first write makes it 1), `width`, `height`, written by the worker (D-22, D-60, D-69, D-70, D-122)
 - `processed_at`, written last by the worker (D-55); `deleted_at` (§4.21)
 - At most 2,000 per event (§4.17). Local Only photos never create a row (§4.12)
 
@@ -225,7 +225,7 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 | Profile photo | API | `profile.avatar_key` | `users/{user_id}/avatar_{upload_id}.jpg` |
 | Reference photo | API | `face_reference.photo_key` | `users/{user_id}/reference_{upload_id}.jpg` |
 
-- For a photo with no Do Not Publish face and no blur region, `public_key` and `public_thumb_key` hold the upload keys (§4.11). If the client's thumbnail is missing, the worker writes one at the public thumbnail key.
+- For a photo with no Do Not Publish face and no blur region, `public_key` and `public_thumb_key` hold the upload keys (§4.11). Completion refuses a photo whose thumbnail is not in R2 (§4), so a missing client thumbnail is only a fallback, and the worker writes one at the public thumbnail key.
 - Cover, profile and reference keys carry a fresh `upload_id`, so a replacement lands at a new key and no cache keeps the old image.
 - Every file the app sends reaches R2 by a presigned PUT, covers, profile photos and reference photos included (root invariant 5). The worker writes its own files directly.
 - After a regeneration commits, the worker deletes the objects the rows no longer point at, and never `upload_key` or `upload_thumb_key` (D-103).
@@ -241,13 +241,14 @@ Spec §4.8, Handbook §7.
 
 1. **Client.** Orientation applied to the pixels, then an EXIF strip keeping only the timestamp (D-99), anything not JPEG to JPEG, resize only past 4096px, a WebP thumbnail 300px on its long edge, SHA-256 over the upload bytes with `expo-crypto`. Identical for every role (D-58, D-105).
 2. **Pre-flight, JSON only.** Hash, sub-event ID, the capture time (D-98), and any verification records the device holds: a GPS reading or a Venue QR scan, each with its time (D-85, D-89). The photo itself carries no location. The API checks, in order (D-82):
-   - the caller is an `active` member, the event is not deleted, and `album_open` is true (D-12). S-12 builds the album check switched off and S-31 turns it on
-   - the hash. A row with this hash and `uploaded_at` set, deleted or not, is an exact duplicate, rejected silently. The caller's own row with no `uploaded_at` is a crashed upload: pre-flight re-signs its existing keys and stops there. Another user's unfinished row is ignored (D-53, D-96)
-   - for a new row only: verification passes, meaning a `venue_verification` row OR `admin_verified_at IS NOT NULL` OR `role = 'photographer'` (D-15), and the event holds fewer than 2,000 media rows that are not soft-deleted, finished or not, counted inside `start_upload` with the event row locked (§4.17, D-95)
+   - the caller is an `active` member, the event is not deleted, and `album_open` is true (D-12). An archived event takes uploads like any other. S-12 writes the album check behind one constant, switched off, and S-31 switches it on (D-122)
+   - the sub-event belongs to the event in the path. One that does not, or that was deleted after the photo was queued, answers 409 `sub_event_missing` (D-122)
+   - the hash. The caller's own row with no `uploaded_at` is a crashed upload, and pre-flight re-signs its existing keys and stops there, even when another user's finished row has the same hash, and completion then answers `duplicate`. Otherwise a row with this hash and `uploaded_at` set, deleted or not, is an exact duplicate, rejected silently. Another user's unfinished row is ignored (D-53, D-96, D-122)
+   - for a new row only: verification passes, meaning a `venue_verification` row OR `admin_verified_at IS NOT NULL` OR `role = 'photographer'` (D-15), and then the event holds fewer than 2,000 media rows that are not soft-deleted, finished or not, counted inside `start_upload` with the event row locked (§4.17, D-95). S-12 writes no verification query, and S-15 adds the check with `venue_verification` (D-122)
    All of these are indexed lookups.
-3. **Keys and URLs.** The API builds both upload keys, `start_upload` inserts the media row with them, and the API presigns two PUT URLs that live 15 minutes (D-70, D-95).
+3. **Keys and URLs.** The API makes the media id and builds both upload keys from it. `start_upload` locks the event row `FOR NO KEY UPDATE`, checks the sub-event and the hash again under the lock, and returns the caller's own unfinished row rather than inserting a second one, so two devices on one account sending the same photo at once end with one row. Otherwise it counts and inserts the media row with the keys. The API presigns two PUT URLs that live 15 minutes (D-70, D-95, D-122).
 4. **Upload.** The client PUTs the photo and the thumbnail to R2, one photo at a time per session, then calls completion.
-5. **Complete and enqueue.** The API sends R2 a HEAD for both objects and answers `upload_missing` if either is absent. Then `complete_upload` checks the caller uploaded the row, sets `uploaded_at` where it is null, stores `size_bytes`, and sends exactly one message to the `jobs` queue, all in one transaction: `thumbnail_dims` until S-21, `face_process` after (D-72, D-95). A repeated call changes nothing and answers `completed`. If another finished row already has the hash, it deletes this row, the API deletes its two objects, and it answers `duplicate` (D-96).
+5. **Complete and enqueue.** The API looks up the row first. A row that no longer exists answers `duplicate`, because a duplicate completion is the only thing that deletes one. Then it answers 403 `not_uploader` to anyone but the uploader, 403 `not_member` to an uploader who is no longer an active member, and 404 `not_found` when the event was deleted since pre-flight (D-122). The API sends R2 a HEAD for both objects and answers `upload_missing` if either is absent. Then `complete_upload` locks the event row `FOR NO KEY UPDATE`, checks the caller uploaded the row, sets `uploaded_at` where it is null, stores `size_bytes`, and sends exactly one message to the `jobs` queue, all in one transaction: `thumbnail_dims` until S-21, `face_process` after (D-72, D-95). A repeated call changes nothing and answers `completed`. If another finished row already has the hash, it deletes this row, the API deletes its two objects, and it answers `duplicate` (D-96). Under the lock, two completions of one hash end as one `completed` and one `duplicate`, never a unique violation. A failed object delete is logged and the answer is still `duplicate` (D-122).
 6. **Publish.** The worker sets `processed_at` last. The row passes the `media` policy and Realtime delivers it to every member (D-55).
 
 Until verification passes or while the album is closed, photos wait in the device's SQLite queue. The queue is per device and per account (§4.1).
@@ -256,14 +257,15 @@ Until verification passes or while the album is closed, photos wait in the devic
 
 | Answer | The queued photo | It moves on when |
 |---|---|---|
-| Pre-flight 200, new row or resume, with two PUT URLs | uploading | both PUTs finish, then completion |
+| Pre-flight 201 for a new row or 200 for a resume, with two PUT URLs | uploading | both PUTs finish, then completion |
 | A PUT fails, or the app dies mid-upload | queued | the next attempt, whose pre-flight answers resume (D-82) |
 | No answer: offline, a timeout, a 5xx | queued | reconnect or foreground, with backoff |
 | Pre-flight 409 `duplicate` | leaves the queue, no prompt | never |
 | Pre-flight 409 `album_closed` | queued, waiting on the album | an event fetch shows the album open |
 | Pre-flight 409 `unverified` | queued, waiting on verification | the local GPS or QR check passes, or an event fetch shows the person verified (§4.5) |
 | Pre-flight 422 `event_full` | stays in My Media with "This event is full" | never; the person can delete it |
-| Pre-flight 403 or 404: not an active member, or the event is deleted | stays in My Media, stopped | an event fetch shows the membership active again |
+| Pre-flight 409 `sub_event_missing` | stays in My Media, stopped | never; the person can delete it (D-122) |
+| Pre-flight or completion 403 `not_member`, or 404: not an active member, or the event is deleted | stays in My Media, stopped | an event fetch shows the membership active again |
 | Completion 200 `completed` | uploaded; spinner until `processed_at` is set, then the check | never |
 | Completion 409 `upload_missing` | uploading: both files again | both PUTs finish, then completion |
 | Completion 409 `duplicate` | leaves the queue, no prompt | never |

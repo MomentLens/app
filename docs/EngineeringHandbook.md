@@ -238,7 +238,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 401 | No session, or it expired | `no_session` |
 | 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |
-| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media` |
+| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media`, `sub_event_missing` |
 | 422 | A limit reached | `event_full`, `too_many_references`, `too_many_sub_events`, `event_too_long` |
 | 500 | Anything else, including a dependency the API could not reach | `internal_error` |
 | 503 | A dependency is down | `GET /health` only, with its own body |
@@ -275,7 +275,7 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 
 **Do not route media bytes through Express.** If every photo flows through Node, you pay for that bandwidth and CPU twice, once receiving and once forwarding, on a box you are specifically keeping light. Instead:
 
-1. **Pre-flight** (small JSON, this *does* go through Express): content hash, sub-event ID, and any GPS reading or Venue QR scan the device holds for verification, each with its time; the photo carries no location (D-89). No image bytes, the thumbnail included (D-69). The checks and their order are `docs/ARCHITECTURE.md` §4: membership and album state; then the hash, where the caller's own unfinished row resumes and any other match is silently rejected; then, for a new row, the cap and verification. Every one is an indexed lookup, so none risks blocking the event loop.
+1. **Pre-flight** (small JSON, this *does* go through Express): content hash, sub-event ID, the capture time (D-98), and any GPS reading or Venue QR scan the device holds for verification, each with its time; the photo carries no location (D-89). No image bytes, the thumbnail included (D-69). The checks and their order are `docs/ARCHITECTURE.md` §4: membership and album state; then the sub-event; then the hash, where the caller's own unfinished row resumes, a finished row is silently rejected and another user's unfinished row is ignored; then, for a new row, verification and the cap (D-122). Every one is an indexed lookup, so none risks blocking the event loop.
 2. **Presigned URLs.** If it passes, Express builds the upload keys for the photo and its thumbnail in its one key function, writes them onto the new media row (D-70), and presigns a PUT URL for each with `@aws-sdk/s3-request-presigner` over `@aws-sdk/client-s3` (R2 is S3-API-compatible), living 15 minutes (D-105). The cap check and the insert run in the `start_upload` SQL function, with the event row locked (D-95).
 3. **Direct upload.** The client PUTs the photo and its thumbnail straight to R2. Express is not in this path.
 4. **Completion.** The client tells Express "done." Express checks both objects with a HEAD, then calls the `complete_upload` SQL function, which sets `uploaded_at` where it is null and enqueues the `pgmq` job in the same transaction, so a retried completion enqueues nothing (D-82, D-95). supabase-js holds no transaction, so this cannot be two calls.
