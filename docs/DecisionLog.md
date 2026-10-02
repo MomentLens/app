@@ -517,6 +517,7 @@ Four gaps found by reading the spec, handbook and this log against each other be
 **Why.** The album shows a row only once `processed_at` is set (D-55), and only the worker sets it. With the worker in Phase 5, the album built in Phase 3 would show nothing for two phases, and the obvious stopgap, setting `processed_at` in the completion endpoint, is root invariant 1 broken under a "temporary" label.
 **Rejected.** Keeping the worker in Phase 5 and testing the album against seeded rows. It works, and it leaves the stopgap within reach for two phases.
 **Watch for.** Once Do Not Publish users exist, `thumbnail_dims` is a publishing bug. It sets `processed_at` without blurring and points the public keys at the unblurred upload. On the same upload as `face_process`, it can publish the photo first or overwrite the blurred keys afterwards. S-21 deletes its enqueue, and the S-21 PR confirms nothing else enqueues it.
+**Amended (see D-123).** `thumbnail_dims` acts only on a row whose `variant_version` is 0, so a message re-sent from the archive never points a row another job wrote back at the upload.
 
 ---
 
@@ -757,6 +758,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** One queue per job, which loses the order between two jobs on the same photo. Retrying forever, which hides a broken job.
 **Cost.** One slow photo delays every job behind it. A viewer looking at a replaced file gets one failed load and re-resolves. A `reprocess` or `blur_region` that fails three times leaves a published photo with its previous files, which can still show a face that should now be blurred; that is an open item below.
 **Amended (see D-108).** A message about a photo that fails three times now also clears that photo's `processed_at`, so a failed `reprocess` or `blur_region` never leaves it up with its previous files.
+**Amended (see D-123).** A try is a read, counted by pgmq's `read_ct`, and a failed message is read again before any newer one. One worker reads `jobs` at a time, through a Postgres advisory lock. A job's writes commit with its message's delete.
 
 ### D-104: Until S-26 measures, matching fails closed
 **Decision.** The worker reads its thresholds from configuration that mirrors `docs/ARCHITECTURE.md` §6. While §6 says "not measured", it blurs every detected face in every file it writes, subjects' own files included, and records no match on `face` rows. Tests set a threshold in their own fixtures, never in configuration.
@@ -808,6 +810,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** A failed `reprocess` or `blur_region` left a published photo with its previous files, which can still show a face that was just made Do Not Publish or just blurred. This fails closed, like D-104: a missing photo is visible and fixable, and a leaked face is neither.
 **Rejected.** Keeping the previous files, D-103's first answer. Letting the `media` policy pass the unpublished row so Realtime removes it live, which would also hand members rows that were never processed, against the Realtime test in Handbook §11.3.
 **Cost.** The photo is gone from the album until someone re-queues the job, and only the log says so, and Sentry once the worker has it. A URL already signed stays valid for up to an hour, and a phone that already shows the photo keeps it until its next fetch.
+**Amended (see D-123).** The archive and the clearing of `processed_at` commit in one transaction, and the worker reports each archived message to Sentry.
 
 ### D-109: Auth rulings from S-01's read-back
 **Decision.** Amends D-35, D-94 and D-105. Ukasha ruled on each of these on 2026-09-24.
@@ -1050,6 +1053,29 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - A resume that loses to another user's finished copy spends one upload for nothing.
 - An account with photos cannot be deleted until support removes its photos by hand.
 **Reopen if.** A tester's event fills with unfinished rows, or the build moves to a public deployment, where the PUT window and the missing size limit stop being acceptable.
+
+### D-123: Worker skeleton, from S-18a's read-back
+**Decision.** Amends D-72, D-103 and D-108. Ukasha ruled on each of these on 2026-10-02.
+- The worker's libraries are `psycopg[binary]` 3, used synchronously, `boto3`, `opencv-python-headless` and `pydantic`, exactly pinned in `worker/requirements.txt`. Ruff and pytest go in `worker/requirements-dev.txt`, which installs `requirements.txt` too. `thumbnail_dims` reads width and height by decoding the upload with OpenCV, so a JPEG that does not decode fails and never publishes.
+- A try is a read. pgmq's `read_ct` counts it, so a crash counts as one. After a failed try the worker waits and reads the same message again before any newer one, so a newer job on the same photo never runs first. The third failure archives it. At startup the worker makes every message a crash left hidden visible again.
+- One worker reads `jobs` at a time. It holds a Postgres advisory lock while it reads, and a second worker, such as a laptop pointed at the dev project, logs that the queue is taken and waits. To run a worker locally against the dev project, stop the server's first (Handbook §13.4). `DATABASE_URL` is the Supabase session pooler's connection string on port 5432, because the lock needs a session and the direct host is IPv6 only.
+- A job's row writes and its message's delete commit in one transaction. So do a final failure's archive and its clearing of `processed_at`. The worker holds its own transactions, so it needs no SQL function for either (D-95 is about supabase-js).
+- `thumbnail_dims` acts only on a row whose `variant_version` is 0, one no job has written, and deletes any other row's message as done.
+- Three kinds of message are archived on their first try, because a retry cannot help: one whose upload object is missing from R2, one that does not parse, and one naming a job the worker does not have. If it names a photo, `processed_at` is cleared as for any final failure.
+- The worker processes a soft-deleted row like any other, because the Admin can restore it for 30 days (spec §4.21).
+- S-18a adds Sentry to the worker, in the project `momentlens-worker`. It reports archived messages only, and stays off while `SENTRY_DSN` is unset.
+- The worker's CI job runs Ruff and pytest with Postgres and R2 faked. A second test module runs the worker's SQL against the dev project inside a transaction it rolls back. It skips when `DATABASE_URL` is unset, and CI runs it from the `SUPABASE_DEV_DATABASE_URL` secret on pull requests that touch `worker/` or `supabase/`, as `rls.yml` does (D-106).
+- Routine calls:
+  - The loop runs on the main thread and `/health` on a side thread. The process exits when the loop dies, so `Restart=always` brings it back, and `/health` answers 503 once the loop has stopped.
+  - The worker retries a lost Postgres or R2 connection itself, with a wait, rather than exiting, because systemd stops restarting a unit that fails 5 times in 10 seconds.
+  - SIGTERM lets the current job finish before the process exits.
+  - A decode is capped at 4096×4096 pixels, from root invariant 9's longest edge, so an oversized file fails instead of exhausting the server's memory (D-122 accepts no upload size limit).
+  - Width and height are read as stored, with no EXIF orientation applied (D-99).
+  - The worker polls an empty queue once a second, with a 120-second visibility timeout.
+**Why.** S-18a's read-back found the docs silent on what counts as a try, where a retried message goes in line, and how many workers may read the queue. A wrong answer to any of them breaks D-103's order without an error, and three developers share the dev project, so a second worker was one command away. S-19a's `blur_region` ships before S-21 retires `thumbnail_dims`. If `blur_region` failed three times and D-108 cleared `processed_at`, a `thumbnail_dims` message re-sent from the archive would point the public keys back at the unblurred upload and publish it. A crash between an archive and its clear left a photo up with no message to retry it. Every doc promised Sentry "once the worker has it", and no slice added it.
+**Rejected.** Retrying through pgmq's visibility timeout, which lets a newer job on the same photo run first. Pillow for the dimensions, which reads only the header and is not in Handbook §17. A written rule alone against a second worker, which nothing enforces. Guarding `thumbnail_dims` on `processed_at`, which D-108 clears.
+**Cost.** One failing message holds the queue for the length of its retries. The real-SQL test needs a secret in GitHub and runs against the shared dev project. The API's RLS suite completes uploads with no file in R2, so each run leaves a few messages that the dev server's worker archives with an error line and a Sentry report. OpenCV decodes the whole photo to read two numbers, about 150 ms each.
+**Reopen if.** The worker needs to run jobs in parallel, which the lock and the order both forbid.
 
 ## Open items that are not decisions yet
 
