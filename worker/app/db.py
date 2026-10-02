@@ -1,7 +1,8 @@
 """Postgres for the worker: one connection, the queue lock, reconnects and transactions.
 
 The worker connects with DATABASE_URL as the postgres role, so RLS does not apply. Every query
-here names its row by primary key (worker/AGENTS.md).
+here names one media row by its primary key, the photo the message names, so none reaches into
+another event (worker/AGENTS.md asks for every query to be scoped to its event).
 
 The connection runs in autocommit, so a statement outside `transaction()` commits on its own.
 That is what makes a pgmq read count as a try when the process dies before the job's own
@@ -160,11 +161,6 @@ class Store:
             row = cur.fetchone()
         self.locked = bool(row and row[0])
         return self.locked
-
-    def unlock(self) -> None:
-        with self._statement() as cur:
-            cur.execute("select pg_advisory_unlock(%s::bigint)", (self.lock_key,))
-        self.locked = False
 
     @contextmanager
     def transaction(self) -> Iterator[Tx]:
