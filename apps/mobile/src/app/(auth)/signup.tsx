@@ -1,16 +1,18 @@
 import { FullName } from '@momentlens/shared-types';
 import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import { Text, TextInput } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
+import { FieldGroup } from '@/components/ui/field-group';
 import { TextField } from '@/components/ui/text-field';
 import { TextLink } from '@/components/ui/text-link';
-import { AuthScreen } from '@/features/auth/auth-screen';
+import { AuthScreen, Inset } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
 import { PASSWORD_MIN, signupFieldErrors } from '@/features/auth/validation';
 import { JoinBanner } from '@/features/join/join-banner';
+import { byPlatform } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
 // Create Account (spec §2.1.1): name, email, password, laid out as the Figma CreateAccount frame.
@@ -77,13 +79,27 @@ export default function SignupScreen() {
   }
 
   return (
-    <AuthScreen title="Create your account">
+    <AuthScreen
+      title={byPlatform('Create Account', 'Create account')}
+      subtitle="Your name shows on the photos you share."
+      onBack={toLogin}
+      footer={
+        <>
+          <Button
+            label={byPlatform('Create Account', 'Create account')}
+            busy={busy}
+            onPress={() => void signUp()}
+          />
+          <Text className="pt-1 text-center font-bodySecondary text-bodySecondary text-textSecondary">
+            Already have an account?{' '}
+            <TextLink label={byPlatform('Log In', 'Log in')} disabled={busy} onPress={toLogin} />
+          </Text>
+        </>
+      }>
       <JoinBanner />
-      <View className="gap-4">
+      <FieldGroup footer={`At least ${PASSWORD_MIN} characters.`}>
         <TextField
           label="Full name"
-          icon="user"
-          placeholder="Your full name"
           value={name}
           onChangeText={setName}
           error={shown?.name}
@@ -97,8 +113,7 @@ export default function SignupScreen() {
         />
         <TextField
           ref={emailRef}
-          label="Email address"
-          icon="mail"
+          label="Email"
           placeholder="name@email.com"
           value={email}
           onChangeText={setEmail}
@@ -116,8 +131,6 @@ export default function SignupScreen() {
         <TextField
           ref={passwordRef}
           label="Password"
-          icon="lock"
-          placeholder={`At least ${PASSWORD_MIN} characters`}
           secure
           value={password}
           onChangeText={setPassword}
@@ -130,15 +143,13 @@ export default function SignupScreen() {
           onSubmitEditing={() => void signUp()}
           editable={!busy}
         />
-      </View>
+      </FieldGroup>
 
-      {error ? <FormMessage message={error} /> : null}
-
-      <Button label="Create account" busy={busy} onPress={() => void signUp()} />
-
-      <Text className="text-center font-caption text-caption text-textSecondary">
-        Already have an account? <TextLink label="Log in" disabled={busy} onPress={toLogin} />
-      </Text>
+      {error ? (
+        <Inset>
+          <FormMessage message={error} />
+        </Inset>
+      ) : null}
     </AuthScreen>
   );
 }

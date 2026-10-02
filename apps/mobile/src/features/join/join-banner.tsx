@@ -15,13 +15,13 @@ export function JoinBanner() {
   return (
     <View
       accessibilityLiveRegion="polite"
-      className="flex-row items-start gap-3 rounded-2xl bg-accentTint py-3 pl-4 pr-1">
+      className="flex-row items-start gap-3 rounded-2xl bg-accentTint py-3 pl-4 pr-1 ios:mx-5 android:mx-6">
       <View className="pt-0.5">
         <Icon name="ticket" size={20} className="text-accentText" />
       </View>
       <View className="flex-1 gap-0.5 py-0.5">
         <Text className="font-bodySecondary text-bodySecondary text-textPrimary">
-          Joining <Text className="font-manrope-semibold">{invite.eventName}</Text> as{' '}
+          Joining <Text className="font-semibold">{invite.eventName}</Text> as{' '}
           {ROLE_LABEL[invite.role]}
         </Text>
         <Text className="font-caption text-caption text-textSecondary">

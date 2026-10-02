@@ -126,7 +126,7 @@ export default function PendingApprovalScreen() {
               </Text>
               <Text className="text-center font-body text-body text-textSecondary">
                 Waiting for the organizer to approve your request to join{' '}
-                <Text className="font-manrope-semibold text-textPrimary">{eventName}</Text>.
+                <Text className="font-semibold text-textPrimary">{eventName}</Text>.
               </Text>
             </View>
             {request ? (

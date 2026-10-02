@@ -3,9 +3,11 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
+import { FieldGroup } from '@/components/ui/field-group';
 import { TextField } from '@/components/ui/text-field';
-import { AuthScreen } from '@/features/auth/auth-screen';
+import { AuthScreen, Inset } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
+import { byPlatform } from '@/lib/copy';
 import { RESET_PASSWORD_URL, supabase } from '@/lib/supabase';
 
 // Asks Supabase to email a recovery link to momentlens://reset-password (D-109), laid out as the
@@ -57,38 +59,56 @@ export default function ForgotPasswordScreen() {
   if (sentTo !== null) {
     return (
       <AuthScreen
-        icon="send"
-        title="Check your email"
+        variant="status"
+        icon="mail"
+        title={byPlatform('Check Your Email', 'Check your email')}
         subtitle={`If an account uses ${sentTo}, a reset link is on its way. Open it on this phone, because it will not work on any other device. Only the newest link works.`}
         onBack={() => setSentTo(null)}
-        footer={<Button label="Back to log in" variant="secondary" onPress={backToLogin} />}
+        footer={
+          <Button
+            label={byPlatform('Back to Log In', 'Back to log in')}
+            variant="secondary"
+            onPress={backToLogin}
+          />
+        }
       />
     );
   }
 
   return (
     <AuthScreen
-      title="Reset your password"
-      subtitle="Enter the email tied to your account and we will send you a reset link."
+      title={byPlatform('Reset Password', 'Reset your password')}
+      subtitle="We email you a link. Open it on this phone."
       onBack={backToLogin}
-      footer={<Button label="Send reset link" busy={busy} onPress={() => void sendLink()} />}>
-      <TextField
-        label="Email address"
-        icon="mail"
-        placeholder="name@email.com"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="email"
-        textContentType="emailAddress"
-        keyboardType="email-address"
-        returnKeyType="send"
-        onSubmitEditing={() => void sendLink()}
-        editable={!busy}
-      />
+      footer={
+        <Button
+          label={byPlatform('Send Reset Link', 'Send reset link')}
+          busy={busy}
+          onPress={() => void sendLink()}
+        />
+      }>
+      <FieldGroup>
+        <TextField
+          label="Email"
+          placeholder="name@email.com"
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="email"
+          textContentType="emailAddress"
+          keyboardType="email-address"
+          returnKeyType="send"
+          onSubmitEditing={() => void sendLink()}
+          editable={!busy}
+        />
+      </FieldGroup>
 
-      {error ? <FormMessage message={error} /> : null}
+      {error ? (
+        <Inset>
+          <FormMessage message={error} />
+        </Inset>
+      ) : null}
     </AuthScreen>
   );
 }

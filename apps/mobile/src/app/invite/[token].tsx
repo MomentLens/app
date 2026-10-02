@@ -46,6 +46,7 @@ export default function InviteLinkScreen() {
   if (invite.isError) {
     return (
       <AuthScreen
+        variant="status"
         icon="circle-alert"
         title="The invite could not be opened"
         subtitle="MomentLens could not be reached. Check your connection, then try the link again."
@@ -56,7 +57,7 @@ export default function InviteLinkScreen() {
               busy={invite.isFetching}
               onPress={() => void invite.refetch()}
             />
-            <Button label="Cancel" variant="secondary" onPress={leave} />
+            <Button label="Cancel" variant="quiet" onPress={leave} />
           </>
         }
       />
@@ -64,7 +65,7 @@ export default function InviteLinkScreen() {
   }
 
   return (
-    <AuthScreen title="Opening your invite">
+    <AuthScreen variant="status" title="Opening your invite">
       <ActivityIndicator className="text-accent" />
     </AuthScreen>
   );

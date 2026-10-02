@@ -120,7 +120,6 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
 
       <TextField
         label="Search"
-        icon="search"
         placeholder="Hall, hotel or address"
         value={query}
         onChangeText={setQuery}

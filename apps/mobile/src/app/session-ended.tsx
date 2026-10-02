@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { AuthScreen } from '@/features/auth/auth-screen';
 import { acknowledgeSessionEnded } from '@/stores/auth';
+import { byPlatform } from '@/lib/copy';
 
 // Forced Logout (spec §2.5.8). The session ended without the user asking: Supabase rejected the
 // refresh token, which happens after a password change on another device or when the account's
@@ -10,10 +11,11 @@ import { acknowledgeSessionEnded } from '@/stores/auth';
 export default function SessionEndedScreen() {
   return (
     <AuthScreen
+      variant="status"
       icon="log-out"
       title="You have been logged out"
       subtitle="Your session ended. This happens when the password is changed on another device, or when the account is signed out everywhere. Log in again to carry on."
-      footer={<Button label="Log in" onPress={acknowledgeSessionEnded} />}
+      footer={<Button label={byPlatform('Log In', 'Log in')} onPress={acknowledgeSessionEnded} />}
     />
   );
 }

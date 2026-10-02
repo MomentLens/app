@@ -89,7 +89,6 @@ export default function BasicInfoStep() {
           accessibilityLabel="Approval Mode"
           value={draft.approvalRequired}
           onValueChange={(approvalRequired) => updateBasics({ approvalRequired })}
-          className="text-accent"
         />
       </View>
     </WizardFrame>

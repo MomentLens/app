@@ -24,7 +24,7 @@
 
   --color-textPrimary: 30 27 23; /* #1E1B17 */
   --color-textSecondary: 92 86 76; /* #5C564C */
-  --color-textMuted: 143 136 123; /* #8F887B */
+  --color-textMuted: 111 104 92; /* #6F685C, 5.1:1 on background (D-124) */
 
   --color-border: 231 224 211; /* #E7E0D3 */
   --color-borderStrong: 214 204 185; /* #D6CCB9 */
@@ -32,11 +32,19 @@
   --color-accent: 200 155 60; /* #C89B3C */
   --color-accentPressed: 173 131 48; /* #AD8330 */
   --color-accentTint: 243 228 192; /* #F3E4C0 */
-  --color-accentText: 156 117 38; /* #9C7526 */
+  --color-accentText: 126 91 30; /* #7E5B1E, 5.7:1 on background (D-124) */
 
   --color-danger: 179 67 47; /* #B3432F */
   --color-dangerTint: 246 222 214; /* #F6DED6 */
   --color-success: 76 122 85; /* #4C7A55 */
+
+  --color-surfaceContainer: 241 235 224; /* #F1EBE0, Android's navigation bar (D-124) */
+  --color-hero: 30 27 23; /* #1E1B17, the Live card */
+  --color-onHero: 250 246 239; /* #FAF6EF */
+
+  /* Over a photo, white on a dark shade in both modes. */
+  --color-onPhoto: 255 255 255; /* #FFFFFF */
+  --color-scrim: 0 0 0; /* #000000 */
 }
 
 .dark:root {
@@ -46,7 +54,7 @@
 
   --color-textPrimary: 244 239 229; /* #F4EFE5 */
   --color-textSecondary: 185 175 159; /* #B9AF9F */
-  --color-textMuted: 134 125 110; /* #867D6E */
+  --color-textMuted: 154 145 127; /* #9A917F, 5.9:1 on background (D-124) */
 
   --color-border: 51 44 34; /* #332C22 */
   --color-borderStrong: 71 60 44; /* #473C2C */
@@ -59,4 +67,11 @@
   --color-danger: 221 99 73; /* #DD6349 */
   --color-dangerTint: 59 36 29; /* #3B241D */
   --color-success: 116 168 127; /* #74A87F */
+
+  --color-surfaceContainer: 34 30 23; /* #221E17 */
+  --color-hero: 58 49 34; /* #3A3122, a raised warm surface rather than an inverted slab */
+  --color-onHero: 244 239 229; /* #F4EFE5 */
+
+  --color-onPhoto: 255 255 255; /* #FFFFFF */
+  --color-scrim: 0 0 0; /* #000000 */
 }

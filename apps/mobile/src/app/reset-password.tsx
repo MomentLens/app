@@ -4,8 +4,9 @@ import { ActivityIndicator } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
+import { FieldGroup } from '@/components/ui/field-group';
 import { TextField } from '@/components/ui/text-field';
-import { AuthScreen } from '@/features/auth/auth-screen';
+import { AuthScreen, Inset } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
 import { exchangeOnce, type ExchangeResult } from '@/features/auth/reset-link';
 import { PASSWORD_MIN, passwordError } from '@/features/auth/validation';
@@ -105,7 +106,7 @@ export default function ResetPasswordScreen() {
 
   if (result === null) {
     return (
-      <AuthScreen title="Checking your link">
+      <AuthScreen variant="status" title="Checking your link">
         <ActivityIndicator className="text-accent" />
       </AuthScreen>
     );
@@ -115,6 +116,7 @@ export default function ResetPasswordScreen() {
     const failure = FAILURES[result];
     return (
       <AuthScreen
+        variant="status"
         icon="circle-alert"
         title={failure.title}
         subtitle={failure.message}
@@ -142,24 +144,28 @@ export default function ResetPasswordScreen() {
       title="Choose a new password"
       subtitle="Saving it logs your other devices out within the hour."
       footer={<Button label="Save password" busy={busy} onPress={() => void save()} />}>
-      <TextField
-        label="New password"
-        icon="lock"
-        placeholder={`At least ${PASSWORD_MIN} characters`}
-        secure
-        value={password}
-        onChangeText={setPassword}
-        error={fieldError}
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="new-password"
-        textContentType="newPassword"
-        returnKeyType="done"
-        onSubmitEditing={() => void save()}
-        editable={!busy}
-      />
+      <FieldGroup footer={`At least ${PASSWORD_MIN} characters.`}>
+        <TextField
+          label="New password"
+          secure
+          value={password}
+          onChangeText={setPassword}
+          error={fieldError}
+          autoCapitalize="none"
+          autoCorrect={false}
+          autoComplete="new-password"
+          textContentType="newPassword"
+          returnKeyType="done"
+          onSubmitEditing={() => void save()}
+          editable={!busy}
+        />
+      </FieldGroup>
 
-      {error ? <FormMessage message={error} /> : null}
+      {error ? (
+        <Inset>
+          <FormMessage message={error} />
+        </Inset>
+      ) : null}
     </AuthScreen>
   );
 }

@@ -35,7 +35,7 @@ export default function AppTabs() {
 
   return (
     <NativeTabs {...colors}>
-      <NativeTabs.Trigger name="index">
+      <NativeTabs.Trigger name="(events)">
         <NativeTabs.Trigger.Label>Events</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} md="home" />
       </NativeTabs.Trigger>
