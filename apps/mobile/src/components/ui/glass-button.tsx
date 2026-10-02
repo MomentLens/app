@@ -29,7 +29,9 @@ export function GlassButton({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
-      className={disabled ? 'opacity-40' : 'active:opacity-70'}>
+      // The active: modifier stays in both states. NativeWind upgrades a component the first time
+      // its classes gain one, and its development warning then crashed inside the sheets.
+      className={`active:opacity-70 ${disabled ? 'opacity-40' : ''}`}>
       {GLASS ? (
         <GlassView
           isInteractive

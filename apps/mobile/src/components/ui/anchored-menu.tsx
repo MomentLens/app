@@ -7,7 +7,8 @@ import { useTokenColor } from '@/hooks/use-token-color';
 export interface MenuItem {
   key: string;
   label: string;
-  glyph: GlyphName;
+  // A leading icon. Items in a choice menu leave it out, and the chosen one shows a check.
+  glyph?: GlyphName;
   onPress: () => void;
   destructive?: boolean;
   disabled?: boolean;
@@ -72,11 +73,15 @@ export function AnchoredMenu({ anchor, items, onClose }: AnchoredMenuProps) {
               }}
               style={{ height: ITEM }}
               className={`flex-row items-center gap-3 px-3 ${item.disabled ? 'opacity-40' : ''}`}>
-              <Glyph
-                name={item.glyph}
-                size={24}
-                tone={item.destructive ? 'danger' : 'textSecondary'}
-              />
+              {item.glyph ? (
+                <Glyph
+                  name={item.glyph}
+                  size={24}
+                  tone={item.destructive ? 'danger' : 'textSecondary'}
+                />
+              ) : (
+                <View className="w-6" />
+              )}
               <Text
                 className={`font-fieldLabel text-fieldLabel ${item.destructive ? 'text-danger' : 'text-textPrimary'}`}>
                 {item.label}

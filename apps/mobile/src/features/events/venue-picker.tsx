@@ -275,8 +275,11 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
               )}
             </GlassButton>
           </View>
+          {/* Keyed, so the card mounts fresh rather than restyling the hint's view: a view whose
+              classes gain a shadow after its first render makes NativeWind remount it, and its
+              development warning crashed. */}
           {point ? (
-            <View className="gap-3 rounded-[26px] bg-surface p-4 shadow-lg">
+            <View key="card" className="gap-3 rounded-[26px] bg-surface p-4 shadow-lg">
               <View className="gap-0.5">
                 <Text className="font-caption text-caption text-textSecondary">
                   Venue name, as guests will see it
@@ -299,7 +302,7 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
               />
             </View>
           ) : (
-            <View className="items-center">
+            <View key="hint" className="items-center">
               <View className="rounded-full bg-surface/90 px-4 py-2">
                 <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
                   Search, or tap the map to drop a pin

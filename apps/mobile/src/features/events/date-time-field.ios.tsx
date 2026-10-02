@@ -13,7 +13,7 @@ export function DateTimeField({ label, value, onChange, error }: DateTimeFieldPr
   return (
     <Row
       trailing={
-        <TintedHost matchContents className="text-accent">
+        <TintedHost matchContents className="text-accentText">
           <DatePicker
             title={label}
             selection={value}

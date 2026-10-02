@@ -120,7 +120,7 @@ export function ScheduleRow({
             <Link.MenuAction
               key={item.key}
               title={item.label}
-              icon={item.glyph.ios}
+              icon={item.glyph?.ios}
               destructive={item.destructive}
               disabled={item.disabled}
               onPress={item.onPress}
