@@ -18,13 +18,14 @@ import type { MembershipRole, MembershipStatus } from '@momentlens/shared-types'
 import { uploadKeys } from '../../src/lib/keys';
 import type { VerifyToken } from '../../src/middleware/auth';
 import type { EventStore, MemberAccess } from '../../src/services/events';
-import { MAX_EVENT_MEDIA, preflightUpload } from '../../src/services/media';
+import { preflightUpload, UPLOAD_LIMITS } from '../../src/services/media';
 import type {
   CompleteResult,
   MediaDeps,
   MediaStore,
   NewUpload,
   StartResult,
+  UploadLimits,
   UploadRecord,
 } from '../../src/services/media';
 import { startApp, testDeps } from '../support/app';
@@ -104,16 +105,16 @@ class FakeEvents implements EventStore {
 // `completeAnswer` holds an answer, as the real function gives under its lock.
 class FakeMedia implements MediaStore {
   readonly rows = new Map<string, UploadRecord>();
-  readonly starts: { upload: NewUpload; maxMedia: number }[] = [];
+  readonly starts: { upload: NewUpload; limits: UploadLimits }[] = [];
   readonly completes: { mediaId: string; userId: string; sizeBytes: number }[] = [];
   startAnswer: StartResult | null = null;
   completeAnswer: CompleteResult | null = null;
   messages = 0;
   failWith: Error | null = null;
 
-  start(upload: NewUpload, maxMedia: number): Promise<StartResult> {
+  start(upload: NewUpload, limits: UploadLimits): Promise<StartResult> {
     if (this.failWith) return Promise.reject(this.failWith);
-    this.starts.push({ upload, maxMedia });
+    this.starts.push({ upload, limits });
     if (this.startAnswer) return Promise.resolve(this.startAnswer);
     this.rows.set(upload.mediaId, {
       id: upload.mediaId,
@@ -374,7 +375,7 @@ describe('POST /events/{eventId}/media/preflight', () => {
             uploadKey: keys.photo,
             uploadThumbKey: keys.thumbnail,
           },
-          maxMedia: MAX_EVENT_MEDIA,
+          limits: UPLOAD_LIMITS,
         },
       ]);
       expect(bucket.presignGets).toBe(0);
@@ -395,6 +396,17 @@ describe('POST /events/{eventId}/media/preflight', () => {
     const body = preflightBody();
     delete (body as Partial<typeof body>).capturedAt;
     const response = await send('POST', preflightPath(), 'token-guest', body);
+    expect(response.status).toBe(201);
+    expect(media.starts[0]?.upload.capturedAt).toBeNull();
+  });
+
+  it('takes a null capture time as none, so the database stamps the pre-flight', async () => {
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ capturedAt: null }),
+    );
     expect(response.status).toBe(201);
     expect(media.starts[0]?.upload.capturedAt).toBeNull();
   });
@@ -491,6 +503,7 @@ describe('POST /events/{eventId}/media/preflight', () => {
     ['sub_event_missing', 409, 'sub_event_missing'],
     ['duplicate', 409, 'duplicate'],
     ['full', 422, 'event_full'],
+    ['too_many', 422, 'too_many_unfinished'],
     ['not_found', 404, 'not_found'],
   ] as const)(
     'answers start_upload refusing with %s as %i %s, with no URL',
@@ -667,6 +680,22 @@ describe('POST /media/{mediaId}/complete', () => {
       await expect(errorCode(response)).resolves.toBe('upload_missing');
       expect(media.completes).toEqual([]);
       expect(media.rows.get(row.id)?.uploaded).toBe(false);
+      expect(media.messages).toBe(0);
+    },
+  );
+
+  it.each([
+    ['the photo', 'photo'],
+    ['the thumbnail', 'thumbnail'],
+  ] as const)(
+    'answers 409 upload_missing when %s is empty, and leaves the row unfinished with no message',
+    async (_case, file) => {
+      const row = seedUpload(GUEST);
+      bucket.objects.set(file === 'photo' ? row.uploadKey : row.uploadThumbKey, 0);
+      const response = await send('POST', completePath(row.id), 'token-guest');
+      expect(response.status).toBe(409);
+      await expect(errorCode(response)).resolves.toBe('upload_missing');
+      expect(media.completes).toEqual([]);
       expect(media.messages).toBe(0);
     },
   );
