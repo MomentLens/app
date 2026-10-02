@@ -43,7 +43,8 @@ def create_app(loop_running: threading.Event) -> FastAPI:
 
     @app.get("/health")
     def health(response: Response) -> dict[str, str]:
-        """200 while the queue loop runs, waiting for the lock included, 503 once it stopped."""
+        """200 while the queue loop runs, waiting for the lock included. 503 before it starts,
+        while the jobs' setup hooks run, and once it stopped."""
         if loop_running.is_set():
             return {"status": "ok"}
         response.status_code = 503
@@ -114,7 +115,11 @@ def main() -> int:
         log.error("cannot start: %s", error)
         return 1
 
-    run_setup_hooks()
+    try:
+        run_setup_hooks()
+    except Exception:
+        log.exception("cannot start: a job's setup hook failed")
+        return 1
     store = Store(settings.database_url)
     worker = Worker(store, Storage.from_settings(settings), REGISTRY, stop)
 
