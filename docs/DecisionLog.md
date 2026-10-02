@@ -1028,9 +1028,15 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - Ruled at S-12's api build:
   - `start_upload` alone decides the sub-event, the resume, the duplicate and the cap, under the event lock. The API checks the membership and the album before the call and makes no other lookup.
   - `media.uploader_user_id` references `auth.users` with no `ON DELETE` action, so an account with photos cannot be deleted until support removes them (spec §4.19).
-- Ruled at S-12's done stage: a `jobs` message whose media row no longer exists is deleted as done, with no retry, no archive and no Sentry report. S-18a builds it.
+- Ruled at S-12's done stage:
+  - A `jobs` message whose media row no longer exists is deleted as done, with no retry, no archive and no Sentry report. S-18a builds it.
+  - One person holds at most 50 unfinished rows in an event that are not soft-deleted. Past that, pre-flight answers 422 `too_many_unfinished`. A resume skips the check. Without it, one member could fill the event's 2,000 places with pre-flights that never upload.
+  - A soft-deleted unfinished row never resumes, and completion answers it `duplicate`, so a retry never publishes a photo its uploader deleted.
+  - The PUT URLs stay bound to the content type alone, and the risk in Cost stays accepted. The fix, when one is needed, is to sign `ChecksumSHA256` from `content_hash` into the photo's PUT, so R2 refuses any other bytes. That also checks root invariant 7 on the server, and needs the app to send the header and a hash for the thumbnail.
+  - arch §4's queue table gains rows for 401, 400 and completion's `not_uploader`. A lost completion answer retries completion, never pre-flight, which would send both files again.
+  - Routine call: arch §3 no longer says the worker writes a missing client thumbnail, since completion refuses a photo without one.
 - Routine calls:
-  - `capturedAt` is optional, UTC with milliseconds, and any value is accepted (D-98). The phone converts an EXIF time that carries no zone.
+  - `capturedAt` is optional or null, UTC with milliseconds, and any value is accepted (D-98). The phone converts an EXIF time that carries no zone.
   - A resume keeps the row's own sub-event, capture time and role, whatever the request sends.
   - Pre-flight accepts any sub-event of the event, an Upcoming one included.
   - `size_bytes` is the photo's size and leaves out the thumbnail. `variant_version` is 0 at insert, so the worker's first write makes it 1.
