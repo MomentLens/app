@@ -80,11 +80,13 @@ if (project === null) {
   const admin = createServerClient(project.url, project.secretKey);
   const created: string[] = [];
 
+  // One delete per account the file made, in sequence. With S-04's tests that ran past the 30
+  // seconds above from a laptop, which failed the suite after every test had passed.
   afterAll(async () => {
     for (const id of created) {
       await admin.auth.admin.deleteUser(id);
     }
-  });
+  }, 120_000);
 
   function newEmail(): string {
     return `rls-test+${randomUUID()}@momentlens.me`;
