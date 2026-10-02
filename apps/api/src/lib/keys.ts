@@ -18,3 +18,12 @@ function uuidPart(value: string, name: string): string {
 export function coverKey(eventId: string, uploadId: string): string {
   return `events/${uuidPart(eventId, 'eventId')}/cover_${uuidPart(uploadId, 'uploadId')}.jpg`;
 }
+
+// The two keys a media row's upload goes to: {media_id}/upload.jpg for the photo and
+// {media_id}/upload_thumb.webp for the client thumbnail. Pre-flight writes both onto the row, and
+// everything after reads them from there. The worker's derived keys live beside them under the same
+// media id, and the worker builds those (D-70).
+export function uploadKeys(mediaId: string): { photo: string; thumbnail: string } {
+  const id = uuidPart(mediaId, 'mediaId');
+  return { photo: `${id}/upload.jpg`, thumbnail: `${id}/upload_thumb.webp` };
+}
