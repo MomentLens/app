@@ -5,7 +5,12 @@ import io
 import boto3
 import pytest
 from botocore.config import Config
-from botocore.exceptions import ClientError, EndpointConnectionError, IncompleteReadError
+from botocore.exceptions import (
+    ClientError,
+    EndpointConnectionError,
+    IncompleteReadError,
+    ResponseStreamingError,
+)
 from botocore.response import StreamingBody
 from botocore.stub import Stubber
 
@@ -48,10 +53,10 @@ def test_no_such_key_is_missing(stubbed):
         storage.read("a/upload.jpg")
 
 
-def test_no_such_bucket_is_not_a_missing_photo(stubbed):
+def test_no_such_bucket_is_an_outage_not_a_missing_photo(stubbed):
     storage, stubber, _ = stubbed
     stubber.add_client_error("get_object", "NoSuchBucket", http_status_code=404)
-    with pytest.raises(ClientError):
+    with pytest.raises(StorageUnavailable, match="R2_"):
         storage.read("a/upload.jpg")
 
 
@@ -62,9 +67,17 @@ def test_a_5xx_is_unavailable(stubbed):
         storage.read("a/upload.jpg")
 
 
-def test_a_403_is_neither_missing_nor_unavailable(stubbed):
+@pytest.mark.parametrize(("status", "code"), [(401, "Unauthorized"), (403, "AccessDenied")])
+def test_a_refused_key_is_an_outage(stubbed, status, code):
     storage, stubber, _ = stubbed
-    stubber.add_client_error("get_object", "AccessDenied", http_status_code=403)
+    stubber.add_client_error("get_object", code, http_status_code=status)
+    with pytest.raises(StorageUnavailable, match="R2_"):
+        storage.read("a/upload.jpg")
+
+
+def test_another_4xx_is_an_ordinary_failure(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_client_error("get_object", "InvalidRange", http_status_code=416)
     with pytest.raises(ClientError):
         storage.read("a/upload.jpg")
 
@@ -92,20 +105,42 @@ def test_a_body_cut_short_is_unavailable(stubbed, monkeypatch):
         storage.read("a/upload.jpg")
 
 
-def test_the_probe_counts_a_404_as_reachable(stubbed):
+def test_a_connection_reset_mid_body_is_unavailable(stubbed, monkeypatch):
+    storage, _, client = stubbed
+
+    class ResetBody(io.BytesIO):
+        def read(self, *_args):
+            raise ResponseStreamingError(error=ConnectionResetError("reset by peer"))
+
+    monkeypatch.setattr(client, "get_object", lambda **_kwargs: {"Body": ResetBody()})
+    with pytest.raises(StorageUnavailable):
+        storage.read("a/upload.jpg")
+
+
+def test_the_probe_counts_no_such_key_as_reachable(stubbed):
     storage, stubber, _ = stubbed
     stubber.add_client_error(
-        "head_object",
-        "404",
+        "get_object",
+        "NoSuchKey",
         http_status_code=404,
         expected_params={"Bucket": BUCKET, "Key": PROBE_KEY},
     )
     assert storage.reachable()
 
 
-def test_the_probe_counts_a_5xx_as_unreachable(stubbed):
+def test_the_probe_counts_an_object_at_its_key_as_reachable(stubbed):
     storage, stubber, _ = stubbed
-    stubber.add_client_error("head_object", "InternalError", http_status_code=503)
+    stubber.add_response("get_object", {"Body": body(b"")}, {"Bucket": BUCKET, "Key": PROBE_KEY})
+    assert storage.reachable()
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(503, "InternalError"), (401, "Unauthorized"), (403, "AccessDenied"), (404, "NoSuchBucket")],
+)
+def test_the_probe_counts_a_5xx_or_a_refusal_as_unreachable(stubbed, status, code):
+    storage, stubber, _ = stubbed
+    stubber.add_client_error("get_object", code, http_status_code=status)
     assert not storage.reachable()
 
 
@@ -115,5 +150,5 @@ def test_the_probe_counts_no_connection_as_unreachable(stubbed, monkeypatch):
     def refuse(**_kwargs):
         raise EndpointConnectionError(endpoint_url="https://account.r2.cloudflarestorage.com")
 
-    monkeypatch.setattr(client, "head_object", refuse)
+    monkeypatch.setattr(client, "get_object", refuse)
     assert not storage.reachable()
