@@ -3,3 +3,12 @@
 # changes. P0-5 adds the InsightFace stack here, pinned the same way.
 fastapi==0.141.1
 uvicorn==0.53.0
+# D-123. psycopg is used synchronously over DATABASE_URL, the session pooler.
+psycopg[binary]==3.3.6
+boto3==1.43.107
+# OpenCV stays on 4.x until S-18 checks InsightFace against 5.0. numpy is OpenCV's own
+# dependency, pinned because the worker imports it to hand OpenCV the upload's bytes.
+opencv-python-headless==4.14.0.94
+numpy==2.5.3
+pydantic==2.13.5
+sentry-sdk==2.71.0

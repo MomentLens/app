@@ -1,0 +1,5 @@
+# Local and CI only: uv pip install -r requirements-dev.txt from worker/. The server installs
+# requirements.txt alone (scripts/provision.sh). Exactly pinned, as requirements.txt is.
+-r requirements.txt
+ruff==0.16.10
+pytest==9.1.1
