@@ -8,6 +8,7 @@ import type { AppDeps } from '../../src/app';
 import { createR2 } from '../../src/lib/r2';
 import type { EventStore } from '../../src/services/events';
 import type { InviteStore } from '../../src/services/invites';
+import type { MediaStore } from '../../src/services/media';
 import type { SubEventStore } from '../../src/services/sub-events';
 
 // R2 settings that presign for real, with no network and no account. A URL signed with them
@@ -45,6 +46,13 @@ const noSubEvents: SubEventStore = {
   remove: () => Promise.reject(new Error('no sub-event store in this test')),
 };
 
+// A media store that knows no rows and fails any write.
+const noMedia: MediaStore = {
+  start: () => Promise.reject(new Error('no media store in this test')),
+  findUpload: () => Promise.resolve(null),
+  complete: () => Promise.reject(new Error('no media store in this test')),
+};
+
 // Dependencies for createApp that need no Supabase project. Each test overrides what it checks.
 // The token check rejects every token unless a test passes a real one, and R2 holds no objects.
 export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
@@ -57,9 +65,12 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     events: noEvents,
     invites: noInvites,
     subEvents: noSubEvents,
+    media: noMedia,
     presignGet: r2.presignGet,
     presignPut: r2.presignPut,
     objectExists: () => Promise.resolve(false),
+    objectSize: () => Promise.resolve(null),
+    deleteObject: () => Promise.reject(new Error('no R2 deletes in this test')),
     ...overrides,
   };
 }

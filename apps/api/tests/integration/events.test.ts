@@ -30,7 +30,7 @@ import type { VerifyToken } from '../../src/middleware/auth';
 import type {
   CallerEvent,
   CreateEventResult,
-  EventAccess,
+  MemberAccess,
   EventRecord,
   EventStore,
 } from '../../src/services/events';
@@ -190,11 +190,12 @@ class FakeEvents implements EventStore {
     });
   }
 
-  findAccess(eventId: string, userId: string): Promise<EventAccess | null> {
+  findAccess(eventId: string, userId: string): Promise<MemberAccess | null> {
     const event = this.events.get(eventId.toLowerCase());
     if (event === undefined) return Promise.resolve(null);
     return Promise.resolve({
       deleted: event.deleted,
+      albumOpen: false,
       membership: event.members.get(userId) ?? null,
     });
   }
