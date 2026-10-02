@@ -13,6 +13,7 @@ running dev server worker is not disturbed.
 
 import os
 import secrets
+import time
 from uuid import uuid4
 
 import psycopg
@@ -23,6 +24,7 @@ from psycopg.types.json import Jsonb
 from app import config, queue
 from app.db import Archive, Store
 from app.jobs.base import JobContext
+from app.loop import LOCK_WAIT_S
 
 
 @pytest.fixture(scope="module")
@@ -242,7 +244,11 @@ def test_a_second_worker_cannot_take_the_lock(database_url):
         assert not second.try_lock()
 
         first.close()  # the lock goes with the session, as when a worker dies
-        assert second.try_lock()
+        # Postgres ends the session a moment after close() returns. Wait as long as the loop does.
+        deadline = time.monotonic() + LOCK_WAIT_S
+        while not second.try_lock():
+            assert time.monotonic() < deadline, "the lock outlived its session"
+            time.sleep(0.1)
     finally:
         first.close()
         second.close()
