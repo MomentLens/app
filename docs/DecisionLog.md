@@ -1022,9 +1022,13 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - Pre-flight answers 201 for a new row and 200 for a resume, each with two PUT URLs.
 - When the caller's own unfinished row and another user's finished row share the hash, pre-flight resumes the caller's row. Completion then answers `duplicate` and deletes it.
 - `start_upload` and `complete_upload` each lock the event row `FOR NO KEY UPDATE`, as D-121's functions do, and decide the hash outcome under the lock. `start_upload` returns the caller's own unfinished row rather than inserting a second, so two devices on one account sending the same photo at once end with one row. Two completions of one hash end as one `completed` and one `duplicate`.
-- Completion looks up the row before anything else. A row that no longer exists answers 409 `duplicate`, because a duplicate completion is the only thing that deletes one. Then completion answers 403 `not_uploader` to anyone but the uploader, 403 `not_member` to an uploader who is no longer an active member, and 404 `not_found` when the event was deleted, all before the HEAD.
+- Completion looks up the row before anything else. A row that no longer exists answers 409 `duplicate`, because a duplicate completion is the only thing that deletes one. Then completion answers 403 `not_uploader` to anyone but the uploader, then 404 `not_found` when the event was deleted, then 403 `not_member` to an uploader who is no longer an active member, all before the HEAD.
 - S-12 writes the album check behind one constant, switched off, with a test for each setting, and S-31 switches it on. S-12 writes no verification query. S-15 adds the check along with `venue_verification`.
 - S-12's migration enables `pgmq` and creates the `jobs` queue.
+- Ruled at S-12's api build:
+  - `start_upload` alone decides the sub-event, the resume, the duplicate and the cap, under the event lock. The API checks the membership and the album before the call and makes no other lookup.
+  - `media.uploader_user_id` references `auth.users` with no `ON DELETE` action, so an account with photos cannot be deleted until support removes them (spec §4.19).
+- Ruled at S-12's done stage: a `jobs` message whose media row no longer exists is deleted as done, with no retry, no archive and no Sentry report. S-18a builds it.
 - Routine calls:
   - `capturedAt` is optional, UTC with milliseconds, and any value is accepted (D-98). The phone converts an EXIF time that carries no zone.
   - A resume keeps the row's own sub-event, capture time and role, whatever the request sends.
@@ -1038,6 +1042,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - A PUT URL keeps working for up to 15 minutes after completion, so a modified app can replace `upload_key` or `upload_thumb_key` after the worker has processed the photo. That breaks D-60 for that photo and can put an unblurred face behind its public keys.
 - No size limit applies to an upload. The presigned PUT binds the content type and not the length.
 - A resume that loses to another user's finished copy spends one upload for nothing.
+- An account with photos cannot be deleted until support removes its photos by hand.
 **Reopen if.** A tester's event fills with unfinished rows, or the build moves to a public deployment, where the PUT window and the missing size limit stop being acceptable.
 
 ## Open items that are not decisions yet
