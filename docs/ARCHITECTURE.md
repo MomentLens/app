@@ -225,7 +225,7 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 | Profile photo | API | `profile.avatar_key` | `users/{user_id}/avatar_{upload_id}.jpg` |
 | Reference photo | API | `face_reference.photo_key` | `users/{user_id}/reference_{upload_id}.jpg` |
 
-- For a photo with no Do Not Publish face and no blur region, `public_key` and `public_thumb_key` hold the upload keys (§4.11). Completion refuses a photo whose thumbnail is not in R2 (§4), so a missing client thumbnail is only a fallback, and the worker writes one at the public thumbnail key.
+- For a photo with no Do Not Publish face and no blur region, `public_key` and `public_thumb_key` hold the upload keys (§4.11). Completion refuses a photo whose thumbnail is not in R2 (§4), so every finished photo has its client thumbnail and no job writes one.
 - Cover, profile and reference keys carry a fresh `upload_id`, so a replacement lands at a new key and no cache keeps the old image.
 - Every file the app sends reaches R2 by a presigned PUT, covers, profile photos and reference photos included (root invariant 5). The worker writes its own files directly.
 - After a regeneration commits, the worker deletes the objects the rows no longer point at, and never `upload_key` or `upload_thumb_key` (D-103).
@@ -259,13 +259,18 @@ Until verification passes or while the album is closed, photos wait in the devic
 |---|---|---|
 | Pre-flight 201 for a new row or 200 for a resume, with two PUT URLs | uploading | both PUTs finish, then completion |
 | A PUT fails, or the app dies mid-upload | queued | the next attempt, whose pre-flight answers resume (D-82) |
-| No answer: offline, a timeout, a 5xx | queued | reconnect or foreground, with backoff |
+| No answer to pre-flight or a PUT: offline, a timeout, a 5xx | queued | reconnect or foreground, with backoff |
+| No answer to completion: offline, a timeout, a 5xx | uploading, both files sent, which the queue keeps across a relaunch | reconnect or foreground, with backoff, then completion again, which is safe to repeat (D-95). Never pre-flight, which would send both files again |
+| Pre-flight or completion 401 `no_session` | unchanged, waiting on the session | the session refreshes or the person signs in again, then the same step again |
+| Pre-flight or completion 400 `invalid_request` | stays in My Media, stopped, as an app bug | never; the person can delete it |
 | Pre-flight 409 `duplicate` | leaves the queue, no prompt | never |
 | Pre-flight 409 `album_closed` | queued, waiting on the album | an event fetch shows the album open |
 | Pre-flight 409 `unverified` | queued, waiting on verification | the local GPS or QR check passes, or an event fetch shows the person verified (§4.5) |
 | Pre-flight 422 `event_full` | stays in My Media with "This event is full" | never; the person can delete it |
+| Pre-flight 422 `too_many_unfinished` | stays in My Media, stopped | never; the person can delete it (D-122) |
 | Pre-flight 409 `sub_event_missing` | stays in My Media, stopped | never; the person can delete it (D-122) |
 | Pre-flight or completion 403 `not_member`, or 404: not an active member, or the event is deleted | stays in My Media, stopped | an event fetch shows the membership active again |
+| Completion 403 `not_uploader` | stays in My Media, stopped. The queue sent another account's photo, an app bug (§4.1) | never; the person can delete it |
 | Completion 200 `completed` | uploaded; spinner until `processed_at` is set, then the check | never |
 | Completion 409 `upload_missing` | uploading: both files again | both PUTs finish, then completion |
 | Completion 409 `duplicate` | leaves the queue, no prompt | never |
