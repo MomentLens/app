@@ -396,7 +396,7 @@ Two honesty notes that belong with the numbers rather than in the viva prep, bec
 
 ### 11.5 CI and error reporting
 
-**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest with Postgres and R2 faked, with S-18a. Its real-SQL test runs against the dev project inside a transaction it rolls back, from the `SUPABASE_DEV_DATABASE_URL` secret, on pull requests that touch `worker/` or `supabase/` (D-123). The RLS negative test needs a real project, so a separate workflow, `.github/workflows/rls.yml`, runs it against the dev project on every pull request that touches `supabase/` or `apps/api/` (D-106). Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
+**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest with Postgres and R2 faked, with S-18a. Its real-SQL test runs against the dev project inside a transaction it rolls back, from the `SUPABASE_DEV_DATABASE_URL` secret, on pull requests that touch `worker/` or `supabase/` (D-123). That secret holds the session pooler's string on port 5432, as `DATABASE_URL` does, because GitHub's runners have no IPv6 route to the direct host. The RLS negative test needs a real project, so a separate workflow, `.github/workflows/rls.yml`, runs it against the dev project on every pull request that touches `supabase/` or `apps/api/` (D-106). Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
 
 ---
 
@@ -499,7 +499,7 @@ Leave out `--email` to skip TLS until DNS points at the server; the script print
 
 `Restart=always` is the whole reason to use systemd rather than `nohup` and hope. If the worker crashes on a malformed image at 3am, it comes back.
 
-The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. From S-18a it answers 503 once its queue loop has stopped, and the process exits so systemd restarts it (D-123). Ping it from the box with `curl http://127.0.0.1:8000/health`.
+The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. From S-18a it answers 200 while its queue loop runs, and 503 before the loop starts and after it stops. When the loop stops the process exits, and systemd restarts it (D-123). Ping it from the box with `curl http://127.0.0.1:8000/health`.
 
 #### 13.3.4 nginx and TLS
 
@@ -579,7 +579,7 @@ ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'
 
 `deploy.sh` fast-forwards the server's copy of a branch, so a branch that was force-pushed since its last deploy stops with "Not possible to fast-forward". Put the server on `main`, delete its copy with `ssh momentlens 'sudo -u momentlens git -C /srv/momentlens branch -D feat/s-05-api'`, and deploy the branch again.
 
-**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads.
+**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads. Your root `.env` needs `DATABASE_URL` and the four `R2_*` variables for the `momentlens-dev` bucket, or the worker refuses to start and names what is missing.
 
 ```bash
 ssh momentlens 'sudo systemctl stop momentlens-worker'
@@ -769,6 +769,7 @@ Worker (worker/)
   fastapi, uvicorn
   insightface, onnxruntime     # Phase 0 spike, rerun on the x86-64 server
   opencv-python-headless
+  numpy                        # pinned with OpenCV, which installs it (D-123)
   boto3
   psycopg[binary]              # version 3, used synchronously (D-123)
   pydantic

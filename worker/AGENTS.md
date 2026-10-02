@@ -8,10 +8,10 @@ Detail in Handbook §6, spec §4.11, and `docs/ARCHITECTURE.md` §2 (tables) and
 
 ## Shape
 
-The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). The loop runs on the main thread and `/health` on a side thread, and the process exits when the loop dies, so systemd restarts it. `/health` answers 503 once the loop has stopped. It is the only HTTP surface, so nginx and a human can ping it (D-123).
+The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). The loop runs on the main thread and `/health` on a side thread, and the process exits when the loop dies, so systemd restarts it. `/health` answers 503 until the loop starts and once it has stopped. It is the only HTTP surface, so nginx and a human can ping it (D-123).
 
 - **One reader.** The worker holds a Postgres advisory lock while it reads `jobs`. A second worker, such as yours while the dev server's runs, logs that the queue is taken and waits (D-123, Handbook §13.4).
-- **A try is a read.** pgmq's `read_ct` counts tries, so a crash counts as one. After a failed try, wait, then read the same message again before any newer one. At startup, make every message a crash left hidden visible again (D-123).
+- **A try is a read.** pgmq's `read_ct` counts tries, so a crash counts as one. After a failed try, wait, then read the same message again before any newer one. Each time the worker takes the lock, at startup and after a reconnect, make every message a stopped worker left hidden visible again (D-123).
 - **Three failures archive the message**, log it and report it to Sentry. If it names a photo, clear that photo's `processed_at` in the same transaction as the archive, so a failed job never leaves a photo up with files it should have replaced (D-108). A missing upload object, a message that does not parse and an unknown job name are archived on their first try (D-123).
 - **One transaction per job.** A job's row writes commit with its message's delete (D-123).
 
