@@ -34,6 +34,19 @@ def test_publishes_with_the_public_keys_copied_from_the_row():
     assert worker.report.calls == []
 
 
+def test_the_jobs_log_lines_carry_the_loops_prefix(caplog):
+    store, storage = FakeStore(), FakeStorage()
+    media_id, msg_id = photo(store, storage)
+
+    with caplog.at_level("INFO", logger="momentlens.worker.jobs"):
+        drain(make_worker(store, storage))
+
+    prefix = f"job=thumbnail_dims msg_id={msg_id} media_id={media_id} try=1"
+    assert [r.getMessage() for r in caplog.records if "published" in r.getMessage()] == [
+        f"{prefix} published at 400x300, variant_version=1"
+    ]
+
+
 def test_reads_the_upload_key_from_the_row_and_builds_none():
     store, storage = FakeStore(), FakeStorage()
     media_id, _ = photo(store, storage, upload_key="written/by-the-api.jpg")

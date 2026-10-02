@@ -176,7 +176,7 @@ class Worker:
             )
             return
 
-        ctx = JobContext(self.store, self.storage, message.msg_id)
+        ctx = JobContext(self.store, self.storage, message.msg_id, where)
         started = time.monotonic()
         try:
             job.run(ctx, body)
