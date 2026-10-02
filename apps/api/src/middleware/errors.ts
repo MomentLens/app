@@ -20,6 +20,7 @@ const STATUS: Record<ErrorCode, number> = {
   upload_missing: 409,
   last_sub_event: 409,
   sub_event_has_media: 409,
+  sub_event_missing: 409,
   event_full: 422,
   too_many_references: 422,
   too_many_sub_events: 422,
