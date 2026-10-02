@@ -1,9 +1,10 @@
-// The API's upload key builders (root invariant 12, arch §3). S-02 adds the event cover's.
+// The API's upload key builders (root invariant 12, arch §3). S-02 adds the event cover's, S-12 the
+// photo's and its client thumbnail's.
 import { randomUUID } from 'node:crypto';
 
 import { describe, expect, it } from '@jest/globals';
 
-import { coverKey } from '../../src/lib/keys';
+import { coverKey, uploadKeys } from '../../src/lib/keys';
 
 const EVENT = randomUUID();
 const UPLOAD = randomUUID();
@@ -32,5 +33,29 @@ describe('coverKey', () => {
   ])('refuses %s for either id, so no key leaves its family', (_case, bad) => {
     expect(() => coverKey(bad, UPLOAD)).toThrow();
     expect(() => coverKey(EVENT, bad)).toThrow();
+  });
+});
+
+describe('uploadKeys', () => {
+  const MEDIA = randomUUID();
+
+  it('builds {media_id}/upload.jpg and {media_id}/upload_thumb.webp', () => {
+    expect(uploadKeys(MEDIA)).toEqual({
+      photo: `${MEDIA}/upload.jpg`,
+      thumbnail: `${MEDIA}/upload_thumb.webp`,
+    });
+  });
+
+  it('lowercases the id, so the keys match the row CHECK that compares them with id::text', () => {
+    expect(uploadKeys(MEDIA.toUpperCase())).toEqual(uploadKeys(MEDIA));
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a path', `../${MEDIA}`],
+    ['a slash', `${MEDIA}/x`],
+    ['an event cover prefix', `events/${MEDIA}`],
+  ])('refuses %s, so no key leaves its family', (_case, bad) => {
+    expect(() => uploadKeys(bad)).toThrow();
   });
 });

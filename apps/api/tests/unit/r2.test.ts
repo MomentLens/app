@@ -1,7 +1,8 @@
-// The R2 client's PUT presigner and HEAD check, used by the cover endpoints (arch §3, D-110).
-// Signing is local, so the URLs are inspected as signed. The HEAD is stubbed at the SDK's send.
+// The R2 client's PUT presigner and HEAD check, used by the cover endpoints (arch §3, D-110), and
+// the HEAD with a size and the delete that upload completion uses (arch §4, D-95, D-122). Signing is
+// local, so the URLs are inspected as signed. The HEAD and the delete are stubbed at the SDK's send.
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
 
 import { createR2 } from '../../src/lib/r2';
 import { TEST_R2 } from '../support/app';
@@ -35,11 +36,11 @@ describe('presignPut', () => {
   });
 });
 
-describe('objectExists', () => {
-  function sdkError(name: string, status: number): Error {
-    return Object.assign(new Error(name), { name, $metadata: { httpStatusCode: status } });
-  }
+function sdkError(name: string, status: number): Error {
+  return Object.assign(new Error(name), { name, $metadata: { httpStatusCode: status } });
+}
 
+describe('objectExists', () => {
   it('sends a HEAD for the key in the bucket and answers true when R2 has it', async () => {
     const send = jest.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
     await expect(createR2(TEST_R2).objectExists(KEY)).resolves.toBe(true);
@@ -60,5 +61,60 @@ describe('objectExists', () => {
   ])('rethrows %s rather than call the object missing', async (_case, error) => {
     jest.spyOn(S3Client.prototype, 'send').mockRejectedValue(error as never);
     await expect(createR2(TEST_R2).objectExists(KEY)).rejects.toBe(error);
+  });
+});
+
+describe('objectSize', () => {
+  const PHOTO = '2f1c7a36-8a51-4c43-9b7c-6f2a1d0e5b11/upload.jpg';
+
+  it('sends a HEAD for the key in the bucket and answers the size R2 has for it', async () => {
+    const send = jest
+      .spyOn(S3Client.prototype, 'send')
+      .mockResolvedValue({ ContentLength: 2_481_337 } as never);
+    await expect(createR2(TEST_R2).objectSize(PHOTO)).resolves.toBe(2_481_337);
+    const command = send.mock.calls[0]?.[0];
+    expect(command).toBeInstanceOf(HeadObjectCommand);
+    expect((command as HeadObjectCommand).input).toEqual({ Bucket: TEST_R2.bucket, Key: PHOTO });
+  });
+
+  it('answers 0 for an empty object, which is there', async () => {
+    jest.spyOn(S3Client.prototype, 'send').mockResolvedValue({ ContentLength: 0 } as never);
+    await expect(createR2(TEST_R2).objectSize(PHOTO)).resolves.toBe(0);
+  });
+
+  it('answers null for a 404', async () => {
+    jest.spyOn(S3Client.prototype, 'send').mockRejectedValue(sdkError('NotFound', 404) as never);
+    await expect(createR2(TEST_R2).objectSize(PHOTO)).resolves.toBeNull();
+  });
+
+  it('rejects a HEAD with no size, rather than store a guess', async () => {
+    jest.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
+    await expect(createR2(TEST_R2).objectSize(PHOTO)).rejects.toThrow('Content-Length');
+  });
+
+  it.each([
+    ['a 403', sdkError('Forbidden', 403)],
+    ['a network failure', new Error('socket hang up')],
+  ])('rethrows %s rather than call the object missing', async (_case, error) => {
+    jest.spyOn(S3Client.prototype, 'send').mockRejectedValue(error as never);
+    await expect(createR2(TEST_R2).objectSize(PHOTO)).rejects.toBe(error);
+  });
+});
+
+describe('deleteObject', () => {
+  const PHOTO = '2f1c7a36-8a51-4c43-9b7c-6f2a1d0e5b11/upload.jpg';
+
+  it('sends a DELETE for the key in the bucket', async () => {
+    const send = jest.spyOn(S3Client.prototype, 'send').mockResolvedValue({} as never);
+    await expect(createR2(TEST_R2).deleteObject(PHOTO)).resolves.toBeUndefined();
+    const command = send.mock.calls[0]?.[0];
+    expect(command).toBeInstanceOf(DeleteObjectCommand);
+    expect((command as DeleteObjectCommand).input).toEqual({ Bucket: TEST_R2.bucket, Key: PHOTO });
+  });
+
+  it('rethrows a failure, so the caller can log it', async () => {
+    const error = sdkError('InternalError', 500);
+    jest.spyOn(S3Client.prototype, 'send').mockRejectedValue(error as never);
+    await expect(createR2(TEST_R2).deleteObject(PHOTO)).rejects.toBe(error);
   });
 });
