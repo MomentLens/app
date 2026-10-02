@@ -9,5 +9,6 @@ export * from './event';
 export * from './health';
 export * from './image';
 export * from './invite';
+export * from './media';
 export * from './profile';
 export * from './sub-event';
