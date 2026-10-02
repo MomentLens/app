@@ -1004,7 +1004,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
   - An add or an edit may set a start in the past, as a create may (D-110).
   - Edits are allowed on an archived event.
   - Two of the Admin's phones editing one sub-event resolve as last write wins.
-  - The Schedule header holds Add, each row holds Delay, and Sub-event Detail holds Edit and Delete. Delete is disabled while only one sub-event is left.
+  - The Schedule header holds Add, each row holds Delay, Sub-event Detail holds Edit, and the Edit sheet holds Delete at its foot, as the Edit design draws it. Ukasha moved Delete there from Detail at the mobile build. Delete is disabled while only one sub-event is left.
   - "View photos from this session" passes the sub-event's id to Home, and S-13 reads it.
 **Why.** S-04's read-back found no endpoint that returns sub-events, no writer documented besides `create_event`, no error codes for refusals that depend on rows, and a Delay that sent a running sub-event back to Upcoming. Without the lock, two phones deleting an event's last two sub-events leave it with none, and `list_my_events` then returns a null span that breaks `GET /events` for every member.
 **Rejected.** A Delay that always moves both times, which hides the capture FAB in the middle of a sub-event and leaves offline readings from its first part matching nothing (D-85). Keeping a venue no sub-event uses, which breaks the cap of 15 venues and leaves S-16 printing a QR for nothing. Sub-events inside `GET /events/{eventId}`, which replaces `get_my_event`. 400 `invalid_request` for the new refusals, which hides a state conflict behind a validation error.
