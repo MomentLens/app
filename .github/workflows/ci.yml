@@ -1,5 +1,6 @@
 # Lint, typecheck, test and build on every PR and every push to main (Handbook §11).
-# The worker gets its own job, Ruff and pytest, in S-18a (docs/WorkSlices.md).
+# The worker's job runs Ruff and pytest with Postgres and R2 faked. Its SQL against the dev
+# project runs in worker-sql.yml (D-123).
 name: CI
 
 on:
@@ -51,3 +52,27 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm --filter api build
+
+  worker:
+    name: Worker, Ruff and pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: worker/.python-version
+          cache: pip
+          cache-dependency-path: worker/requirements*.txt
+
+      - run: pip install --requirement requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+      # tests/test_dev_sql.py skips here, because this job has no DATABASE_URL.
+      - run: pytest
