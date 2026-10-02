@@ -46,7 +46,12 @@ import {
   MAX_ACTIVE_GUESTS,
   resolveInviteParams,
 } from '../../src/services/invites';
-import { createMediaStore, MAX_EVENT_MEDIA, startUploadParams } from '../../src/services/media';
+import {
+  createMediaStore,
+  MAX_EVENT_MEDIA,
+  startUploadParams,
+  UPLOAD_LIMITS,
+} from '../../src/services/media';
 import type { NewUpload, StartResult } from '../../src/services/media';
 import { createFindProfile } from '../../src/services/profiles';
 import {
@@ -2235,7 +2240,7 @@ if (project === null) {
         await addMember(event.id, g.id, 'guest', 'active');
 
         const first = newUpload(event.id, mehndi, g.id);
-        await expect(media.start(first, MAX_EVENT_MEDIA)).resolves.toEqual({
+        await expect(media.start(first, UPLOAD_LIMITS)).resolves.toEqual({
           outcome: 'created',
           mediaId: first.mediaId,
           uploadKey: `${first.mediaId}/upload.jpg`,
@@ -2262,7 +2267,7 @@ if (project === null) {
           contentHash: first.contentHash,
           capturedAt: null,
         });
-        await expect(media.start(retry, MAX_EVENT_MEDIA)).resolves.toEqual({
+        await expect(media.start(retry, UPLOAD_LIMITS)).resolves.toEqual({
           outcome: 'resumed',
           mediaId: first.mediaId,
           uploadKey: first.uploadKey,
@@ -2277,7 +2282,7 @@ if (project === null) {
         const { event, mehndi } = await eventWithSchedule(a.id);
         const before = Date.now();
         const upload = newUpload(event.id, mehndi, a.id, { role: 'admin', capturedAt: null });
-        started(await media.start(upload, MAX_EVENT_MEDIA));
+        started(await media.start(upload, UPLOAD_LIMITS));
         const at = Date.parse((await mediaRow(upload.mediaId))?.captured_at as string);
         // A minute either side, for the clocks of this machine and the database.
         expect(Math.abs(at - before)).toBeLessThan(60_000);
@@ -2289,15 +2294,15 @@ if (project === null) {
         const other = await eventWithSchedule(a.id);
 
         await expect(
-          media.start(newUpload(event.id, other.mehndi, a.id), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, other.mehndi, a.id), UPLOAD_LIMITS),
         ).resolves.toEqual({ outcome: 'sub_event_missing' });
         await expect(
-          media.start(newUpload(event.id, randomUUID(), a.id), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, randomUUID(), a.id), UPLOAD_LIMITS),
         ).resolves.toEqual({ outcome: 'sub_event_missing' });
 
         await softDeleteEvent(event.id);
         await expect(
-          media.start(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, a.id), UPLOAD_LIMITS),
         ).resolves.toEqual({ outcome: 'not_found' });
         await expect(countMedia(event.id)).resolves.toBe(0);
         await expect(countMedia(other.event.id)).resolves.toBe(0);
@@ -2314,8 +2319,8 @@ if (project === null) {
 
         const mine = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
         const theirs = newUpload(event.id, mehndi, g.id, { contentHash });
-        started(await media.start(mine, MAX_EVENT_MEDIA));
-        await expect(media.start(theirs, MAX_EVENT_MEDIA)).resolves.toMatchObject({
+        started(await media.start(mine, UPLOAD_LIMITS));
+        await expect(media.start(theirs, UPLOAD_LIMITS)).resolves.toMatchObject({
           outcome: 'created',
           mediaId: theirs.mediaId,
         });
@@ -2325,12 +2330,12 @@ if (project === null) {
         });
         // The Guest's own unfinished row resumes, and completion answers that one (D-122).
         await expect(
-          media.start(newUpload(event.id, mehndi, g.id, { contentHash }), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, g.id, { contentHash }), UPLOAD_LIMITS),
         ).resolves.toMatchObject({ outcome: 'resumed', mediaId: theirs.mediaId });
         await expect(
           media.start(
             newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash }),
-            MAX_EVENT_MEDIA,
+            UPLOAD_LIMITS,
           ),
         ).resolves.toEqual({ outcome: 'duplicate' });
 
@@ -2338,7 +2343,7 @@ if (project === null) {
         await expect(
           media.start(
             newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash }),
-            MAX_EVENT_MEDIA,
+            UPLOAD_LIMITS,
           ),
         ).resolves.toEqual({ outcome: 'duplicate' });
         await expect(media.complete(theirs.mediaId, g.id, 1000)).resolves.toEqual({
@@ -2352,7 +2357,7 @@ if (project === null) {
         const a = await createNamedUser();
         const { event, mehndi } = await eventWithSchedule(a.id);
         const upload = newUpload(event.id, mehndi, a.id, { role: 'admin' });
-        started(await media.start(upload, MAX_EVENT_MEDIA));
+        started(await media.start(upload, UPLOAD_LIMITS));
 
         const first = await media.complete(upload.mediaId, a.id, 2_481_337);
         expect(first).toEqual({ outcome: 'completed', messageId: expect.any(Number) });
@@ -2368,7 +2373,7 @@ if (project === null) {
 
         // Two completions of one fresh row at once send one message between them.
         const next = newUpload(event.id, mehndi, a.id, { role: 'admin' });
-        started(await media.start(next, MAX_EVENT_MEDIA));
+        started(await media.start(next, UPLOAD_LIMITS));
         const both = await Promise.all([
           media.complete(next.mediaId, a.id, 10),
           media.complete(next.mediaId, a.id, 10),
@@ -2384,7 +2389,7 @@ if (project === null) {
         const { event, mehndi } = await eventWithSchedule(a.id);
         await addMember(event.id, g.id, 'guest', 'active');
         const upload = newUpload(event.id, mehndi, g.id);
-        started(await media.start(upload, MAX_EVENT_MEDIA));
+        started(await media.start(upload, UPLOAD_LIMITS));
 
         // The event's Admin included.
         await expect(media.complete(upload.mediaId, a.id, 10)).resolves.toEqual({
@@ -2409,8 +2414,8 @@ if (project === null) {
         const contentHash = hash();
         const mine = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
         const theirs = newUpload(event.id, mehndi, g.id, { contentHash });
-        started(await media.start(mine, MAX_EVENT_MEDIA));
-        started(await media.start(theirs, MAX_EVENT_MEDIA));
+        started(await media.start(mine, UPLOAD_LIMITS));
+        started(await media.start(theirs, UPLOAD_LIMITS));
 
         const results = await Promise.all([
           media.complete(mine.mediaId, a.id, 10),
@@ -2427,8 +2432,8 @@ if (project === null) {
         const { event, mehndi } = await eventWithSchedule(a.id);
         const contentHash = hash();
         const results = await Promise.all([
-          media.start(newUpload(event.id, mehndi, a.id, { contentHash }), MAX_EVENT_MEDIA),
-          media.start(newUpload(event.id, mehndi, a.id, { contentHash }), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, a.id, { contentHash }), UPLOAD_LIMITS),
+          media.start(newUpload(event.id, mehndi, a.id, { contentHash }), UPLOAD_LIMITS),
         ]);
         expect(results.map((r) => r.outcome).sort()).toEqual(['created', 'resumed']);
         expect(started(results[0])).toBe(started(results[1]));
@@ -2466,7 +2471,7 @@ if (project === null) {
           newUpload(event.id, mehndi, a.id, { role: 'admin' }),
           newUpload(event.id, mehndi, a.id, { role: 'admin' }),
         ];
-        const results = await Promise.all(offers.map((o) => media.start(o, MAX_EVENT_MEDIA)));
+        const results = await Promise.all(offers.map((o) => media.start(o, UPLOAD_LIMITS)));
         expect(results.map((r) => r.outcome).sort()).toEqual(['created', 'full']);
         await expect(countMedia(event.id)).resolves.toBe(MAX_EVENT_MEDIA);
 
@@ -2475,29 +2480,89 @@ if (project === null) {
         await expect(
           media.start(
             newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash: winner?.contentHash }),
-            MAX_EVENT_MEDIA,
+            UPLOAD_LIMITS,
           ),
         ).resolves.toMatchObject({ outcome: 'resumed', mediaId: winner?.mediaId });
         await expect(
-          media.start(newUpload(event.id, mehndi, g.id), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, g.id), UPLOAD_LIMITS),
         ).resolves.toEqual({ outcome: 'full' });
 
-        // A soft-deleted row frees its place.
+        // A soft-deleted row frees its place. The Admin takes it, since the Guest's 1,998 unfinished
+        // rows are far past the per-uploader limit.
         await softDeleteMedia(filler[0]?.id ?? '');
         await expect(
-          media.start(newUpload(event.id, mehndi, g.id), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, a.id, { role: 'admin' }), UPLOAD_LIMITS),
         ).resolves.toMatchObject({ outcome: 'created' });
         await expect(
-          media.start(newUpload(event.id, mehndi, g.id), MAX_EVENT_MEDIA),
+          media.start(newUpload(event.id, mehndi, a.id, { role: 'admin' }), UPLOAD_LIMITS),
         ).resolves.toEqual({ outcome: 'full' });
       }, 60_000);
+
+      it('refuses a new row once the caller holds the most unfinished rows allowed, and lets a resume, another person and a freed place through', async () => {
+        const a = await createNamedUser();
+        const g = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        const limits = { ...UPLOAD_LIMITS, maxUnfinished: 2 };
+
+        const first = newUpload(event.id, mehndi, g.id);
+        const second = newUpload(event.id, mehndi, g.id);
+        started(await media.start(first, limits));
+        started(await media.start(second, limits));
+        await expect(media.start(newUpload(event.id, mehndi, g.id), limits)).resolves.toEqual({
+          outcome: 'too_many',
+        });
+        await expect(
+          media.start(
+            newUpload(event.id, mehndi, g.id, { contentHash: first.contentHash }),
+            limits,
+          ),
+        ).resolves.toMatchObject({ outcome: 'resumed', mediaId: first.mediaId });
+        started(await media.start(newUpload(event.id, mehndi, a.id, { role: 'admin' }), limits));
+
+        // A finished upload frees a place, and so does a soft-deleted unfinished row.
+        await media.complete(first.mediaId, g.id, 10);
+        started(await media.start(newUpload(event.id, mehndi, g.id), limits));
+        await expect(media.start(newUpload(event.id, mehndi, g.id), limits)).resolves.toEqual({
+          outcome: 'too_many',
+        });
+        await softDeleteMedia(second.mediaId);
+        started(await media.start(newUpload(event.id, mehndi, g.id), limits));
+        await expect(countMedia(event.id)).resolves.toBe(5);
+      });
+
+      it('never resumes a soft-deleted unfinished row, and completes it as gone', async () => {
+        const a = await createNamedUser();
+        const { event, mehndi } = await eventWithSchedule(a.id);
+        const contentHash = hash();
+        const deleted = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
+        started(await media.start(deleted, UPLOAD_LIMITS));
+        await softDeleteMedia(deleted.mediaId);
+
+        const again = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
+        await expect(media.start(again, UPLOAD_LIMITS)).resolves.toMatchObject({
+          outcome: 'created',
+          mediaId: again.mediaId,
+        });
+        await expect(media.findUpload(deleted.mediaId)).resolves.toBeNull();
+        await expect(media.complete(deleted.mediaId, a.id, 10)).resolves.toEqual({
+          outcome: 'gone',
+        });
+        await expect(mediaRow(deleted.mediaId)).resolves.toMatchObject({
+          uploaded_at: null,
+          size_bytes: null,
+        });
+        await expect(media.complete(again.mediaId, a.id, 10)).resolves.toMatchObject({
+          outcome: 'completed',
+        });
+      });
 
       it('refuses to delete a sub-event with an unfinished or a soft-deleted photo, and deletes one with none', async () => {
         const a = await createNamedUser();
         const { event, mehndi, baraat, walima } = await eventWithSchedule(a.id);
-        started(await media.start(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA));
+        started(await media.start(newUpload(event.id, mehndi, a.id), UPLOAD_LIMITS));
         const finished = newUpload(event.id, baraat, a.id);
-        started(await media.start(finished, MAX_EVENT_MEDIA));
+        started(await media.start(finished, UPLOAD_LIMITS));
         await media.complete(finished.mediaId, a.id, 10);
         await softDeleteMedia(finished.mediaId);
 
@@ -2559,7 +2624,7 @@ if (project === null) {
       it('blocks deleting an account that has photos (Ukasha, S-12 api build)', async () => {
         const a = await createNamedUser();
         const { event, mehndi } = await eventWithSchedule(a.id);
-        started(await media.start(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA));
+        started(await media.start(newUpload(event.id, mehndi, a.id), UPLOAD_LIMITS));
 
         const deleted = await admin.auth.admin.deleteUser(a.id);
         expect(deleted.error).not.toBeNull();
@@ -2572,7 +2637,7 @@ if (project === null) {
         const a = await createNamedUser();
         const { event, mehndi } = await eventWithSchedule(a.id);
         const upload = newUpload(event.id, mehndi, a.id, { role: 'admin' });
-        started(await media.start(upload, MAX_EVENT_MEDIA));
+        started(await media.start(upload, UPLOAD_LIMITS));
         const before = await mediaRow(upload.mediaId);
         const clients = [
           createServerClient(project.url, project.publishableKey),
@@ -2593,7 +2658,7 @@ if (project === null) {
           expect(insert.error).not.toBeNull();
           const start = await client.rpc(
             'start_upload',
-            startUploadParams(newUpload(event.id, mehndi, a.id), MAX_EVENT_MEDIA),
+            startUploadParams(newUpload(event.id, mehndi, a.id), UPLOAD_LIMITS),
           );
           expect(start.error).not.toBeNull();
           const complete = await client.rpc('complete_upload', {
