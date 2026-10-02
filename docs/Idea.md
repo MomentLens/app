@@ -300,17 +300,17 @@ The Scan tab is solely for the Venue Check-In QR verification action in §4.5. I
 
 #### 2.5.1 Two-tier tab bar
 
-The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (a "‹ Events" back affordance, the event's name, and the user's avatar, which opens Account Settings per §2.5.9, D-119) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting.
+The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (the platform's back button to Events, the event's name, and the user's avatar, which opens Account Settings per §2.5.9, D-119, D-125) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting. The name opens as a large title and collapses into the bar on scroll.
 
 **Global shell** (3 tabs):
 
 | Tab | Purpose |
 |---|---|
-| Events | Default landing. Active / Upcoming / Past segmented control. "+" opens the Create Event Wizard. From iOS 26 it is the round button at the trailing end of the tab bar, on every Global shell tab. On Android it is a Material 3 FAB at the bottom right of Events, and on iOS before 26 a floating circle there (D-112). Visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
+| Events | Default landing. One list in three sections, Happening now, Upcoming and Past (D-126). "+" opens the Create Event Wizard. From iOS 26 it is the round button at the trailing end of the tab bar, on every Global shell tab. On Android it is a Material 3 FAB at the bottom right of Events, and on iOS before 26 a floating circle there (D-112). Visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
 | Scan | Venue Check-In QR only (§4.5). Works standalone, since the QR payload carries its venue, and the server works out which sub-event it verifies from the scan time (D-85). |
 | Profile | Avatar → Account Settings (§4.19). |
 
-The Events tab sorts an event by its span, from its first sub-event's start to its last sub-event's end (D-88). Upcoming is before the span starts, Active is inside it, gaps between sub-events included, and Past is after it. An archived event is Past. The list holds every event where the user's membership is active, and no soft-deleted event (D-110). Each pending join request shows as a card that opens Pending Approval, and a "Join with code" action opens Manual Join Entry for a user who already has events (D-115).
+The Events tab sorts an event by its span, from its first sub-event's start to its last sub-event's end (D-88). Upcoming is before the span starts, Active, shown as "Happening now", is inside it, gaps between sub-events included, and Past is after it. An archived event is Past. The list holds every event where the user's membership is active, and no soft-deleted event (D-110). Each pending join request shows as a row at the top of the list that opens Pending Approval, and a "Join" action in the bar opens Manual Join Entry (D-115, D-126).
 
 **Event shell**, tabs by role:
 
@@ -349,7 +349,7 @@ Home and Album are one screen, not two, and not per-sub-event folders. Every sub
 
 #### 2.5.5 Schedule
 
-One list component reused for every role, permission-gated rather than forked: ordered sub-events with an auto-computed status badge (Upcoming / In Progress / Completed). Admin-only inline "Delay" action per row, and an Admin-only "+" in the header that adds a sub-event. Tap a row → Sub-event Detail (name, date/time, venue, "Get Directions," "View photos from this session" → Home, pre-filtered to that sub-event's chip, shown to every role but the Photographer, who has no Home). The Admin edits a sub-event from its Detail screen and deletes it from the foot of the Edit sheet, and Delete is disabled while it is the event's only one (D-121).
+One list component reused for every role, permission-gated rather than forked: ordered sub-events with an auto-computed status badge (Upcoming / In Progress / Completed). Admin-only Delay, shown as a button on the sub-event In Progress and the next one, and reached from every row's long-press menu and from Sub-event Detail. An Admin-only Add sits in the header on iOS and in a FAB on Android (D-127). Tap a row → Sub-event Detail (name, date/time, venue, "Get Directions," "View photos from this session" → Home, pre-filtered to that sub-event's chip, shown to every role but the Photographer, who has no Home). The Admin edits a sub-event from Edit in its Detail screen's toolbar and deletes it from the foot of the Edit sheet, and Delete is disabled while it is the event's only one (D-121).
 
 #### 2.5.6 Single photo view
 
@@ -381,7 +381,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 | Screen | Trigger | Notes |
 |---|---|---|
 | Join Confirmation | Valid invite token, new to event | Read-only preview before the join action fires; shows the role being joined as. |
-| Pending Approval | Approval Mode = manual | A waiting state, not a spinner. Has a Cancel Request option. Reached again from its card on the Events list (D-115). |
+| Pending Approval | Approval Mode = manual | A waiting state, not a spinner. Has a Cancel Request option. Reached again from its row on the Events list (D-115, D-126). |
 | Join Error | Expired or revoked token | Reserved for dead links. A typed shortcode that matches no live invite, mistyped or revoked, gets inline field validation on Manual Join Entry instead. |
 | Join Blocked | A blocked person opens a live invite (D-102) | Tells them the organizer blocked them from this event. No join action (D-115). |
 | Forced Logout / Access Removed | The Supabase session ends, or the user is removed or blocked from an event mid-session (§4.1) | Prevents a silent bounce to Login reading as a bug. Access Removed returns to the Events list; only a dead session logs out. |
