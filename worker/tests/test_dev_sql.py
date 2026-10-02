@@ -170,7 +170,7 @@ def test_the_row_write_and_the_message_delete_commit_together(conn, store, media
 
     monkeypatch.setattr(queue, "delete", fail)
     with pytest.raises(RuntimeError):
-        JobContext(store, None, msg_id).commit(
+        JobContext(store, None, msg_id, "test").commit(
             lambda tx: tx.finish_thumbnail_dims(media_id, 10, 10)
         )
 

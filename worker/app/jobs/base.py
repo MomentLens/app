@@ -43,6 +43,8 @@ class JobContext:
     store: Store
     storage: Storage
     msg_id: int
+    # The loop's prefix for this message's log lines: job, msg_id, media_id and try.
+    where: str
     committed: bool = False
 
     def commit(self, write: Callable[[Tx], None]) -> None:
