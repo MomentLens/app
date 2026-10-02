@@ -1,0 +1,14 @@
+# Ruff and pytest settings. The worker is not a package: the server installs requirements.txt
+# into worker/.venv and runs `python -m app.main` from worker/ (hb §13.3.3).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
