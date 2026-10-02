@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
@@ -30,10 +31,19 @@ export type PresignPut = (key: string, contentType: string) => Promise<string>;
 // anything else, which says nothing about the object.
 export type ObjectExists = (key: string) => Promise<boolean>;
 
+// The same HEAD, answering the object's size in bytes, or null on a 404.
+export type ObjectSize = (key: string) => Promise<number | null>;
+
+// Deletes one key. R2 answers a delete of a missing key as done. Rejects on any failure, which the
+// caller logs; nothing here retries.
+export type DeleteObject = (key: string) => Promise<void>;
+
 export interface R2 {
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
+  objectSize: ObjectSize;
+  deleteObject: DeleteObject;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -59,6 +69,18 @@ export function createR2(settings: R2Settings): R2 {
     responseChecksumValidation: 'WHEN_REQUIRED',
   });
 
+  // The HEAD's answer for one key, or null on a 404.
+  const head = async (key: string) => {
+    try {
+      return await client.send(new HeadObjectCommand({ Bucket: settings.bucket, Key: key }));
+    } catch (error) {
+      if (isNotFound(error)) {
+        return null;
+      }
+      throw error;
+    }
+  };
+
   return {
     presignGet: (key) =>
       getSignedUrl(client, new GetObjectCommand({ Bucket: settings.bucket, Key: key }), {
@@ -72,16 +94,19 @@ export function createR2(settings: R2Settings): R2 {
         new PutObjectCommand({ Bucket: settings.bucket, Key: key, ContentType: contentType }),
         { expiresIn: PUT_URL_SECONDS, signableHeaders: new Set(['content-type']) },
       ),
-    objectExists: async (key) => {
-      try {
-        await client.send(new HeadObjectCommand({ Bucket: settings.bucket, Key: key }));
-        return true;
-      } catch (error) {
-        if (isNotFound(error)) {
-          return false;
-        }
-        throw error;
+    objectExists: async (key) => (await head(key)) !== null,
+    objectSize: async (key) => {
+      const found = await head(key);
+      if (found === null) {
+        return null;
       }
+      if (found.ContentLength === undefined) {
+        throw new Error(`R2 answered a HEAD for ${key} with no Content-Length`);
+      }
+      return found.ContentLength;
+    },
+    deleteObject: async (key) => {
+      await client.send(new DeleteObjectCommand({ Bucket: settings.bucket, Key: key }));
     },
   };
 }
