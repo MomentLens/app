@@ -56,11 +56,13 @@ def store(conn):
 
 
 @pytest.fixture
-def media_id(conn):
+def media_id(request, conn):
     """A finished, unprocessed photo in a throwaway event, owned by any existing account."""
     user = conn.execute("select id from auth.users limit 1").fetchone()
     if user is None:
-        pytest.skip("the dev project has no account to own a test photo")
+        # Under --dev-sql a skip would pass the CI check with half the module unrun.
+        stop = pytest.fail if request.config.getoption("--dev-sql") else pytest.skip
+        stop("the dev project has no account to own a test photo")
     event_id = conn.execute(
         "insert into public.event (name, type, create_request_id)"
         " values ('Worker SQL test', 'other', gen_random_uuid()) returning id"
