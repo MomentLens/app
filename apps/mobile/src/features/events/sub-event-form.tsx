@@ -1,13 +1,15 @@
 import { VERIFICATION_RADIUS_MAX_M, VERIFICATION_RADIUS_MIN_M } from '@momentlens/shared-types';
-import { Host, Slider } from '@expo/ui';
-import { cssInterop } from 'nativewind';
+import { Slider } from '@expo/ui';
 import { useState, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
 
-import { Button } from '@/components/ui/button';
+import { FieldGroup } from '@/components/ui/field-group';
 import { FormMessage } from '@/components/ui/form-message';
-import { Icon } from '@/components/ui/icon';
+import { GLYPH, Glyph } from '@/components/ui/glyph';
+import { Row, Section } from '@/components/ui/grouped';
+import { SheetToolbar } from '@/components/ui/sheet-toolbar';
 import { TextField } from '@/components/ui/text-field';
+import { TintedHost } from '@/components/ui/tinted-host';
 import { DateTimeField } from '@/features/events/date-time-field';
 import type { DraftVenue } from '@/features/events/draft';
 import { formatRadius } from '@/features/events/format';
@@ -17,16 +19,10 @@ import {
   type SubEventValues,
 } from '@/features/events/validation';
 import { VenuePicker } from '@/features/events/venue-picker';
-import { FieldError, FieldLabel } from '@/features/events/wizard-frame';
+import { byPlatform } from '@/lib/copy';
 
 // The slider's step. Whole metres only, as the API checks (D-111).
 const RADIUS_STEP_M = 10;
-
-// Host takes its tint as a prop. This moves a text-* token's color onto it, as icon.tsx does for
-// an Svg, so the slider is gold in both modes with no hex in a component.
-const TintedHost = cssInterop(Host, {
-  className: { target: 'style', nativeStyleToProp: { color: 'seedColor' } },
-});
 
 interface SubEventFormProps {
   title: string;
@@ -37,19 +33,39 @@ interface SubEventFormProps {
   venues: readonly DraftVenue[];
   onSubmit: (values: SubEventValues) => void;
   onClose: () => void;
-  // While the caller's write is running: the submit button spins and ignores presses.
+  // While the caller's write is running: the toolbar's save spins and ignores presses.
   busy?: boolean;
   // A message about the whole form, such as what the API refused.
   problem?: string | null;
   // A line under the venue for the chosen one, such as a QR that stops working (D-121).
   venueNote?: (venue: DraftVenue | null) => string | null;
-  // Under the submit button, for Remove or Delete.
+  // Under the form, for Remove or Delete at its foot.
   footer?: ReactNode;
 }
 
+// A field's problem under its section, in the danger tone and announced when it appears.
+function FieldProblem({ message }: { message: string }) {
+  return (
+    <Text accessibilityLiveRegion="polite" className="font-caption text-caption text-danger">
+      {message}
+    </Text>
+  );
+}
+
+// Android's radio button, which Material 3 draws on a list item that picks one of several.
+function Radio({ selected }: { selected: boolean }) {
+  return (
+    <View
+      className={`h-5 w-5 items-center justify-center rounded-full border-2 ${selected ? 'border-accentText' : 'border-textSecondary'}`}>
+      {selected ? <View className="h-2.5 w-2.5 rounded-full bg-accentText" /> : null}
+    </View>
+  );
+}
+
 // A sub-event's name, start and end, venue and radius (spec §2.1.2, D-111), as the wizard's Add
-// Sub-Event sheet and the Schedule's Add and Edit sheets share it. Each caller decides what saving
-// does; the form only checks the fields with the shared schema's rules.
+// Sub-Event sheet and the Schedule's Add and Edit sheets share it. A grouped form under the sheet's
+// toolbar, which saves (D-124, D-125); the times use each platform's own pickers (D-128). Each
+// caller decides what saving does; the form only checks the fields with the shared schema's rules.
 export function SubEventForm({
   title,
   submitLabel,
@@ -68,7 +84,6 @@ export function SubEventForm({
   const [endsAt, setEndsAt] = useState(initial.endsAt);
   const [venue, setVenue] = useState<DraftVenue | null>(initial.venue);
   const [radiusM, setRadiusM] = useState(initial.radiusM);
-  const [openWheel, setOpenWheel] = useState<'start' | 'end' | null>(null);
   const [showProblems, setShowProblems] = useState(false);
 
   // The known venues, and this one's own when the picker made it.
@@ -93,134 +108,115 @@ export function SubEventForm({
 
   if (mode === 'venue') {
     return (
-      <ScrollView
-        keyboardShouldPersistTaps="handled"
-        contentContainerClassName="gap-4 px-4 pb-10 pt-6">
-        <VenuePicker
-          radiusM={radiusM}
-          onBack={() => setMode('form')}
-          onDone={(picked) => {
-            setVenue(picked);
-            setMode('form');
-          }}
-        />
-      </ScrollView>
+      <VenuePicker
+        radiusM={radiusM}
+        onBack={() => setMode('form')}
+        onDone={(picked) => {
+          setVenue(picked);
+          setMode('form');
+        }}
+      />
     );
   }
 
+  const radiusLine = `Guests must be within ${formatRadius(radiusM)} of the venue for their photos to upload.`;
+
   return (
-    <ScrollView
-      keyboardShouldPersistTaps="handled"
-      contentContainerClassName="gap-5 px-4 pb-10 pt-6">
-      <View className="flex-row items-center justify-between">
-        <Text accessibilityRole="header" className="font-h2 text-h2 text-textPrimary">
-          {title}
-        </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          hitSlop={12}
-          onPress={onClose}>
-          <Icon name="x" size={20} className="text-textSecondary" />
-        </Pressable>
-      </View>
+    <View className="flex-1">
+      <SheetToolbar
+        title={title}
+        onClose={onClose}
+        confirm={{ label: submitLabel, kind: 'done', busy, onPress: submit }}
+      />
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="gap-6 pb-10 pt-2">
+        <FieldGroup>
+          <TextField
+            label="Name"
+            placeholder="Mehndi, Nikah, Walima"
+            value={name}
+            onChangeText={setName}
+            autoCapitalize="words"
+            error={problems.name}
+          />
+        </FieldGroup>
 
-      <TextField
-        label="Name"
-        placeholder="Sub-event name, e.g. Nikkah"
-        value={name}
-        onChangeText={setName}
-        autoCapitalize="words"
-        error={problems.name}
-      />
-      <DateTimeField
-        label="Start date and time"
-        value={startsAt}
-        onChange={changeStart}
-        open={openWheel === 'start'}
-        onToggle={() => setOpenWheel((open) => (open === 'start' ? null : 'start'))}
-      />
-      <DateTimeField
-        label="End date and time"
-        value={endsAt}
-        onChange={setEndsAt}
-        open={openWheel === 'end'}
-        onToggle={() => setOpenWheel((open) => (open === 'end' ? null : 'end'))}
-        error={problems.endsAt}
-      />
+        <FieldGroup header="Time">
+          <DateTimeField
+            label="Starts"
+            dateLabel="Start date"
+            timeLabel="Start time"
+            value={startsAt}
+            onChange={changeStart}
+          />
+          <DateTimeField
+            label="Ends"
+            dateLabel="End date"
+            timeLabel="End time"
+            value={endsAt}
+            onChange={setEndsAt}
+            error={problems.endsAt}
+          />
+        </FieldGroup>
 
-      <View className="gap-2">
-        <FieldLabel>Venue</FieldLabel>
-        {venues.length > 0 ? (
-          <View
-            accessibilityRole="radiogroup"
-            className="overflow-hidden rounded-xl border border-border bg-surface">
-            {venues.map((candidate, i) => {
-              const selected = candidate.key === venue?.key;
-              return (
-                <Pressable
-                  key={candidate.key}
-                  accessibilityRole="radio"
-                  accessibilityState={{ checked: selected }}
-                  onPress={() => setVenue(candidate)}
-                  className={`min-h-12 flex-row items-center gap-3 px-4 active:bg-surfaceMuted ${i > 0 ? 'border-t border-border' : ''}`}>
-                  <Icon
-                    name="map-pin"
-                    size={16}
-                    className={selected ? 'text-accent' : 'text-textMuted'}
-                  />
-                  <Text className="flex-1 font-body text-body text-textPrimary">
-                    {candidate.name}
-                  </Text>
-                  {selected ? <Icon name="check" size={18} className="text-accent" /> : null}
-                </Pressable>
-              );
-            })}
+        <Section
+          header="Venue"
+          footer={problems.venue ? <FieldProblem message={problems.venue} /> : (note ?? undefined)}>
+          {venues.map((candidate) => {
+            const selected = candidate.key === venue?.key;
+            return (
+              <Row
+                key={candidate.key}
+                title={candidate.name}
+                leading={Platform.OS === 'android' ? <Radio selected={selected} /> : undefined}
+                trailing={
+                  Platform.OS === 'ios' && selected ? (
+                    <Glyph name={GLYPH.check} size={18} tone="accentText" />
+                  ) : undefined
+                }
+                accessibilityLabel={`${candidate.name}${selected ? ', selected' : ''}`}
+                onPress={() => setVenue(candidate)}
+              />
+            );
+          })}
+          <Row
+            leading={<Glyph name={GLYPH.venue} size={22} tone="accentText" />}
+            title={byPlatform('Find a Venue…', 'Find a venue')}
+            action
+            onPress={() => setMode('venue')}
+          />
+        </Section>
+
+        <Section
+          header={byPlatform('Check-In Radius', 'Check-in radius')}
+          footer={problems.radiusM ? <FieldProblem message={problems.radiusM} /> : radiusLine}>
+          <Row
+            trailing={
+              <Text className="font-body text-body text-textSecondary">
+                {formatRadius(radiusM)}
+              </Text>
+            }>
+            <TintedHost
+              matchContents={{ vertical: true }}
+              style={{ width: '100%' }}
+              className="text-accent">
+              <Slider
+                value={radiusM}
+                min={VERIFICATION_RADIUS_MIN_M}
+                max={VERIFICATION_RADIUS_MAX_M}
+                step={RADIUS_STEP_M}
+                onValueChange={(value) => setRadiusM(Math.round(value))}
+              />
+            </TintedHost>
+          </Row>
+        </Section>
+
+        {problem ? (
+          <View className="ios:px-5 android:px-4">
+            <FormMessage message={problem} />
           </View>
         ) : null}
-        <Button
-          label="Search or pin on map"
-          variant="secondary"
-          icon="map-pin"
-          onPress={() => setMode('venue')}
-        />
-        <FieldError message={problems.venue} />
-        {note ? <Text className="font-caption text-caption text-textSecondary">{note}</Text> : null}
-      </View>
-
-      <View className="gap-2">
-        <View className="flex-row items-center justify-between">
-          <FieldLabel>Verification radius</FieldLabel>
-          <Text className="font-fieldLabel text-fieldLabel text-accentText">
-            {formatRadius(radiusM)}
-          </Text>
-        </View>
-        <TintedHost
-          matchContents={{ vertical: true }}
-          style={{ width: '100%' }}
-          className="text-accent">
-          <Slider
-            value={radiusM}
-            min={VERIFICATION_RADIUS_MIN_M}
-            max={VERIFICATION_RADIUS_MAX_M}
-            step={RADIUS_STEP_M}
-            onValueChange={(value) => setRadiusM(Math.round(value))}
-          />
-        </TintedHost>
-        <View className="flex-row justify-between">
-          <Text className="font-caption text-caption text-textMuted">
-            {formatRadius(VERIFICATION_RADIUS_MIN_M)}
-          </Text>
-          <Text className="font-caption text-caption text-textMuted">
-            {formatRadius(VERIFICATION_RADIUS_MAX_M)}
-          </Text>
-        </View>
-        <FieldError message={problems.radiusM} />
-      </View>
-
-      {problem ? <FormMessage message={problem} /> : null}
-      <Button label={submitLabel} busy={busy} onPress={submit} />
-      {footer}
-    </ScrollView>
+        {footer}
+      </ScrollView>
+    </View>
   );
 }

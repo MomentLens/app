@@ -23,6 +23,8 @@ export const GLYPH = {
   trash: { ios: 'trash', android: 'delete' },
   qr: { ios: 'qrcode', android: 'qr_code_2' },
   clock: { ios: 'clock', android: 'schedule' },
+  venue: { ios: 'mappin.and.ellipse', android: 'add_location_alt' },
+  pin: { ios: 'mappin', android: 'location_on' },
 } as const satisfies Record<string, GlyphName>;
 
 interface GlyphProps {

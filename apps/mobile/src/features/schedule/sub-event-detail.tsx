@@ -1,56 +1,30 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Linking, Platform, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Linking, Platform, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
-import { Icon, type IconName } from '@/components/ui/icon';
+import { GLYPH, Glyph } from '@/components/ui/glyph';
+import { Row, Section } from '@/components/ui/grouped';
+import { Icon } from '@/components/ui/icon';
+import { SheetHandle, SheetToolbar } from '@/components/ui/sheet-toolbar';
 import { useEvent } from '@/features/event-shell/use-event';
 import { formatSubEventTimes } from '@/features/events/format';
-import { FieldLabel } from '@/features/events/wizard-frame';
 import { directionsUrl, romanNumeral, schedulePermissions } from '@/features/schedule/schedule';
 import { ScheduleSheet, type ScheduleSheetTarget } from '@/features/schedule/schedule-sheet';
 import { useSheetBottomPadding } from '@/features/schedule/sheet-inset';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
-
-interface ActionRowProps {
-  icon: IconName;
-  label: string;
-  onPress?: () => void;
-  // Drawn but not pressable, for an action whose slice has not landed yet.
-  disabledNote?: string;
-}
-
-function ActionRow({ icon, label, onPress, disabledNote }: ActionRowProps) {
-  const disabled = disabledNote !== undefined;
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={disabled ? `${label}, ${disabledNote}` : label}
-      accessibilityState={{ disabled }}
-      disabled={disabled}
-      onPress={onPress}
-      className={`min-h-12 flex-row items-center gap-3 rounded-xl border border-border bg-surface px-4 active:bg-surfaceMuted ${disabled ? 'opacity-50' : ''}`}>
-      <Icon name={icon} size={18} className="text-textSecondary" />
-      <View className="flex-1 py-3">
-        <Text className="font-body text-body text-textPrimary">{label}</Text>
-        {disabledNote ? (
-          <Text className="font-caption text-caption text-textSecondary">{disabledNote}</Text>
-        ) : null}
-      </View>
-      {disabled ? null : <Icon name="chevron-right" size={16} className="text-textSecondary" />}
-    </Pressable>
-  );
-}
+import { byPlatform } from '@/lib/copy';
 
 interface SubEventDetailProps {
   eventId: string;
   subEventId: string;
 }
 
-// Sub-event Detail, a sheet over the Schedule as the Figma Sub-Event Detail frame draws it (spec
-// §2.5.5): the name, times and venue, Get Directions, and View photos for every role but the
-// Photographer. The Admin edits from here, and deletes from the foot of the Edit sheet (decided at
-// build mobile). It reads the schedule the list already holds.
+// Sub-event Detail, a sheet over the whole Event shell (spec §2.5.5, D-125, D-127): which one of
+// how many, the name, times and venue, Directions and Photos side by side, and for the Admin, Edit
+// in the toolbar with Delay and the venue's check-in QR as rows. A Photographer, who has no Home,
+// gets Directions alone. Delete is at the foot of the Edit sheet (D-121). It reads the schedule
+// the list already holds.
 export function SubEventDetail({ eventId, subEventId }: SubEventDetailProps) {
   const router = useRouter();
   const bottom = useSheetBottomPadding();
@@ -80,18 +54,25 @@ export function SubEventDetail({ eventId, subEventId }: SubEventDetailProps) {
     router.navigate({ pathname: '/event/[id]/home', params: { id: eventId, subEventId } });
   }
 
+  function delay() {
+    router.push({
+      pathname: '/sub-event/[eventId]/[subEventId]/delay',
+      params: { eventId, subEventId },
+    });
+  }
+
   let body;
   if (subEvent === undefined) {
     body = schedule.isPending ? (
       <View className="items-center py-10">
-        <ActivityIndicator className="text-accent" />
+        <ActivityIndicator className="text-textSecondary" />
       </View>
     ) : (
-      <View className="gap-3">
+      <View className="gap-2 px-5">
         <Text accessibilityRole="header" className="font-h2 text-h2 text-textPrimary">
           This sub-event is not on the schedule
         </Text>
-        <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
+        <Text className="font-body text-body text-textSecondary">
           It may have been deleted on another phone.
         </Text>
       </View>
@@ -99,76 +80,86 @@ export function SubEventDetail({ eventId, subEventId }: SubEventDetailProps) {
   } else {
     body = (
       <>
-        <View className="gap-2">
-          <View className="flex-row items-baseline gap-2">
-            <Text className="font-fraunces-semibold text-h2 text-accentText">
-              {romanNumeral(index + 1)}
+        <View className="gap-3 px-5">
+          <View className="gap-1">
+            <Text className="font-caption text-caption text-textSecondary">
+              Sub-event {romanNumeral(index + 1)} of {romanNumeral(subEvents.length)}
             </Text>
-            <Text accessibilityRole="header" className="flex-1 font-h1 text-h1 text-textPrimary">
+            <Text accessibilityRole="header" className="font-h1 text-h1 text-textPrimary">
               {subEvent.name}
             </Text>
           </View>
-          <Text className="font-micro text-micro uppercase tracking-wider text-textSecondary">
-            {formatSubEventTimes(new Date(subEvent.startsAt), new Date(subEvent.endsAt))}
-          </Text>
-          <View className="flex-row items-center gap-2 pt-1">
-            <Icon name="map-pin" size={16} className="text-textSecondary" />
-            <Text className="flex-1 font-body text-body text-textSecondary">
-              {subEvent.venue.name}
-            </Text>
+          <View className="gap-2">
+            <View className="flex-row items-center gap-2.5">
+              <Icon name="calendar" size={18} className="text-textSecondary" />
+              <Text className="flex-1 font-body text-body text-textPrimary">
+                {formatSubEventTimes(new Date(subEvent.startsAt), new Date(subEvent.endsAt))}
+              </Text>
+            </View>
+            <View className="flex-row items-center gap-2.5">
+              <Icon name="map-pin" size={18} className="text-textSecondary" />
+              <Text className="flex-1 font-body text-body text-textPrimary">
+                {subEvent.venue.name}
+              </Text>
+            </View>
           </View>
           {subEvent.description ? (
-            <Text className="pt-1 font-bodySecondary text-bodySecondary text-textPrimary">
+            <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
               {subEvent.description}
             </Text>
           ) : null}
-        </View>
-
-        <View className="gap-3">
-          <Button
-            label="Get Directions"
-            icon="navigation"
-            onPress={() => directions(subEvent.venue)}
-          />
-          {can.viewPhotos ? (
-            <Button
-              label="View photos from this session"
-              variant="secondary"
-              icon="images"
-              onPress={viewPhotos}
-            />
-          ) : null}
+          <View className="flex-row gap-3 pt-2">
+            <View className="flex-1">
+              <Button
+                label={byPlatform('Directions', 'Directions')}
+                icon="navigation"
+                onPress={() => directions(subEvent.venue)}
+              />
+            </View>
+            {can.viewPhotos ? (
+              <View className="flex-1">
+                <Button label="Photos" icon="images" variant="secondary" onPress={viewPhotos} />
+              </View>
+            ) : null}
+          </View>
         </View>
 
         {can.edit ? (
-          <View className="gap-3 border-t border-border pt-5">
-            <FieldLabel>Admin actions</FieldLabel>
-            <ActionRow
-              icon="qr-code"
-              label="Show Venue Check-In QR"
-              disabledNote="Coming in a later update"
+          <Section>
+            <Row
+              leading={<Glyph name={GLYPH.delay} size={22} tone="textSecondary" />}
+              title={byPlatform('Delay…', 'Delay')}
+              chevron
+              onPress={delay}
             />
-            <ActionRow
-              icon="pencil"
-              label="Edit Sub-Event"
-              onPress={() => setEditing({ kind: 'edit', subEvent })}
+            <Row
+              leading={<Glyph name={GLYPH.qr} size={22} tone="textSecondary" />}
+              title={byPlatform('Venue Check-In QR', 'Venue check-in QR')}
+              value="Coming soon"
+              disabled
             />
-          </View>
+          </Section>
         ) : null}
       </>
     );
   }
 
   return (
-    <View className="gap-5 bg-surface px-5 pt-4" style={{ paddingBottom: bottom }}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Close"
-        hitSlop={8}
-        onPress={close}
-        className="-ml-2 h-11 w-11 items-center justify-center">
-        <Icon name="x" size={22} className="text-textSecondary" />
-      </Pressable>
+    <View collapsable={false} className="gap-4 bg-background" style={{ paddingBottom: bottom }}>
+      <SheetHandle />
+      <SheetToolbar
+        onClose={close}
+        confirm={
+          can.edit && subEvent
+            ? {
+                label: 'Edit',
+                kind: 'action',
+                glyph: GLYPH.edit,
+                onPress: () => setEditing({ kind: 'edit', subEvent }),
+              }
+            : undefined
+        }
+      />
       {body}
       {can.edit ? (
         <ScheduleSheet

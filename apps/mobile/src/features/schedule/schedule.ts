@@ -1,5 +1,6 @@
 import {
   AddSubEventRequest,
+  currentSubEvent,
   MAX_SUB_EVENTS,
   subEventStatus,
   type ErrorCode,
@@ -44,6 +45,30 @@ export function delayedTimes(
     return { startsAt: new Date(Date.parse(subEvent.startsAt) + delayMs).toISOString(), endsAt };
   }
   return { startsAt: subEvent.startsAt, endsAt };
+}
+
+// The two sub-events that show a Delay button on the Schedule (D-127): the one In Progress that
+// capture tags to, on the Live card, and the next one to start, the two most likely to run late.
+// Every row still reaches Delay from its menu and from Sub-event Detail. A tie on the next start
+// goes to the lower id, so the button stays on one row.
+export function delayShortcuts(
+  subEvents: readonly SubEvent[],
+  now: Date,
+): { live: string | null; next: string | null } {
+  const at = now.getTime();
+  let next: SubEvent | null = null;
+  for (const subEvent of subEvents) {
+    const start = Date.parse(subEvent.startsAt);
+    if (start <= at) continue;
+    if (
+      next === null ||
+      start < Date.parse(next.startsAt) ||
+      (start === Date.parse(next.startsAt) && subEvent.id < next.id)
+    ) {
+      next = subEvent;
+    }
+  }
+  return { live: currentSubEvent(subEvents, now)?.id ?? null, next: next?.id ?? null };
 }
 
 // The next moment any sub-event changes status: the earliest start or end after `now`. The Schedule

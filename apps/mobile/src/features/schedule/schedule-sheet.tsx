@@ -1,9 +1,9 @@
 import { VERIFICATION_RADIUS_DEFAULT_M, type SubEvent } from '@momentlens/shared-types';
 import { randomUUID } from 'expo-crypto';
 import { useState } from 'react';
-import { Alert, Text } from 'react-native';
+import { Alert } from 'react-native';
 
-import { Button } from '@/components/ui/button';
+import { Row, Section } from '@/components/ui/grouped';
 import { Sheet } from '@/components/ui/sheet';
 import { SubEventForm } from '@/features/events/sub-event-form';
 import { defaultSubEventTimes } from '@/features/events/time';
@@ -16,6 +16,7 @@ import {
 } from '@/features/schedule/schedule';
 import { useSubEvents, writeSchedule } from '@/features/schedule/use-sub-events';
 import { addSubEvent, deleteSubEvent, updateSubEvent } from '@/lib/api';
+import { byPlatform } from '@/lib/copy';
 
 // Add carries the requestId made when the "+" opened the sheet, so every retry from this sheet
 // sends the same one and adds the sub-event once (D-121). Edit carries the sub-event as the Admin
@@ -155,8 +156,12 @@ function SheetContent({
 
   return (
     <SubEventForm
-      title={original ? 'Edit Sub-Event' : 'Add Sub-Event'}
-      submitLabel={original ? 'Save Changes' : 'Add Sub-Event'}
+      title={
+        original
+          ? byPlatform('Edit Sub-Event', 'Edit sub-event')
+          : byPlatform('New Sub-Event', 'New sub-event')
+      }
+      submitLabel={original ? 'Save' : 'Add'}
       initial={initial}
       venues={venues}
       busy={busy === 'save'}
@@ -170,22 +175,25 @@ function SheetContent({
       onSubmit={(values) => void save(values)}
       footer={
         original ? (
-          <>
-            <Button
-              label="Delete Sub-Event"
-              variant="destructive"
-              icon="trash-2"
-              busy={busy === 'delete'}
-              disabled={onlyOne || busy === 'save'}
+          <Section
+            footer={
+              onlyOne
+                ? 'An event needs at least one sub-event, so its only one cannot be deleted.'
+                : undefined
+            }>
+            <Row
+              title={
+                busy === 'delete'
+                  ? byPlatform('Deleting…', 'Deleting')
+                  : byPlatform('Delete Sub-Event', 'Delete sub-event')
+              }
+              destructive
+              center
+              disabled={onlyOne || busy !== null}
               accessibilityHint={onlyOne ? 'An event needs at least one sub-event.' : undefined}
               onPress={() => confirmDelete(original)}
             />
-            {onlyOne ? (
-              <Text className="text-center font-caption text-caption text-textSecondary">
-                An event needs at least one sub-event, so its only one cannot be deleted.
-              </Text>
-            ) : null}
-          </>
+          </Section>
         ) : null
       }
     />

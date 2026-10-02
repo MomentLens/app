@@ -32,8 +32,9 @@ const TAB_BAR: Record<EventTab, { label: string; icon: TabIcon }> = {
   },
 };
 
-// The Event shell (spec §2.5.1, hb §16.5): the persistent header above the role's own tab bar. The
-// role comes from GET /events/{eventId} through useEvent, never from the Events list (D-118).
+// The Event shell (spec §2.5.1, hb §16.5): the role's own tab bar, each tab under the Event header
+// (features/event-shell/event-tab-screen.tsx). The role comes from GET /events/{eventId} through
+// useEvent, never from the Events list (D-118).
 export default function EventShellLayout() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -84,14 +85,16 @@ export default function EventShellLayout() {
     );
   }
 
+  // The tabs draw the Event header themselves, so it collapses with each tab's content (D-125).
+  // Only the states without tabs need the shell's own bar and its way back.
+  if (view === 'tabs' && event.data) {
+    return <View className="flex-1 bg-background">{body}</View>;
+  }
   return (
     <View className="flex-1 bg-background">
       {/* SafeAreaView is not a React Native core component, so its layout stays in style. */}
       <SafeAreaView edges={['top', 'left', 'right']}>
-        <EventHeader
-          name={view === 'tabs' ? event.data?.event.name : undefined}
-          onBack={toEvents}
-        />
+        <EventHeader onBack={toEvents} />
       </SafeAreaView>
       {body}
     </View>

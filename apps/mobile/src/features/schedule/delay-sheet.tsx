@@ -1,16 +1,16 @@
 import { subEventStatus, type SubEvent } from '@momentlens/shared-types';
-import WheelPicker, { type PickerItem } from '@quidone/react-native-wheel-picker';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
+import { Segmented } from '@/components/ui/segmented';
+import { SheetHandle, SheetToolbar } from '@/components/ui/sheet-toolbar';
 import { formatSubEventTimes } from '@/features/events/format';
-import { MINUTE_STEP } from '@/features/events/time';
-import { FieldLabel } from '@/features/events/wizard-frame';
 import { delayedTimes, nextStatusChange } from '@/features/schedule/schedule';
+import { DurationPicker } from '@/features/schedule/duration-picker';
 import { useSheetBottomPadding } from '@/features/schedule/sheet-inset';
 import { useSubEvents, writeSchedule } from '@/features/schedule/use-sub-events';
 import { useNow } from '@/hooks/use-now';
@@ -18,33 +18,23 @@ import { updateSubEvent } from '@/lib/api';
 
 const MINUTE_MS = 60 * 1000;
 
-// The amounts a late sub-event most often needs, one tap each. The wheels take any other up to a
-// day less five minutes; a bigger move is an edit of the times (spec §4.3).
-const QUICK_MINUTES = [15, 30, 60, 120];
-const DEFAULT_MINUTES = 30;
+// The amounts a late sub-event most often needs, one tap each, then Custom, which takes any other
+// up to a day less five minutes. A bigger move is an edit of the times (spec §4.3).
+type Choice = 15 | 30 | 60 | 120 | 'custom';
+const CHOICES = [
+  { value: 15, label: '15m' },
+  { value: 30, label: '30m' },
+  { value: 60, label: '1h' },
+  { value: 120, label: '2h' },
+  { value: 'custom', label: 'Custom' },
+] as const satisfies readonly { value: Choice; label: string }[];
 
-const ITEM_HEIGHT = 36;
-const VISIBLE_ITEMS = 3;
-
-const HOURS: PickerItem<number>[] = Array.from({ length: 24 }, (_, i) => ({
-  value: i,
-  label: `${i} h`,
-}));
-const MINUTES: PickerItem<number>[] = Array.from({ length: 60 / MINUTE_STEP }, (_, i) => ({
-  value: i * MINUTE_STEP,
-  label: `${String(i * MINUTE_STEP).padStart(2, '0')} min`,
-}));
-
-function renderItem({ item }: { item: PickerItem<number> }) {
-  return (
-    <Text numberOfLines={1} className="w-full text-center font-body text-body text-textPrimary">
-      {item.label}
-    </Text>
-  );
-}
-
-function quickLabel(minutes: number): string {
-  return minutes < 60 ? `${minutes} min` : `${minutes / 60} h`;
+// An amount as the button says it: "30 min", "1 hr", "1 hr 45 min".
+function amountLabel(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours === 0) return `${rest} min`;
+  return rest === 0 ? `${hours} hr` : `${hours} hr ${rest} min`;
 }
 
 interface DelaySheetProps {
@@ -52,9 +42,11 @@ interface DelaySheetProps {
   subEventId: string;
 }
 
-// The Admin's Delay (spec §2.5.5, D-121), a native sheet over the Schedule: a positive amount,
+// The Admin's Delay (spec §2.5.5, D-121, D-127), a sheet over the whole Event shell: a positive
+// amount from the platform's segmented control, or a custom one from the platform's picker,
 // turned into new absolute times and sent through the edit endpoint. One button does two things
-// depending on the clock, so the sheet shows the times it will send before anything is sent.
+// depending on the clock, so the sheet shows the old times struck through beside the new ones, and
+// names the amount on the button, before anything is sent.
 export function DelaySheet({ eventId, subEventId }: DelaySheetProps) {
   const router = useRouter();
   const bottom = useSheetBottomPadding();
@@ -65,7 +57,9 @@ export function DelaySheet({ eventId, subEventId }: DelaySheetProps) {
   );
   const onClose = () => router.back();
   const subEvent = subEvents?.find((candidate) => candidate.id === subEventId);
-  const [minutes, setMinutes] = useState(DEFAULT_MINUTES);
+  const [choice, setChoice] = useState<Choice>(30);
+  const [custom, setCustom] = useState(45);
+  const minutes = choice === 'custom' ? custom : choice;
   // The body last sent, kept so that trying again after a failure sends exactly the same times,
   // even if the cached schedule has since caught up with a first attempt that did land.
   const [sent, setSent] = useState<{ minutes: number; body: ReturnType<typeof delayedTimes> }>();
@@ -74,21 +68,24 @@ export function DelaySheet({ eventId, subEventId }: DelaySheetProps) {
 
   if (subEvents === undefined) {
     return (
-      <View className="items-center bg-surface py-10" style={{ paddingBottom: bottom }}>
-        <ActivityIndicator className="text-accent" />
+      <View className="items-center bg-background py-10" style={{ paddingBottom: bottom }}>
+        <ActivityIndicator className="text-textSecondary" />
       </View>
     );
   }
   if (subEvent === undefined) {
     return (
-      <View className="gap-4 bg-surface px-5 pt-6" style={{ paddingBottom: bottom }}>
-        <Text accessibilityRole="header" className="font-h2 text-h2 text-textPrimary">
-          This sub-event is gone
-        </Text>
-        <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-          It was deleted on another phone.
-        </Text>
-        <Button label="Close" variant="secondary" onPress={onClose} />
+      <View collapsable={false} className="gap-4 bg-background" style={{ paddingBottom: bottom }}>
+        <SheetHandle />
+        <SheetToolbar onClose={onClose} />
+        <View className="gap-2 px-5">
+          <Text accessibilityRole="header" className="font-h2 text-h2 text-textPrimary">
+            This sub-event is gone
+          </Text>
+          <Text className="font-body text-body text-textSecondary">
+            It was deleted on another phone.
+          </Text>
+        </View>
       </View>
     );
   }
@@ -96,6 +93,8 @@ export function DelaySheet({ eventId, subEventId }: DelaySheetProps) {
   const retry = sent !== undefined && sent.minutes === minutes;
   const next = retry ? sent.body : delayedTimes(subEvent, minutes * MINUTE_MS, now);
   const started = subEventStatus(subEvent, now) !== 'upcoming';
+  const before = formatSubEventTimes(new Date(subEvent.startsAt), new Date(subEvent.endsAt));
+  const after = formatSubEventTimes(new Date(next.startsAt), new Date(next.endsAt));
 
   async function confirm(target: SubEvent) {
     if (busy || minutes === 0) return;
@@ -113,105 +112,50 @@ export function DelaySheet({ eventId, subEventId }: DelaySheetProps) {
   }
 
   // One view that never flattens away. A native sheet that holds a scroll view, as each wheel is,
-  // lays out its direct children itself, and with this view flattened it took the hours wheel out
-  // of its box (react-native-screens).
+  // lays out its direct children itself, and with this view flattened it took a wheel out of its
+  // box (react-native-screens).
   return (
-    <View
-      collapsable={false}
-      className="gap-5 bg-surface px-5 pt-6"
-      style={{ paddingBottom: bottom }}>
-      <View className="flex-row items-start justify-between gap-3">
-        <Text
-          accessibilityRole="header"
-          numberOfLines={2}
-          className="flex-1 font-h2 text-h2 text-textPrimary">
-          Delay {subEvent.name}
+    <View collapsable={false} className="gap-4 bg-background" style={{ paddingBottom: bottom }}>
+      <SheetHandle />
+      <SheetToolbar title={`Delay ${subEvent.name}`} onClose={onClose} />
+      <View className="gap-5 ios:px-5 android:px-6">
+        <Text className="text-center font-bodySecondary text-bodySecondary text-textSecondary">
+          Now {before}
         </Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          hitSlop={12}
-          onPress={onClose}>
-          <Icon name="x" size={20} className="text-textSecondary" />
-        </Pressable>
-      </View>
+        <Segmented
+          accessibilityLabel="Delay by"
+          options={CHOICES}
+          value={choice}
+          onChange={setChoice}
+        />
+        {choice === 'custom' ? <DurationPicker minutes={custom} onChange={setCustom} /> : null}
 
-      <View className="gap-2">
-        <FieldLabel>Delay by</FieldLabel>
-        <View accessibilityRole="radiogroup" className="flex-row flex-wrap gap-2">
-          {QUICK_MINUTES.map((amount) => {
-            const selected = amount === minutes;
-            return (
-              <Pressable
-                key={amount}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: selected }}
-                onPress={() => setMinutes(amount)}
-                className={`min-h-11 justify-center rounded-full border px-4 ${selected ? 'border-accent bg-accentTint' : 'border-borderStrong bg-surface active:bg-surfaceMuted'}`}>
-                <Text
-                  className={`font-fieldLabel text-fieldLabel ${selected ? 'text-accentText' : 'text-textPrimary'}`}>
-                  {quickLabel(amount)}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <View className="flex-row items-center rounded-xl border border-border bg-surface px-2">
-          <View
-            pointerEvents="none"
-            style={{ top: ((VISIBLE_ITEMS - 1) / 2) * ITEM_HEIGHT, height: ITEM_HEIGHT }}
-            className="absolute inset-x-2 rounded-lg bg-textPrimary/5"
-          />
-          <View className="flex-1">
-            <WheelPicker
-              data={HOURS}
-              value={Math.floor(minutes / 60)}
-              onValueChanged={({ item }) => setMinutes(item.value * 60 + (minutes % 60))}
-              itemHeight={ITEM_HEIGHT}
-              visibleItemCount={VISIBLE_ITEMS}
-              renderItem={renderItem}
-              renderOverlay={null}
-              enableScrollByTapOnItem
-            />
+        <View accessible className="gap-1.5 rounded-2xl bg-surface px-4 py-3.5">
+          <Text className="font-caption text-caption text-textSecondary">New times</Text>
+          <Text className="font-bodySecondary text-bodySecondary text-textSecondary line-through">
+            {before}
+          </Text>
+          <View className="flex-row items-center gap-1.5">
+            <Icon name="chevron-right" size={16} className="text-textSecondary" />
+            <Text className="flex-1 font-h2 text-body text-textPrimary">
+              {minutes === 0 ? 'Choose how long to delay it.' : after}
+            </Text>
           </View>
-          <View className="flex-1">
-            <WheelPicker
-              data={MINUTES}
-              value={minutes % 60}
-              onValueChanged={({ item }) => setMinutes(Math.floor(minutes / 60) * 60 + item.value)}
-              itemHeight={ITEM_HEIGHT}
-              visibleItemCount={VISIBLE_ITEMS}
-              renderItem={renderItem}
-              renderOverlay={null}
-              enableScrollByTapOnItem
-            />
-          </View>
+          <Text className="font-caption text-caption text-textSecondary">
+            {started
+              ? `${subEvent.name} has started, so only the end moves.`
+              : `${subEvent.name} hasn't started, so the start and the end both move.`}
+          </Text>
         </View>
-      </View>
 
-      <View accessible className="gap-1 rounded-xl bg-surfaceMuted px-4 py-3">
-        <Text className="font-micro text-micro uppercase tracking-wider text-textSecondary">
-          New times
-        </Text>
-        <Text className="font-body text-body text-textPrimary">
-          {minutes === 0
-            ? 'Choose how long to delay it.'
-            : formatSubEventTimes(new Date(next.startsAt), new Date(next.endsAt))}
-        </Text>
-        <Text className="font-caption text-caption text-textSecondary">
-          {started
-            ? 'It has started, so only the end moves.'
-            : 'It has not started, so the start and the end both move.'}
-        </Text>
+        {problem ? <FormMessage message={problem} /> : null}
+        <Button
+          label={retry && problem ? 'Try again' : `Delay ${amountLabel(minutes)}`}
+          busy={busy}
+          disabled={minutes === 0}
+          onPress={() => void confirm(subEvent)}
+        />
       </View>
-
-      {problem ? <FormMessage message={problem} /> : null}
-      <Button
-        label={retry && problem ? 'Try again' : 'Delay'}
-        busy={busy}
-        disabled={minutes === 0}
-        onPress={() => void confirm(subEvent)}
-      />
     </View>
   );
 }
