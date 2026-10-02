@@ -2,7 +2,9 @@
 
 The loop treats the two differently. A missing upload is archived on its first try, because a
 retry cannot bring it back (D-123). An outage costs the try in flight, and the loop then waits
-for R2 to answer before it reads the next message, so an outage archives nothing.
+for R2 to answer before it reads the next message, so an outage costs one try, not three. R2
+refusing the worker's key or bucket counts as an outage, so a wrong R2_* value holds the queue
+instead of archiving every message it reaches (D-123).
 """
 
 from __future__ import annotations
@@ -23,8 +25,13 @@ from botocore.exceptions import (
 
 from app.config import Settings
 
-# Never written. A HEAD of it answers 404 while R2 is up, which is all the probe asks.
+# Never written. A GET of it answers NoSuchKey while R2 is up and accepts the worker's key and
+# bucket, which is all the probe asks. A HEAD would not do: its 404 has no body, so it cannot tell
+# NoSuchKey from NoSuchBucket.
 PROBE_KEY = "momentlens-worker-probe"
+
+# What R2 answers when the worker's key is wrong or lacks access to the bucket.
+_REFUSED = (401, 403)
 
 
 class ObjectMissing(Exception):
@@ -32,7 +39,8 @@ class ObjectMissing(Exception):
 
 
 class StorageUnavailable(Exception):
-    """R2 did not answer, or answered with a 5xx, after boto's own retries."""
+    """R2 did not answer, answered with a 5xx after boto's own retries, or refused the worker's
+    key or bucket."""
 
 
 class Storage:
@@ -71,11 +79,13 @@ class Storage:
             raise _classify(error, key) from error
 
     def reachable(self) -> bool:
-        """True when R2 answers a HEAD with anything under 500, a 404 included."""
+        """True when R2 answers the probe with NoSuchKey or the object, so it is up and accepts
+        the worker's key and bucket."""
         try:
-            self._client.head_object(Bucket=self._bucket, Key=PROBE_KEY)
+            response = self._client.get_object(Bucket=self._bucket, Key=PROBE_KEY)
+            response["Body"].close()
         except ClientError as error:
-            return _status(error) < 500
+            return _code(error) == "NoSuchKey"
         except BotoCoreError:
             return False
         return True
@@ -85,14 +95,22 @@ def _status(error: ClientError) -> int:
     return int(error.response.get("ResponseMetadata", {}).get("HTTPStatusCode") or 0)
 
 
+def _code(error: ClientError) -> str:
+    return str(error.response.get("Error", {}).get("Code") or "")
+
+
 def _classify(error: ClientError | BotoCoreError, key: str) -> Exception:
     if isinstance(error, ClientError):
-        # NoSuchBucket is a 404 too, and means a wrong R2_BUCKET, which no photo should be
-        # archived over. Only NoSuchKey says the file is missing.
-        if error.response.get("Error", {}).get("Code") == "NoSuchKey":
+        status, code = _status(error), _code(error)
+        # NoSuchBucket is a 404 too. Only NoSuchKey says the file is missing.
+        if code == "NoSuchKey":
             return ObjectMissing(f"no object at {key}")
-        if _status(error) >= 500:
-            return StorageUnavailable(f"R2 answered {_status(error)} for {key}")
+        if code == "NoSuchBucket" or status in _REFUSED:
+            return StorageUnavailable(
+                f"R2 refused {key} with {status} {code}. Check the worker's R2_* settings (D-123)"
+            )
+        if status >= 500:
+            return StorageUnavailable(f"R2 answered {status} for {key}")
         return error
     if isinstance(error, BotoConnectionError | HTTPClientError | IncompleteReadError):
         return StorageUnavailable(f"R2 did not answer for {key}: {error}")
