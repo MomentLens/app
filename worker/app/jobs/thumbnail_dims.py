@@ -25,7 +25,7 @@ class Message(MediaMessage):
 
 
 def run(ctx: JobContext, message: Message) -> None:
-    where = f"job={NAME} msg_id={ctx.msg_id} media_id={message.media_id}"
+    where = ctx.where
 
     row = ctx.store.media_for_job(message.media_id)
     if row is None:
