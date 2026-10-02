@@ -857,6 +857,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-111).** The event's venue and the one radius are gone. Each sub-event carries its own radius, a sub-event's venue is one an earlier sub-event added or a new one, and the wizard sets Approval Mode. The default is still `auto`.
 **Amended (see D-115).** `GET /events` also returns the caller's pending join requests. A Do Not Publish face in a cover now reaches anyone holding a live invite, not only members.
 **Amended (see D-118).** S-08 builds `GET /events/{eventId}`, and creating an event lands on the Admin's Home tab.
+**Amended (see D-128).** Start and end times use `@expo/ui`'s `DatePicker` on each platform, and `@quidone/react-native-wheel-picker` leaves `apps/mobile`. The map providers stand.
 
 ### D-111: Each sub-event has its own radius, and the wizard has three steps
 **Decision.** Amends D-110. Ukasha ruled on each of these on 2026-09-25, after S-02's API build, from the Figma draft of the wizard.
@@ -884,6 +885,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** The team copied the Figma frames closely and the result looked small and flat on both phones: an 11-point wordmark, a flat round "+", and 15-point body text on both platforms. None of the three is a designer, so each platform's own guidelines decide size.
 **Rejected.** One set of sizes for both platforms, which reads as foreign on at least one of them. A custom floating "+" on iOS 26, beside a tab bar that has a native slot for it.
 **Cost.** The iOS slot is the one Apple's own apps use for Search, so the "+" borrows it. Every existing screen changed size, so each needs a look on both platforms.
+**Amended (see D-125).** A tab's first screen opens with a large title that collapses into the bar on scroll, 34pt Fraunces into the 44pt bar on iOS and Material 3's large top app bar into the 64dp bar on Android.
 
 ### D-113: Ukasha merges alone while the other two are away
 **Decision.** Amends D-107. Ukasha ruled on 2026-09-29. While the other two developers are unavailable, Ukasha merges a pull request without a teammate's review once `/code-review` has run on it and CI passes. The four human-read surfaces still get Ukasha's own read (D-68). The exception ends when either teammate is available again.
@@ -928,6 +930,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** Anyone holding or guessing a live code learns an event's name, dates, venue names and cover without an account, and nothing slows a guesser. A blocked person learns they were blocked. One error code, one screen, one column and a field on `ListEventsResponse`.
 **Reopen if.** The API's logs show invite lookups the team did not make. Then add the rate limit.
 **Amended (see D-118).** `active` routes to the role's landing tab, which is My Media for a Photographer and Home for everyone else.
+**Amended (see D-126).** A pending request shows as a row at the top of the Events list, and Join with code is an action in the Events bar.
 
 ### D-116: One AGENTS.md, a stack of PRs per slice, and shared infrastructure for all three
 **Decision.** Amends D-107 and D-113. Ukasha ruled on 2026-09-30, when B and C came back.
@@ -988,6 +991,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** The name already says which event is open, and the Figma frames leave the cover out. A cold start with no signal reaches an event only through the Events list, so persisting the event alone left a guest unable to open it.
 **Rejected.** The cover in the header. The deprecated sync persister. Persisting the event and not the list.
 **Cost.** One more persisted query. Every event the user belongs to stays on the phone for up to 14 days with the app closed, or until a logout. A persisted cover URL on an Events card expires an hour after it was signed, so offline a card shows its cover only if `expo-image` cached it.
+**Amended (see D-125).** Back is the platform's own button instead of "‹ Events", and the header is the native stack header on iOS and a Material 3 top app bar on Android. It still shows no cover.
 
 ### D-120: Code owners keep a discussion log too
 **Decision.** Amends D-117. Ukasha ruled on 2026-10-01. A code owner's own slice keeps a discussion log in every stage, as every other slice does. Each stage posts its log to the slice's issue, and the done stage copies every log into the top PR (D-116). The rest of D-117 stands, and a code owner's stack still merges on a green CI run and `/code-review`. A slice already under way when this landed keeps a log from its next stage on.
@@ -1017,6 +1021,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** One Delay button does two things, so its confirm shows the new times. Moving a venue's sub-events away and back makes a new QR. Fixing a pin that three sub-events share takes three edits. A write invalidates two queries, and the span and the schedule can disagree for one fetch. A Guest verified for a deleted sub-event loses that row, which unlocked no photo. A photo queued offline for a sub-event deleted since is S-11's and S-12's to handle, and no doc says how yet.
 **Reopen if.** An Admin needs to move a running sub-event's start, or a tester reports a printed QR that stopped working.
 **Amended (see D-122).** A photo queued for a sub-event deleted since answers 409 `sub_event_missing` at pre-flight and stays stopped in My Media.
+**Amended (see D-127).** Add sits in the iOS bar and in a FAB on Android. Delay shows as a button on the sub-event In Progress and the next one, and every row reaches it from its long-press menu and Detail. Edit sits in Detail's toolbar, and Delete stays at the foot of the Edit sheet.
 
 ### D-122: Upload pre-flight and completion, from S-12's read-back
 **Decision.** Amends D-82, D-95, D-96 and D-121. Ukasha ruled on each of these on 2026-10-02.
@@ -1077,6 +1082,86 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Retrying through pgmq's visibility timeout, which lets a newer job on the same photo run first. Pillow for the dimensions, which reads only the header and is not in Handbook §17. A written rule alone against a second worker, which nothing enforces. Guarding `thumbnail_dims` on `processed_at`, which D-108 clears.
 **Cost.** One failing message holds the queue for the length of its retries. The real-SQL test needs a secret in GitHub and runs against the shared dev project. The API's RLS suite completes uploads with no file in R2, so each run leaves a few messages that the dev server's worker archives with an error line and a Sentry report. OpenCV decodes the whole photo to read two numbers, about 150 ms each. A lost database connection or an R2 outage during a job costs that message a try, as a crash does, so a message whose third try meets one is archived and its `processed_at` cleared. Ukasha kept this at S-18a's done stage rather than count those tries apart. The worker reads an upload whole before it decodes it, and D-122 sets no size limit, so one very large file can stop the worker three times before its message is archived. Ukasha deferred a byte cap at the same stage to a client-side guard, which limits the app and not a direct PUT to a presigned URL.
 **Reopen if.** The worker needs to run jobs in parallel, which the lock and the order both forbid.
+
+### D-124: Each platform draws the controls, and the brand stays in the content
+**Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
+- Bars, lists, fields, pickers, switches, menus, sheets and dialogs are each platform's own, iOS 26's on iOS and Material 3's on Android. Where the app draws a control itself, it copies that platform's control, never one look for both.
+- The brand lives in the content. Fraunces sets event names, sub-event names and large screen titles. The cream and warm near-black grounds, the gold accent, and covers and photos at the width of the screen carry the rest.
+- All other text uses the system font, SF Pro on iOS and Roboto on Android, at the per-platform sizes D-112 set. Manrope goes, and `@expo-google-fonts/manrope` leaves `apps/mobile`.
+- Uppercase is kept for one label, "Live now". Otherwise capitalization follows each platform's guidelines, title case for titles, buttons, menu items and row labels on iOS and sentence case on Android, and the app never changes the case of a name a user typed.
+- Lists are inset grouped on iOS, with 26pt corners and hairline separators, and Material 3's grouped list on Android, with 20dp outer corners, 4dp inner corners and 2dp gaps. No list draws white cards with a 1px border on cream.
+- On iOS a form puts each field in a row of an inset grouped section. On Android it uses outlined text fields with a floating label and a 2dp focus outline. A field never repeats its label as its placeholder. A switch is `@expo/ui`'s `Switch`, which draws SwiftUI's toggle and Material 3's switch.
+- Gold marks the brand, the primary action and the selected tab. A role shows as a neutral badge, an error takes `danger`, and a selection uses the platform's own control.
+- Token changes, each measured against WCAG AA:
+  - `accentText` becomes `#7E5B1E` in light mode, 5.7:1 on `background`, 6.2:1 on `surface` and 4.9:1 on `accentTint`. Dark mode keeps `#D6AC52`.
+  - `textMuted` becomes `#6F685C` in light mode, 5.1:1 on `background` and 4.6:1 on `surfaceMuted`, and `#9A917F` in dark mode, 5.9:1 and 4.8:1. Muted text never sits on `accentTint`, where it measures 4.4:1 and 4.2:1.
+  - A gold icon takes `accentText`, because `accent` measures 2.4:1 on the light `background`.
+  - `surfaceContainer`, `#F1EBE0` in light mode and `#221E17` in dark, colors the Android navigation bar one tone off the page.
+  - `hero` and `onHero` color the Live card, `#1E1B17` and `#FAF6EF` in light mode (15.9:1) and `#3A3122` and `#F4EFE5` in dark mode (11.2:1). Swapping `textPrimary` and `background` instead turns the card into a cream slab in dark mode.
+- The MomentLens wordmark appears on the launch screen and on Login, and nowhere else.
+- The Expo template's brand goes. The app icon is the gold aperture mark on cream, with iOS default, dark and tinted variants and an Android adaptive icon with a monochrome layer. The splash is the mark on `#FAF6EF`, or `#17140F` in dark mode, and the blue overlay in `components/animated-icon.tsx` goes. Android's app theme takes the gold as its accent and drops all-caps dialog buttons, so `Alert` stops showing teal capitals.
+**Why.** The critique found that what each platform draws already looked right: the native tabs, iOS sheets and alerts, the Material slider and iOS's Paste button. What the app drew itself looked like a web form kit beside them, with uppercase labels over bordered boxes, a pill segmented control, bordered cards and Manrope next to SF Pro and Roboto in the bars. The seams showed most on Android, the platform the judges hold (D-61). Every small gold label failed AA at 3.9:1 on `background`, muted text measured 3.3:1, and the icon and splash were still Expo's.
+**Rejected.** Manrope for UI text, which sat beside the system font in every native bar and sheet. iOS controls drawn on Android, which read as foreign there. Darkening `accent` itself, which dulls the buttons and the tab tint, and both already pass.
+**Cost.** Every screen built so far changes: the auth screens, Events, Profile, the wizard, the Schedule and its sheets. A form control with no universal `@expo/ui` component needs one component per platform. The icon, the splash and the Android theme take one native rebuild on all three machines.
+**Reopen if.** Testers describe the app as plain or generic. Then the content side carries more of the brand, not the controls.
+
+### D-125: Native headers, and the Event header collapses
+**Decision.** Amends D-112 and D-119, and replaces hb §16.5's custom Event header. Ukasha ruled on these on 2026-10-03, from the critique in D-124.
+- Every screen has a title in its bar. A tab's first screen opens with a large title that collapses into the bar on scroll. On iOS the large title is 34pt Fraunces and collapses to a 17pt inline title in the system font. On Android it is Material 3's large top app bar with its title in Fraunces, collapsing to the 64dp bar. A pushed screen opens with the small bar.
+- iOS uses the native stack header with `headerLargeTitleEnabled`, in a Stack inside each tab, so UIKit draws the bar, its glass and the collapse. A large title collapses only when the screen's content is a scroll view with `contentInsetAdjustmentBehavior="automatic"`. Android's native header has no large title, so the app draws a Material 3 top app bar that collapses on a Reanimated scroll handler.
+- On iOS 26, back is a round 44pt glass button with a chevron and no label. On Android it is `arrow_back` in a 48dp icon button. The "‹ Events" text button goes.
+- The Event header keeps what D-119 put in it, a way back to Events, the event's name and the avatar slot S-29 fills, with no cover. The name is the large title and stays in the bar once collapsed, so the header never leaves the screen (spec §2.5.1). On iOS the Admin's Add (D-127) and the avatar share one glass group at the trailing end.
+- In the Global shell, Events and Profile open with large titles. The bell goes, because spec §2.5.10 gives it no screen to open. The avatar on Events goes, because the Profile tab sits one tap away and spec §2.5.9 puts the avatar in the Event header.
+- An iOS sheet takes the iOS 26 toolbar, with a glass close button at the leading end, the title in the middle, and a glass checkmark in the accent or a text action such as "Edit" at the trailing end. An Android sheet takes a close icon, the title and a Save button.
+- Sub-event Detail and Delay stay `formSheet` routes and move to the `(app)` Stack. On Android a `formSheet` draws inside the navigator that presents it, so from the Schedule tab's Stack its scrim stopped at the Event header and left the tab bar lit. Android sets `sheetCornerRadius` to 28 and draws Material 3's 32×4dp handle in the sheet's content, because `sheetGrabberVisible` draws nothing on Android in react-native-screens 4.26.
+- Android's navigation bar sits on `surfaceContainer` (D-124), and the selected tab shows its filled Material Symbol.
+**Why.** The critique found the headers furthest from either platform. The wordmark stood where the title belongs, the bell did nothing, iOS showed the iOS 18 text back button under an iOS 26 glass tab bar, and Android showed a chevron with no app bar around it. On the Schedule, two stacked titles took 200pt above the first sub-event. hb §16.5 chose a custom header to keep it above the tabs, and a native header in each tab stays on screen too.
+**Rejected.** Restyling the custom header, which still misses the collapse and the glass that UIKit draws. One header component for both platforms. The cover in the header (D-119). `@expo/ui`'s `BottomSheet` for Detail and Delay on Android, which adds a second sheet component when moving the route already fixes the scrim.
+**Cost.** Each Event shell tab gets a Stack layout of its own, and the header is two components, one per platform. A screen whose content does not scroll keeps its large title. Detail and Delay change routes, and every link to them changes too.
+**Reopen if.** A sheet presented from `(app)` still leaves the Event header or the tab bar uncovered on the Pixel. Then Android takes `@expo/ui`'s `BottomSheet` for both.
+
+### D-126: The Events tab is one list in three sections
+**Decision.** Amends D-115 and spec §2.5.1. Ukasha ruled on these on 2026-10-03, from the critique in D-124.
+- The Active, Upcoming and Past segmented control goes. Events is one list in three sections, "Happening now", "Upcoming" and "Past", and a section shows only when it holds an event. D-110's sorting function still decides the section, and its Active is labeled "Happening now".
+- An event in Happening now or Upcoming shows as a cover card the width of the list, with its name in Fraunces over the cover, its dates and its role as a neutral badge. An Upcoming card adds how far off the event is ("in 4 weeks"). Spec §2.5.10's "new since last visit" dot sits on the card once S-27 writes `last_viewed_at`. Past shows compact rows with a small cover.
+- A pending join request shows as one row at the top of the list, with the event's name, "Waiting for approval" and the role, and opens Pending Approval. It replaces D-115's card.
+- "Join with code" moves into the bar, as a "Join" glass button on iOS and an icon button on Android, and opens Manual Join Entry.
+- With no events and no pending request, the list shows the aperture mark, "No events yet", one line on joining or hosting, and a "Join with code" button.
+- The "+" stays where D-112 put it.
+**Why.** People belong to a handful of events, so three tabs hid most of them, and after a relaunch the control opened on an empty Active tab while an upcoming event sat one tap away. Covers showed at 56pt on the home screen of a photo app. The pending card and the "Join with invite code" button floated mid-screen under a short list.
+**Rejected.** Keeping the control and opening it on the first tab that holds an event, which still hides the other two. Rows for every section, which shrink the covers back to thumbnails.
+**Cost.** The segmented control and its store go. Every card loads a presigned cover, which `GET /events` already returns (D-118), so a list of many events loads many covers.
+**Reopen if.** A tester's account holds enough events that the list needs a filter.
+
+### D-127: Where the Schedule's Add, Delay, Edit and Delete live
+**Decision.** Amends D-121 and spec §2.5.5. Ukasha ruled on these on 2026-10-03, from the critique in D-124. D-121's server rules stand. A Delay moves the start and the end before a sub-event starts and only the end after, and Delete is refused for the last sub-event and for one with photos.
+- Add is the Admin's "+" in the iOS navigation bar, beside the avatar, and a Material 3 FAB on the Android Schedule tab.
+- Delay shows as a button on two sub-events only, the one In Progress, on the Live card, and the next one to start. Every row reaches Delay from its long-press menu on both platforms, from a swipe action on iOS, and from Sub-event Detail.
+- The Admin's long-press menu holds Delay, Edit, Get Directions and View Photos. Delete is not in it.
+- Sub-event Detail puts Edit in its toolbar for the Admin, as "Edit" on iOS and a pencil icon button on Android. Directions and Photos sit side by side as one button pair, and a Photographer, who has no Home, sees Directions alone. The Admin's Delay and the venue's check-in QR sit below as grouped rows, the QR marked "Coming soon" until S-16.
+- Delete stays at the foot of the Edit sheet, as a red row on iOS and a red text button on Android, disabled while the sub-event is the event's only one, with a footer that says why.
+- A row reads as a timeline: the start over the end time in a column, the Roman numeral in Fraunces before the name, the venue in sentence case under it, and the status at the trailing end.
+- The Live card shows the sub-event In Progress above the list, with "Live now", its times and venue, View Photos and Delay, in `hero` and `onHero` (D-124).
+- The Delay sheet offers 15 minutes, 30 minutes, 1 hour and 2 hours in the platform's segmented control, with Custom as the last segment. Custom shows hour and minute wheels on iOS and Material's time input in 24-hour form on Android. The preview strikes through the old times beside the new ones, with D-121's line on whether the start moves, and the button names the amount, "Delay 30 Minutes" on iOS.
+**Why.** D-121 put Delay on every row, so each row held a Delay pill and a chevron, two targets in one row, and a sub-event days away looked as urgent as the one running late. Both platforms put a screen's add action in the bar or a FAB, and the Schedule's "+" was a grey circle that read as disabled.
+**Rejected.** Delay on every row (D-121). Delay only in Detail, two taps away while a sub-event runs late. Delete in the long-press menu, which puts a destructive action one slip from Edit.
+**Cost.** A swipe action and a context menu on iOS, a long-press menu and one more FAB on Android. Delaying a sub-event past the next one takes two steps.
+**Reopen if.** Testers miss Delay on a row past the next one.
+
+### D-128: Each platform's own date and time pickers replace the wheel
+**Decision.** Amends D-110. Ukasha ruled on these on 2026-10-03, from the critique in D-124.
+- Start and end dates and times use `@expo/ui`'s `DatePicker`. On iOS it is SwiftUI's compact style, a date button and a time button that open Apple's calendar and time wheel. On Android, read-only outlined fields open Compose's date and time pickers in a dialog.
+- `@quidone/react-native-wheel-picker` leaves `apps/mobile` once nothing imports it.
+- D-110's map providers stand, Apple Maps on iOS and Google Maps on Android once its key is in the build. The venue picker's layout changes:
+  - The map fills the sheet, with the search field over it and results in a panel under the field.
+  - Current location is a button on the map.
+  - Once a pin drops, a card at the bottom holds the venue's name field and "Use This Venue".
+  - A search with no match shows "No results" in the results panel, not a red error banner.
+  - On Android, until the Maps key is in the build, the picker shows search results and "Use my current location" with no map, and never the dashed placeholder box.
+**Why.** The wheel looked foreign on both platforms. D-110 chose it to avoid per-platform code, but `@expo/ui` already ships both platforms' pickers in the build, and the Compose pickers are what every Android date field opens. Android users saw a dashed "not in this build yet" box where the map goes.
+**Rejected.** The wheel (D-110). `@react-native-community/datetimepicker`, which duplicates `@expo/ui` and costs a rebuild (`apps/mobile/AGENTS.md`).
+**Cost.** The date and time field is two components, one per platform. Removing the wheel is JavaScript only, so no machine rebuilds.
+**Reopen if.** Compose's picker cannot open from a field inside the Add Sub-Event sheet on the Pixel.
 
 ## Open items that are not decisions yet
 
