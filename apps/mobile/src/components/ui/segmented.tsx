@@ -25,7 +25,7 @@ export function Segmented<T extends string | number>({
             selected={option.value === value}
             onClick={() => onChange(option.value)}>
             <SegmentedButton.Label>
-              <Text typography="labelMedium" maxLines={1}>
+              <Text style={{ typography: 'labelMedium' }} maxLines={1}>
                 {option.label}
               </Text>
             </SegmentedButton.Label>
