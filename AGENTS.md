@@ -134,8 +134,9 @@ pnpm --filter api dev
 pnpm lint && pnpm typecheck && pnpm test
 pnpm docs:check                   # the docs gate, also run by the pre-commit hook and CI
 pnpm --filter api test:rls        # RLS negative tests against the dev project
-cd worker && uv venv --python 3.12 && uv pip install -r requirements.txt   # once, and after requirements.txt changes
-cd worker && .venv/bin/python -m app.main
+cd worker && uv venv --python 3.12 && uv pip install -r requirements-dev.txt   # once, and after either requirements file changes
+cd worker && .venv/bin/ruff check . && .venv/bin/pytest
+cd worker && .venv/bin/python -m app.main   # waits while the dev server's worker holds the queue (hb §13.4)
 ```
 
 On Windows everything above runs inside WSL2, as Handbook §9 sets up.
