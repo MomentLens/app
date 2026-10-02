@@ -1,0 +1,51 @@
+# The worker's SQL against the dev project, inside a transaction that rolls back (D-123). The
+# worker's job in ci.yml fakes Postgres, so only this catches a pgmq call or a media update that
+# the real database refuses.
+#
+# It needs the dev project's connection string, so it runs only on pull requests that touch the
+# worker or the database, and never for a fork, which gets no secrets. Each test makes its own
+# pgmq queue inside the rolled-back transaction, so it never reads `jobs`.
+name: Worker SQL
+
+on:
+  pull_request:
+    paths:
+      - 'worker/**'
+      - 'supabase/**'
+      - '.github/workflows/worker-sql.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: worker-sql-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sql:
+    name: Worker SQL, dev project
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version-file: worker/.python-version
+          cache: pip
+          cache-dependency-path: worker/requirements*.txt
+
+      - run: pip install --requirement requirements-dev.txt
+
+      # --dev-sql fails the run when DATABASE_URL is empty, instead of skipping.
+      - name: Run the worker's SQL against the dev project
+        env:
+          DATABASE_URL: ${{ secrets.SUPABASE_DEV_DATABASE_URL }}
+        run: pytest tests/test_dev_sql.py --dev-sql
