@@ -108,13 +108,13 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 # Phase 3 — capture and upload
 
-Build this phase **with the verification check disabled** in the pre-flight endpoint (HB §14.3 Phase 3). Phase 4 adds the gate.
+Build this phase **with no verification check** in the pre-flight endpoint (HB §14.3 Phase 3). S-15 writes the check in Phase 4 (D-122).
 
 S-18a is the one worker slice in this phase. Only the worker sets `processed_at`, so S-18a is what lets S-13 show any photo without someone setting it in Express (D-72).
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-12 | Pre-flight endpoint with every check but verification and the resume path, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5.4, D-73, arch:media, D-95, D-96, D-98, D-122, HB §5.3 | U | S-03, S-04 |
+| S-12 | Pre-flight endpoint with the resume path and every check but verification, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5.4, D-73, arch:media, D-95, D-96, D-98, D-122, HB §5.3 | U | S-03, S-04 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media" | §2.5.3, HB §4, spec §5.2, spec §5.4 | C | S-04, S-08 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256, and the **upload loop**: pre-flight, both PUTs, completion, and the queue state each answer leads to | §4.8.1 Stage 1, §4.8.2, §4.8.3, D-58, D-69, D-32, D-53, D-97, D-122, arch §4, HB §5.3, spec §5.4 | C | S-10, S-12 |
 | S-18a | Worker skeleton: pgmq consumer loop, `/health`, `thumbnail_dims` job, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, D-108, arch §5 | U | S-12 |

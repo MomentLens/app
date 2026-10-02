@@ -239,7 +239,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |
 | 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media`, `sub_event_missing` |
-| 422 | A limit reached | `event_full`, `too_many_references`, `too_many_sub_events`, `event_too_long` |
+| 422 | A limit reached | `event_full`, `too_many_unfinished`, `too_many_references`, `too_many_sub_events`, `event_too_long` |
 | 500 | Anything else, including a dependency the API could not reach | `internal_error` |
 | 503 | A dependency is down | `GET /health` only, with its own body |
 
@@ -611,7 +611,7 @@ Auth (sign up, log in via Supabase Auth), create an event through spec §2.1.2's
 The informational schedule with the §4.3 status computation, both role-specific invite links, attendee management. Force Verify waits for Phase 4, where the gate it overrides arrives (S-17). Still mostly CRUD, and that is the point: this is where the service-layer authorization checks and their negative tests become routine before the hard parts arrive (D-73).
 
 ### 14.3 Phase 3 — capture & upload
-The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with the verification check temporarily disabled in the pre-flight endpoint**, so every upload goes through. Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
+The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with no verification check in the pre-flight endpoint**, so every upload goes through. S-15 writes the check in Phase 4 (D-122). Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
 
 **The image-serving endpoint starts here** (D-93, S-13): the visibility check, the public file and the cache key, with its negative test written first. The album needs it to show anything, and a second serving path is exactly what root invariant 3 forbids.
 
