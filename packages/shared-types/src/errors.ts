@@ -27,6 +27,7 @@ export const ErrorCode = z.enum([
   'sub_event_missing',
   // 422
   'event_full',
+  'too_many_unfinished',
   'too_many_references',
   'too_many_sub_events',
   'event_too_long',
