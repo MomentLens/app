@@ -8,10 +8,10 @@ import { CREATE_IN_TAB_BAR } from '@/lib/platform';
 // The colors both shells' tab bars take, so opening an event swaps the tabs and nothing else
 // (D-112, D-118). iOS draws SF Symbols and, from iOS 26, Liquid Glass, so it gets no background of
 // its own there. Unselected items take the label color as iOS 26's do, and the selected one the
-// gold. Android draws Material Symbols on Material 3's navigation bar, with the surface token
-// behind and a gold-tinted pill under the selected item.
+// gold. Android draws Material Symbols on Material 3's navigation bar, on the container tone one
+// step off the page (D-124), with a gold-tinted pill under the selected item.
 export function useTabBarColors() {
-  const surface = useTokenColor('surface');
+  const container = useTokenColor('surfaceContainer');
   const indicator = useTokenColor('accentTint');
   const primary = useTokenColor('textPrimary');
   const secondary = useTokenColor('textSecondary');
@@ -21,7 +21,7 @@ export function useTabBarColors() {
   const selected = Platform.OS === 'ios' ? gold : primary;
 
   return {
-    backgroundColor: CREATE_IN_TAB_BAR ? undefined : surface,
+    backgroundColor: CREATE_IN_TAB_BAR ? undefined : container,
     indicatorColor: indicator,
     iconColor: { default: idle, selected },
     labelStyle: { default: { color: idle }, selected: { color: selected } },

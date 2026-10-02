@@ -9,6 +9,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { startSessionSync } from '@/features/auth/session';
@@ -66,30 +67,33 @@ function RootLayout() {
   //
   // The provider restores the queries saved for an offline start before any query fetches (D-118).
   return (
-    <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        {/* Dark icons on the light palette and light on the dark one. Without it Android kept the
+    // Gesture Handler's root, which the Schedule's swipe action needs (D-127).
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          {/* Dark icons on the light palette and light on the dark one. Without it Android kept the
             template theme's white icons, which vanished on the cream background. */}
-        <StatusBar style="auto" />
-        <AnimatedSplashOverlay />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Protected guard={status === 'signedIn'}>
-            <Stack.Screen name="(app)" />
-          </Stack.Protected>
-          <Stack.Protected guard={status === 'sessionEnded'}>
-            <Stack.Screen name="session-ended" />
-          </Stack.Protected>
-          <Stack.Protected guard={status === 'signedOut'}>
-            <Stack.Screen name="(auth)" />
-          </Stack.Protected>
-          <Stack.Screen name="reset-password" />
-          <Stack.Screen name="invite/[token]" />
-          <Stack.Screen name="join-code" />
-          <Stack.Screen name="join-error" />
-          <Stack.Screen name="join-blocked" />
-        </Stack>
-      </ThemeProvider>
-    </PersistQueryClientProvider>
+          <StatusBar style="auto" />
+          <AnimatedSplashOverlay />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Protected guard={status === 'signedIn'}>
+              <Stack.Screen name="(app)" />
+            </Stack.Protected>
+            <Stack.Protected guard={status === 'sessionEnded'}>
+              <Stack.Screen name="session-ended" />
+            </Stack.Protected>
+            <Stack.Protected guard={status === 'signedOut'}>
+              <Stack.Screen name="(auth)" />
+            </Stack.Protected>
+            <Stack.Screen name="reset-password" />
+            <Stack.Screen name="invite/[token]" />
+            <Stack.Screen name="join-code" />
+            <Stack.Screen name="join-error" />
+            <Stack.Screen name="join-blocked" />
+          </Stack>
+        </ThemeProvider>
+      </PersistQueryClientProvider>
+    </GestureHandlerRootView>
   );
 }
 

@@ -1,191 +1,131 @@
-import WheelPicker, { withVirtualized, type PickerItem } from '@quidone/react-native-wheel-picker';
-import { useMemo, type Context, type ReactNode } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { DatePickerDialog, TimePickerDialog } from '@expo/ui/jetpack-compose';
+import { useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
-import { Icon } from '@/components/ui/icon';
-import { formatDateTime } from '@/features/events/format';
-import {
-  DAYS_AHEAD,
-  DAYS_BACK,
-  dayKey,
-  dayKeys,
-  fromWheelParts,
-  MINUTE_STEP,
-  toWheelParts,
-  type Meridiem,
-  type WheelParts,
-} from '@/features/events/time';
-import { FieldError, FieldLabel } from '@/features/events/wizard-frame';
+import { Icon, type IconName } from '@/components/ui/icon';
+import { TintedHost } from '@/components/ui/tinted-host';
+import type { DateTimeFieldProps } from '@/features/events/date-time-field.types';
+import { formatDay, formatTime } from '@/features/events/format';
+import { useTokenColor } from '@/hooks/use-token-color';
 
-// The day wheel holds two years of days, so only the rows near the visible ones are rendered.
-const DayWheel = withVirtualized(WheelPicker);
-
-// A ScrollView tells the lists inside it that they sit in a vertical scroller, and in development a
-// FlatList that hears so warns that it cannot window its rows. The day wheel has a fixed height and
-// scrolls itself, so it windows fine inside the sheet's ScrollView. Resetting the context around
-// it, as React Native's own Modal does for its content, drops that false warning; nothing else
-// reads it. Nesting the wheel in a FlatList instead, as the warning suggests, would render it as a
-// plain View that cannot scroll. The static is missing from React Native's TypeScript types, so
-// it is read as optional. If a React Native upgrade drops it, the wheel still renders and only the
-// warning comes back.
-const ScrollViewContext = (ScrollView as unknown as { Context?: Context<null> }).Context;
-
-function OwnScroller({ children }: { children: ReactNode }) {
-  return ScrollViewContext ? (
-    <ScrollViewContext.Provider value={null}>{children}</ScrollViewContext.Provider>
-  ) : (
-    children
-  );
-}
-
-const ITEM_HEIGHT = 36;
-const VISIBLE_ITEMS = 5;
-
-const HOURS: PickerItem<number>[] = Array.from({ length: 12 }, (_, i) => ({
-  value: i + 1,
-  label: String(i + 1),
-}));
-const MINUTES: PickerItem<number>[] = Array.from({ length: 60 / MINUTE_STEP }, (_, i) => ({
-  value: i * MINUTE_STEP,
-  label: String(i * MINUTE_STEP).padStart(2, '0'),
-}));
-const MERIDIEMS: PickerItem<Meridiem>[] = [
-  { value: 'AM', label: 'AM' },
-  { value: 'PM', label: 'PM' },
-];
-
-function dayLabel(key: string, today: string, thisYear: number): string {
-  if (key === today) return 'Today';
-  const [year, month, day] = key.split('-').map(Number) as [number, number, number];
-  const date = new Date(year, month - 1, day);
-  return date.toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    ...(year === thisYear ? {} : { year: 'numeric' }),
-  });
-}
-
-function renderItem({ item }: { item: PickerItem<string | number> }) {
-  return (
-    <Text numberOfLines={1} className="w-full text-center font-body text-body text-textPrimary">
-      {item.label}
-    </Text>
-  );
-}
-
-// Each wheel draws no band of its own (the library's is black at 5%, lost in dark mode, and four
-// of them read as four boxes). One band on a token runs behind all four instead.
-const renderOverlay = null;
-
-interface DateTimeFieldProps {
-  label: string;
-  value: Date;
-  onChange: (value: Date) => void;
-  // Only one field's wheels are open at a time; the sheet decides which.
-  open: boolean;
-  onToggle: () => void;
-  error?: string;
-}
-
-// A sub-event's start or end: a field showing the time, which opens day, hour, minute and AM/PM
-// wheels under it (D-110). Times are the phone's own zone, and a start in the past is allowed.
-export function DateTimeField({
+// One read-only outlined field that opens a picker, its label always raised onto the outline.
+function PickerField({
   label,
   value,
+  icon,
+  error,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  icon: IconName;
+  error: boolean;
+  onPress: () => void;
+}) {
+  const ripple = useTokenColor('textPrimary', 0.12);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}, ${value}`}
+      onPress={onPress}
+      android_ripple={{ color: ripple }}
+      className={`h-14 flex-1 flex-row items-center justify-between rounded-[4px] px-4 ${error ? 'border-2 border-danger' : 'border border-textMuted'}`}>
+      <View className="absolute -top-2.5 left-3 bg-background px-1">
+        <Text
+          className={`font-caption text-caption ${error ? 'text-danger' : 'text-textSecondary'}`}>
+          {label}
+        </Text>
+      </View>
+      <Text className="font-body text-body text-textPrimary">{value}</Text>
+      <Icon name={icon} size={20} className="text-textSecondary" />
+    </Pressable>
+  );
+}
+
+// A sub-event's start or end on Android: a date field and a time field that open Material 3's date
+// and time picker dialogs (D-128). Times are the phone's own zone, and a start in the past is
+// allowed (D-110).
+export function DateTimeField({
+  dateLabel,
+  timeLabel,
+  value,
   onChange,
-  open,
-  onToggle,
   error,
 }: DateTimeFieldProps) {
-  const parts = toWheelParts(value);
-  const days = useMemo(() => {
-    const now = new Date();
-    const today = dayKey(now);
-    return dayKeys(now, DAYS_BACK, DAYS_AHEAD, value).map((key) => ({
-      value: key,
-      label: dayLabel(key, today, now.getFullYear()),
-    }));
-    // The rows depend on the day the value falls on, not its time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [parts.day]);
+  const [open, setOpen] = useState<'date' | 'time' | null>(null);
 
-  function change(next: Partial<WheelParts>) {
-    onChange(fromWheelParts({ ...parts, ...next }));
-  }
+  // The date dialog reads and returns a day as midnight UTC, so the local day goes in that way and
+  // comes back out of the UTC fields. Handing it the local instant picked the day before east of
+  // UTC, as Pakistan is.
+  const day = new Date(
+    Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()),
+  ).toISOString();
 
   return (
-    <View className="gap-2">
-      <FieldLabel>{label}</FieldLabel>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${formatDateTime(value)}`}
-        accessibilityState={{ expanded: open }}
-        onPress={onToggle}
-        className={`min-h-12 flex-row items-center justify-between rounded-xl border bg-surface px-4 ${error ? 'border-danger' : open ? 'border-accent' : 'border-border'}`}>
-        <Text className="font-body text-body text-textPrimary">{formatDateTime(value)}</Text>
-        <Icon name="calendar" size={18} className="text-textMuted" />
-      </Pressable>
-      {open ? (
-        <View className="flex-row items-center rounded-xl border border-border bg-surface px-2">
-          <View
-            pointerEvents="none"
-            style={{ top: ((VISIBLE_ITEMS - 1) / 2) * ITEM_HEIGHT, height: ITEM_HEIGHT }}
-            className="absolute inset-x-2 rounded-lg bg-textPrimary/5"
-          />
-          <View className="flex-[2.4]">
-            <OwnScroller>
-              <DayWheel
-                data={days}
-                value={parts.day}
-                onValueChanged={({ item }) => change({ day: item.value })}
-                itemHeight={ITEM_HEIGHT}
-                visibleItemCount={VISIBLE_ITEMS}
-                renderItem={renderItem}
-                renderOverlay={renderOverlay}
-                enableScrollByTapOnItem
-              />
-            </OwnScroller>
-          </View>
-          <View className="flex-1">
-            <WheelPicker
-              data={HOURS}
-              value={parts.hour}
-              onValueChanged={({ item }) => change({ hour: item.value })}
-              itemHeight={ITEM_HEIGHT}
-              visibleItemCount={VISIBLE_ITEMS}
-              renderItem={renderItem}
-              renderOverlay={renderOverlay}
-              enableScrollByTapOnItem
-            />
-          </View>
-          <View className="flex-1">
-            <WheelPicker
-              data={MINUTES}
-              value={parts.minute}
-              onValueChanged={({ item }) => change({ minute: item.value })}
-              itemHeight={ITEM_HEIGHT}
-              visibleItemCount={VISIBLE_ITEMS}
-              renderItem={renderItem}
-              renderOverlay={renderOverlay}
-              enableScrollByTapOnItem
-            />
-          </View>
-          <View className="flex-1">
-            <WheelPicker
-              data={MERIDIEMS}
-              value={parts.meridiem}
-              onValueChanged={({ item }) => change({ meridiem: item.value })}
-              itemHeight={ITEM_HEIGHT}
-              visibleItemCount={VISIBLE_ITEMS}
-              renderItem={renderItem}
-              renderOverlay={renderOverlay}
-              enableScrollByTapOnItem
-            />
-          </View>
-        </View>
+    <View className="gap-1">
+      <View className="flex-row gap-3">
+        <PickerField
+          label={dateLabel}
+          value={formatDay(value)}
+          icon="calendar"
+          error={error !== undefined}
+          onPress={() => setOpen('date')}
+        />
+        <PickerField
+          label={timeLabel}
+          value={formatTime(value)}
+          icon="clock"
+          error={error !== undefined}
+          onPress={() => setOpen('time')}
+        />
+      </View>
+      {error ? (
+        <Text
+          accessibilityLiveRegion="polite"
+          className="px-4 font-caption text-caption text-danger">
+          {error}
+        </Text>
       ) : null}
-      <FieldError message={error} />
+      {open === 'date' ? (
+        <TintedHost className="text-accent">
+          <DatePickerDialog
+            initialDate={day}
+            onDateSelected={(picked) => {
+              setOpen(null);
+              onChange(
+                new Date(
+                  picked.getUTCFullYear(),
+                  picked.getUTCMonth(),
+                  picked.getUTCDate(),
+                  value.getHours(),
+                  value.getMinutes(),
+                ),
+              );
+            }}
+            onDismissRequest={() => setOpen(null)}
+          />
+        </TintedHost>
+      ) : null}
+      {open === 'time' ? (
+        <TintedHost className="text-accent">
+          <TimePickerDialog
+            initialDate={value.toISOString()}
+            onDateSelected={(picked) => {
+              setOpen(null);
+              onChange(
+                new Date(
+                  value.getFullYear(),
+                  value.getMonth(),
+                  value.getDate(),
+                  picked.getHours(),
+                  picked.getMinutes(),
+                ),
+              );
+            }}
+            onDismissRequest={() => setOpen(null)}
+          />
+        </TintedHost>
+      ) : null}
     </View>
   );
 }

@@ -3,8 +3,9 @@ import { cssInterop } from 'nativewind';
 import { Fragment, useState, type ReactNode } from 'react';
 import { View } from 'react-native';
 
-// The sheet's own chrome takes a color prop. Painting it with the surface token, and dropping its
-// default inset, stops the platform's grey showing as a frame around the content.
+// The sheet's own chrome takes a color prop. Painting it with the page's background token, and
+// dropping its default inset, stops the platform's grey showing as a frame around the content. The
+// page tone lets grouped white rows stand out, as iOS draws a grouped form in a sheet (D-124).
 const SurfaceSheet = cssInterop(BottomSheet, {
   className: { target: false, nativeStyleToProp: { backgroundColor: 'containerColor' } },
 });
@@ -36,9 +37,9 @@ export function Sheet<T>({ target, onClose, children }: SheetProps<T>) {
       onDismiss={onClose}
       snapPoints={['full']}
       contentPadding={0}
-      className="bg-surface">
+      className="bg-background">
       <RNHostView>
-        <View className="flex-1 bg-surface">
+        <View className="flex-1 bg-background">
           {shown ? <Fragment key={shown.opening}>{children(shown.target)}</Fragment> : null}
         </View>
       </RNHostView>

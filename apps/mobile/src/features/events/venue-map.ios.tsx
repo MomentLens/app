@@ -1,6 +1,6 @@
 import { cssInterop } from 'nativewind';
 import { useEffect, useRef } from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 import MapView, { Circle, Marker } from 'react-native-maps';
 
 import type { MapAvailability, VenueMapProps } from '@/features/events/venue-map.types';
@@ -24,7 +24,8 @@ function regionAround(lat: number, lng: number, radiusM: number) {
   return { latitude: lat, longitude: lng, latitudeDelta: delta, longitudeDelta: delta };
 }
 
-// The venue on Apple Maps, which needs no key (D-110). Tap the map or drag the pin to move it.
+// The venue on Apple Maps, which needs no key (D-110), filling the picker under its search (D-128).
+// Tap the map or drag the pin to move it.
 export function VenueMap({ point, radiusM, onPick }: VenueMapProps) {
   const map = useRef<MapView>(null);
 
@@ -36,7 +37,7 @@ export function VenueMap({ point, radiusM, onPick }: VenueMapProps) {
   }, [point, radiusM]);
 
   return (
-    <View className="h-64 overflow-hidden rounded-xl border border-border">
+    <View className="flex-1">
       <MapView
         ref={map}
         style={{ flex: 1 }}
@@ -65,13 +66,6 @@ export function VenueMap({ point, radiusM, onPick }: VenueMapProps) {
           </>
         ) : null}
       </MapView>
-      {point === null ? (
-        <View pointerEvents="none" className="absolute inset-x-0 bottom-0 bg-surface/90 px-3 py-2">
-          <Text className="text-center font-caption text-caption text-textSecondary">
-            Search above, or tap the map to drop a pin.
-          </Text>
-        </View>
-      ) : null}
     </View>
   );
 }

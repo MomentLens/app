@@ -2,7 +2,7 @@ import { VERIFICATION_RADIUS_DEFAULT_M } from '@momentlens/shared-types';
 import { randomUUID } from 'expo-crypto';
 import { useState } from 'react';
 
-import { Button } from '@/components/ui/button';
+import { Row, Section } from '@/components/ui/grouped';
 import { Sheet } from '@/components/ui/sheet';
 import {
   removeSubEvent,
@@ -13,6 +13,7 @@ import {
 import { draftVenues } from '@/features/events/request';
 import { SubEventForm } from '@/features/events/sub-event-form';
 import { defaultSubEventTimes } from '@/features/events/time';
+import { byPlatform } from '@/lib/copy';
 
 export type SheetTarget = { kind: 'new' } | { kind: 'edit'; subEvent: DraftSubEvent };
 
@@ -48,8 +49,12 @@ function SheetContent({ target, onClose }: { target: SheetTarget; onClose: () =>
 
   return (
     <SubEventForm
-      title={editing ? 'Edit Sub-Event' : 'Add Sub-Event'}
-      submitLabel={editing ? 'Save Sub-Event' : 'Add Sub-Event'}
+      title={
+        editing
+          ? byPlatform('Edit Sub-Event', 'Edit sub-event')
+          : byPlatform('New Sub-Event', 'New sub-event')
+      }
+      submitLabel={editing ? 'Save' : 'Add'}
       initial={initial}
       // Venues the other sub-events use. This one's own, if no other uses it, the form adds back.
       venues={draftVenues(subEvents.filter((subEvent) => subEvent.key !== editing?.key))}
@@ -60,14 +65,17 @@ function SheetContent({ target, onClose }: { target: SheetTarget; onClose: () =>
       }}
       footer={
         editing ? (
-          <Button
-            label="Remove sub-event"
-            variant="quiet"
-            onPress={() => {
-              removeSubEvent(editing.key);
-              onClose();
-            }}
-          />
+          <Section>
+            <Row
+              title={byPlatform('Remove Sub-Event', 'Remove sub-event')}
+              destructive
+              center
+              onPress={() => {
+                removeSubEvent(editing.key);
+                onClose();
+              }}
+            />
+          </Section>
         ) : null
       }
     />

@@ -11,6 +11,7 @@ import type { SubEventValues } from '@/features/events/validation';
 import {
   addRequest,
   delayedTimes,
+  delayShortcuts,
   directionsUrl,
   nextStatusChange,
   romanNumeral,
@@ -72,6 +73,43 @@ const WALIMA = subEvent(
   '2026-10-05T15:00:00.000Z',
   '2026-10-05T19:00:00.000Z',
 );
+
+describe('delayShortcuts', () => {
+  const all = [WALIMA, MEHNDI, NIKKAH];
+
+  it('puts Delay on the next sub-event before anything has started', () => {
+    expect(delayShortcuts(all, new Date('2026-10-03T12:00:00.000Z'))).toEqual({
+      live: null,
+      next: MEHNDI.id,
+    });
+  });
+
+  it('puts it on the running one and the one after it', () => {
+    expect(delayShortcuts(all, new Date('2026-10-03T14:00:00.000Z'))).toEqual({
+      live: MEHNDI.id,
+      next: NIKKAH.id,
+    });
+  });
+
+  it('keeps it on the next one in a gap between sub-events', () => {
+    expect(delayShortcuts(all, new Date('2026-10-03T16:30:00.000Z'))).toEqual({
+      live: null,
+      next: NIKKAH.id,
+    });
+  });
+
+  it('puts it nowhere once everything has ended', () => {
+    expect(delayShortcuts(all, new Date('2026-10-06T00:00:00.000Z'))).toEqual({
+      live: null,
+      next: null,
+    });
+  });
+
+  it('breaks a tie on the next start by id', () => {
+    const twin = subEvent('00000000-0000-4000-8000-000000000009', NIKKAH.startsAt, NIKKAH.endsAt);
+    expect(delayShortcuts([NIKKAH, twin], new Date('2026-10-03T16:30:00.000Z')).next).toBe(twin.id);
+  });
+});
 
 describe('schedulePermissions', () => {
   it('lets the Admin add, delay, edit and delete, and view photos', () => {
