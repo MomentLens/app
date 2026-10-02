@@ -24,6 +24,7 @@ export const ErrorCode = z.enum([
   'upload_missing',
   'last_sub_event',
   'sub_event_has_media',
+  'sub_event_missing',
   // 422
   'event_full',
   'too_many_references',
