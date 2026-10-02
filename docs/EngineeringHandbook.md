@@ -249,7 +249,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 
 This is a **queue consumer**, not a web server written in FastAPI. The distinction shapes how you build it. The main loop polls `pgmq`, dispatches to a job handler, writes results to Postgres and R2, and moves on. The HTTP surface is `/health` so nginx and you can ping it.
 
-**Why this shape protects you.** Python's GIL means one process cannot truly run two CPU-bound tasks in parallel on threads; you need multiple processes. If the worker served live HTTP, a face-detection job would stall every other request that process was handling. As a queue consumer it is off the user-facing path entirely: the upload succeeds and returns the moment the file lands in R2, processing happens after, and the user finds out via Supabase Realtime. Run **one** worker process (`docs/ARCHITECTURE.md` §5) and leave headroom for Express, Postgres connections and nginx. ONNX Runtime already spreads one inference across threads, and D-78 measured that scaling; set the thread count from a measurement on the server, not from this paragraph.
+**Why this shape protects you.** Python's GIL means one process cannot truly run two CPU-bound tasks in parallel on threads; you need multiple processes. If the worker served live HTTP, a face-detection job would stall every other request that process was handling. As a queue consumer it is off the user-facing path entirely: the upload succeeds and returns the moment the file lands in R2, processing happens after, and the user finds out via Supabase Realtime. Run **one** worker process (`docs/ARCHITECTURE.md` §5) and leave headroom for Express, Postgres connections and nginx. A second worker anywhere, a laptop pointed at the dev project included, waits on a Postgres advisory lock until the first one stops (D-123). ONNX Runtime already spreads one inference across threads, and D-78 measured that scaling; set the thread count from a measurement on the server, not from this paragraph.
 
 **Load the model once, at startup.** Cold-loading InsightFace per job costs several seconds; a warm model takes well under a second for a photo with a few faces and several seconds for a large group, because every face gets its own recognition pass (D-78 has the measured numbers). Lazy-loading is the single most likely reason your demo feels slow, and it is entirely avoidable. Note that input resolution barely moves this number, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; what full-size input actually costs you is JPEG decode time, roughly 100 to 200ms.
 
@@ -396,7 +396,7 @@ Two honesty notes that belong with the numbers rather than in the viva prep, bec
 
 ### 11.5 CI and error reporting
 
-**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest, with S-18a. The RLS negative test needs a real project, so a separate workflow, `.github/workflows/rls.yml`, runs it against the dev project on every pull request that touches `supabase/` or `apps/api/` (D-106). Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
+**CI (GitHub Actions):** on every PR, lint, typecheck, and unit tests for the app and the API, plus the authorization test above. The worker gets its job, Ruff and pytest with Postgres and R2 faked, with S-18a. Its real-SQL test runs against the dev project inside a transaction it rolls back, from the `SUPABASE_DEV_DATABASE_URL` secret, on pull requests that touch `worker/` or `supabase/` (D-123). The RLS negative test needs a real project, so a separate workflow, `.github/workflows/rls.yml`, runs it against the dev project on every pull request that touches `supabase/` or `apps/api/` (D-106). Keep it under a few minutes. A CI pipeline nobody waits for is a CI pipeline that gets ignored. **Sentry** (the Education plan, `docs/ARCHITECTURE.md` §7) goes in during Phase 0 as well; when something breaks in demo week you want a stack trace rather than a guess.
 
 ---
 
@@ -499,7 +499,7 @@ Leave out `--email` to skip TLS until DNS points at the server; the script print
 
 `Restart=always` is the whole reason to use systemd rather than `nohup` and hope. If the worker crashes on a malformed image at 3am, it comes back.
 
-The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. Ping it from the box with `curl http://127.0.0.1:8000/health`.
+The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. From S-18a it answers 503 once its queue loop has stopped, and the process exits so systemd restarts it (D-123). Ping it from the box with `curl http://127.0.0.1:8000/health`.
 
 #### 13.3.4 nginx and TLS
 
@@ -578,6 +578,13 @@ ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'
 ```
 
 `deploy.sh` fast-forwards the server's copy of a branch, so a branch that was force-pushed since its last deploy stops with "Not possible to fast-forward". Put the server on `main`, delete its copy with `ssh momentlens 'sudo -u momentlens git -C /srv/momentlens branch -D feat/s-05-api'`, and deploy the branch again.
+
+**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads.
+
+```bash
+ssh momentlens 'sudo systemctl stop momentlens-worker'
+ssh momentlens 'sudo systemctl start momentlens-worker'
+```
 
 **Reading the server.**
 
@@ -763,8 +770,9 @@ Worker (worker/)
   insightface, onnxruntime     # Phase 0 spike, rerun on the x86-64 server
   opencv-python-headless
   boto3
-  psycopg or asyncpg
+  psycopg[binary]              # version 3, used synchronously (D-123)
   pydantic
+  sentry-sdk                   # archived messages only (D-123)
 
 Tooling (root)
   pnpm, eslint, prettier, husky, lint-staged

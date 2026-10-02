@@ -8,7 +8,12 @@ Detail in Handbook §6, spec §4.11, and `docs/ARCHITECTURE.md` §2 (tables) and
 
 ## Shape
 
-The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). A message that fails three times is archived and logged, and goes to Sentry once the worker has it. If it names a photo, clear that photo's `processed_at`, so a failed job never leaves a photo up with files it should have replaced (D-108). The HTTP surface is `/health` and nothing else, so nginx and a human can ping it.
+The main loop reads one message at a time from the one `pgmq` queue, `jobs`, oldest first, dispatches it to the handler its `job` field names, writes to Postgres and R2, and moves on (D-103). The loop runs on the main thread and `/health` on a side thread, and the process exits when the loop dies, so systemd restarts it. `/health` answers 503 once the loop has stopped. It is the only HTTP surface, so nginx and a human can ping it (D-123).
+
+- **One reader.** The worker holds a Postgres advisory lock while it reads `jobs`. A second worker, such as yours while the dev server's runs, logs that the queue is taken and waits (D-123, Handbook §13.4).
+- **A try is a read.** pgmq's `read_ct` counts tries, so a crash counts as one. After a failed try, wait, then read the same message again before any newer one. At startup, make every message a crash left hidden visible again (D-123).
+- **Three failures archive the message**, log it and report it to Sentry. If it names a photo, clear that photo's `processed_at` in the same transaction as the archive, so a failed job never leaves a photo up with files it should have replaced (D-108). A missing upload object, a message that does not parse and an unknown job name are archived on their first try (D-123).
+- **One transaction per job.** A job's row writes commit with its message's delete (D-123).
 
 The worker connects to Postgres directly with `DATABASE_URL`, so RLS does not apply to it. Scope every query to the event yourself.
 
@@ -24,9 +29,9 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 
 | Job | Trigger | Work |
 |---|---|---|
-| `thumbnail_dims` | Upload completion, from S-18a (Phase 3) until S-21 removes it (D-72) | No ML. Write `width`/`height`, point the public file and public thumbnail at the upload keys, generate a thumbnail at the public thumbnail key only if the client's is missing, bump version, then `processed_at` |
+| `thumbnail_dims` | Upload completion, from S-18a (Phase 3) until S-21 removes it (D-72) | No ML. Only on a row whose `variant_version` is 0, otherwise delete the message as done. Write `width`/`height` read as stored, point the public file and public thumbnail at the upload keys, bump version, then `processed_at`, in one update. Writes no object, since completion refuses a photo without its thumbnail (D-122, D-123) |
 | `face_process` | Upload completion, from S-21 | Detect once, store each face's box and embedding, match every face against subjects with references who are active members of this event, cluster the unmatched ones. If a matched subject has Do Not Publish active, write the public file, one variant per subject and a blurred thumbnail for each, at new versioned keys. Write dimensions. Then `processed_at` |
-| `reference_process` | A reference photo added or removed; a profile photo set while Do Not Publish is off | Accept the photo with its embedding when it shows exactly one face, otherwise reject it as `no_face` or `multiple_faces` (D-91). Delete the embedding of a removed one. Then enqueue `reprocess` for that subject |
+| `reference_process` | A reference photo added; a profile photo set while Do Not Publish is off | Accept the photo with its embedding when it shows exactly one face, otherwise reject it as `no_face` or `multiple_faces` (D-91). Then enqueue `reprocess` for that subject. A removed reference never reaches this job, because the API deletes it (`docs/ARCHITECTURE.md` §5) |
 | `reprocess` | Do Not Publish activated, a subject's references changed, or a subject with references joined the event (D-84) | **Match only.** Compare stored embeddings against the reference set, regenerate files and thumbnails for photos whose output changed with every stored blur region applied, bump version |
 | `blur_region` | A `manual_blur_region` row added or deleted | No ML. Regenerate that photo's public file, every subject's file and all their thumbnails with every stored region, at new versioned keys, bump version (D-83) |
 
@@ -39,7 +44,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 3. **Write the keys onto the rows as you upload them.** The API reads those columns. The worker builds every derived key and never an upload key; the API builds those (D-70).
 4. **N subjects → N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. A photo with no Do Not Publish face and no blur region produces no extra files; its public keys point at the upload.
 5. **Never overwrite an object a row points at.** A regenerated file or thumbnail gets a new versioned key, or every client cache keeps the old one (D-60, D-69). A retry may rewrite a versioned key no row points at yet. Once the rows point at the new files, delete the objects they replaced, and never `upload_key` or `upload_thumb_key` (D-103).
-6. **`thumbnail_dims` and `face_process` never run on the same upload.** Once Do Not Publish users exist, `thumbnail_dims` publishes a photo nobody blurred, or points the public keys back at the unblurred upload after `face_process` finished (D-72).
+6. **`thumbnail_dims` and `face_process` never run on the same upload.** Once Do Not Publish users exist, `thumbnail_dims` publishes a photo nobody blurred, or points the public keys back at the unblurred upload after `face_process` finished (D-72). It acts only on a row whose `variant_version` is 0, so a message re-sent from the archive never undoes another job's files (D-123).
 
 ---
 
@@ -69,8 +74,9 @@ Thumbnails are cut from the blurred output, never blurred separately at 300px.
 
 ## Local rules
 
-- `requirements.txt` is exactly pinned, never ranges. Locally, from `worker/`: `uv venv --python 3.12 && uv pip install -r requirements.txt`, which `pnpm check:machine` verifies. The server builds its own with `python3.12 -m venv` in `scripts/provision.sh`.
+- `requirements.txt` and `requirements-dev.txt` are exactly pinned, never ranges. The dev file adds Ruff and pytest and installs `requirements.txt` too. Locally, from `worker/`: `uv venv --python 3.12 && uv pip install -r requirements-dev.txt`, which `pnpm check:machine` verifies. The server builds its own from `requirements.txt` with `python3.12 -m venv` in `scripts/provision.sh`.
+- `DATABASE_URL` is the Supabase session pooler's string on port 5432, because the advisory lock needs a session (D-123).
 - InsightFace 2.0 installs as a pure-Python package, and `onnxruntime` and OpenCV ship wheels for x86-64 and ARM64. The server and the Windows machines are x86-64, and Ukasha's M1 is ARM64 (D-78). A wheel that installs in WSL2 should install on the server; one that misbehaves only on the server gets debugged on the server.
 - Ruff replaces flake8, black and isort. One tool.
-- Tests in `tests/`, pytest.
+- Tests in `tests/`, pytest. CI fakes Postgres and R2. The real-SQL module runs against the dev project inside a transaction it rolls back, and skips without `DATABASE_URL` (D-123).
 - Logs come out of `ssh momentlens 'journalctl -u momentlens-worker -f'` (Handbook §13.4). Write log lines somebody can grep at 2am.
