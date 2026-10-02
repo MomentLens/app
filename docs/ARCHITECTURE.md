@@ -9,7 +9,7 @@
 - Anything undecided is marked **Open**. Ask Ukasha instead of filling it in.
 - Ukasha reviews every PR that touches this file.
 
-**Status, 2026-09-29.** Four migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. S-01's is for `profile` and `subject`, and S-02's for `event`, `venue`, `sub_event` and `membership`. The fourth adds no table; it backfills `profile` for accounts older than S-01's trigger. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
+**Status, 2026-10-02.** Eight migrations exist. One is for `health_check`, which is infrastructure rather than a feature table. S-01's is for `profile` and `subject`, S-02's for `event`, `venue`, `sub_event` and `membership`, `20260929184331_invite_and_join.sql` for `invite`, and S-12's for `media`. The other three add no table. One backfills `profile` for accounts older than S-01's trigger, and two change tables that already exist, each named under the table it changes. Every other table below is planned. When a table's migration merges, add the migration file name under its heading.
 
 ---
 
@@ -49,7 +49,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 
 ## 2. Tables
 
-Planned, not migrated, except `health_check`, `profile`, `subject`, `event`, `venue`, `sub_event`, `membership` and `invite`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
+Planned, not migrated, except `health_check`, `profile`, `subject`, `event`, `venue`, `sub_event`, `membership`, `invite` and `media`. Table names are singular snake_case. Every table has an `id` (uuid) and `created_at` unless it says otherwise. The columns listed are the ones the design depends on; migrations add the rest.
 
 ### `profile`
 One row per auth user. `user_id` is the primary key, so the table has no `id`. Migration `supabase/migrations/20260924101332_create_profile_and_subject.sql`.
@@ -111,9 +111,9 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - One Venue Check-In QR per venue. Sub-events that share a venue share its QR (§4.3). The payload carries the venue and its secret; a scan verifies the sub-event at this venue that was In Progress at the scan time (D-85)
 
 ### `sub_event`
-Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`. `create_request_id` and the four functions below come from `supabase/migrations/20261001203656_sub_event_writes.sql`.
+Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`. `create_request_id` and the four functions below come from `supabase/migrations/20261001203656_sub_event_writes.sql`. `supabase/migrations/20261002121238_media_upload.sql` adds `sub_event_id_event_id_key` and replaces `delete_sub_event`.
 - `event_id`, `name`, `description`, `starts_at`, `ends_at`, `venue_id`
-- `sub_event_time_check` requires `ends_at` after `starts_at`. The foreign key is `(venue_id, event_id)` to `venue (id, event_id)`, so a venue's QR never verifies a sub-event of another event. The key has no `ON DELETE` action, so a venue still used by a sub-event cannot be deleted. `sub_event_event_id_idx` and `sub_event_venue_id_idx` index both columns
+- `sub_event_time_check` requires `ends_at` after `starts_at`. The foreign key is `(venue_id, event_id)` to `venue (id, event_id)`, so a venue's QR never verifies a sub-event of another event. The key has no `ON DELETE` action, so a venue still used by a sub-event cannot be deleted. `sub_event_event_id_idx` and `sub_event_venue_id_idx` index both columns. `sub_event_id_event_id_key`, unique on `(id, event_id)`, is the target of `media`'s sub-event foreign key (D-122)
 - `verification_radius_m` (50 to 2000, default 200, §4.3, D-111), an integer. The GPS check for this sub-event compares against it (§4.5)
 - At most 15 per event (§4.3)
 - A delay is a positive amount. Before the sub-event starts it moves `starts_at` and `ends_at` together. Once the sub-event has started it moves `ends_at` only, so a running sub-event never goes back to Upcoming and a reading from its first part still matches it (D-85, D-121). The app sends a delay as the new times through the edit endpoint, so a retry changes nothing
@@ -124,7 +124,7 @@ Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membe
 - Three SQL functions called with `rpc` write it: `add_sub_event`, `update_sub_event` and `delete_sub_event` (D-95). Each locks the event row `FOR NO KEY UPDATE`, as `join_event` does, before it counts sub-events or computes the span, so two of the Admin's phones cannot together pass the cap of 15 or the 336-hour span, or delete the last sub-event. Each returns the whole schedule (D-121)
 - The API answers 422 `too_many_sub_events` for a 16th, 422 `event_too_long` for an add, edit or delay that takes the span past 336 hours, 409 `last_sub_event` for a delete of the last one, and 409 `sub_event_has_media` for a delete of one with photos (hb §5.3, D-121). An add answers 201 when it wrote and 200 when its `requestId` repeated. A `requestId` that belongs to another event's sub-event is 409 `duplicate`, and a `venueId` that is not a venue of this event is 400 `invalid_request`, on add and edit
 - The four functions take no user, so only the API's secret key may execute them; `anon` and `authenticated` cannot (D-73). The API checks the caller first: an active member for GET, the event's Admin for a write. PATCH and DELETE take the event from the sub-event's row, so another event's Admin gets 403 `not_member` and nothing changes
-- Deleted only while it has no photos, and never the event's last one. `media` arrives with S-12, so `delete_sub_event` checks only the last-one rule until S-12 replaces it with one that also refuses a sub-event with any `media` row (D-121). An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the schedule; there is no Realtime on this table (D-100)
+- Deleted only while it has no photos, and never the event's last one. S-12's migration replaced `delete_sub_event` with one that refuses a sub-event with any `media` row, unfinished or soft-deleted included, after the last-one check, so the event's only sub-event always answers `last` (D-121). An edit moves no photo and no `venue_verification` row. Other phones see an edit or a Delay on their next fetch of the schedule; there is no Realtime on this table (D-100)
 
 ### `membership`
 Migration `supabase/migrations/20260925105127_create_event_venue_sub_event_membership.sql`. `requested_at` comes from `supabase/migrations/20260929184331_invite_and_join.sql`.
@@ -166,16 +166,22 @@ The spec's `VenueVerification`, renamed to the naming convention.
 - `sub_event_id` references `sub_event` with `ON DELETE CASCADE`. Only a sub-event with no photos can be deleted, so its verifications unlocked nothing (D-121)
 
 ### `media`
-- `event_id`, copied from the sub-event at pre-flight and never taken from the request, and the sub-event must belong to the event in the path (D-122); `sub_event_id`, `uploader_user_id`, `uploader_role_at_upload` (display only, D-13)
-- `sub_event_id` references `sub_event` with no `ON DELETE` action, so a sub-event with any `media` row, unfinished or soft-deleted included, cannot be deleted. S-12 replaces `delete_sub_event` with one that checks for such a row first and answers 409 `sub_event_has_media` (D-100, D-121)
+Migration `supabase/migrations/20261002121238_media_upload.sql`, which also installs `pgmq` with the `jobs` queue (§5).
+- `id` has no default. The API makes it at pre-flight and builds both upload keys from it (D-70)
+- `event_id`, copied from the sub-event at pre-flight and never taken from the request, and the sub-event must belong to the event in the path (D-122); `sub_event_id`, `uploader_user_id`, `uploader_role_at_upload` (`admin`, `photographer`, `guest`, display only, D-13)
+- The sub-event foreign key is `(sub_event_id, event_id)` to `sub_event (id, event_id)`, so the table itself refuses a photo filed under another event's sub-event (D-122). It has no `ON DELETE` action, so a sub-event with any `media` row, unfinished or soft-deleted included, cannot be deleted, and `delete_sub_event` answers 409 `sub_event_has_media` before the key would refuse (D-100, D-121). `event_id` is `ON DELETE CASCADE` to `event`, so the hard delete after soft deletion (§4.21) takes the event's rows
+- `uploader_user_id` references `auth.users` with no `ON DELETE` action, so an account with photos cannot be deleted until support removes them (spec §4.19, D-122)
 - `captured_at`, the photo's EXIF capture time sent with pre-flight, or the pre-flight time when it has none (D-98)
-- `content_hash`, SHA-256, unique per event among rows with `uploaded_at` set, soft-deleted rows included (D-53, D-96)
-- `size_bytes`, the photo's size from R2's HEAD at completion, the thumbnail not included (D-95, D-122). The Photographer's storage figure sums it (§4.10)
-- `upload_key`, `upload_thumb_key`, written by the API at pre-flight (D-70)
+- `content_hash`, SHA-256 as 64 lower-case hex characters, unique per event among rows with `uploaded_at` set, soft-deleted rows included, through the partial index `media_event_id_content_hash_key` (D-53, D-96). The partial index `media_unfinished_key` allows one unfinished row per uploader and hash in an event, behind `start_upload`'s resume (D-122)
+- `size_bytes`, the photo's size from R2's HEAD at completion, the thumbnail not included (D-95, D-122). The Photographer's storage figure sums it (§4.10). It is set exactly when `uploaded_at` is
+- `upload_key`, `upload_thumb_key`, written by the API at pre-flight (D-70). `media_upload_key_check` and `media_upload_thumb_key_check` accept only `{id}/upload.jpg` and `{id}/upload_thumb.webp` for the row's own id (§3), so no row points at another photo's file
 - `uploaded_at`, set by `complete_upload` only while it is null, in the same transaction as the enqueue (D-82, D-95)
 - `public_key`, `public_thumb_key`, `variant_version` (integer, 0 at insert, so the worker's first write makes it 1), `width`, `height`, written by the worker (D-22, D-60, D-69, D-70, D-122)
-- `processed_at`, written last by the worker (D-55); `deleted_at` (§4.21)
-- At most 2,000 per event (§4.17). Local Only photos never create a row (§4.12)
+- `processed_at`, written last by the worker (D-55), and refused while `uploaded_at` is null; `deleted_at` (§4.21)
+- At most 2,000 per event that are not soft-deleted, unfinished ones included (§4.17, D-95). The API passes `MAX_EVENT_MEDIA`, 2,000, from `apps/api/src/services/media.ts` to `start_upload`, as it passes `join_event` its guest cap. Local Only photos never create a row (§4.12)
+- `media_event_id_idx` serves the cap's count and the event's cascade, and `media_sub_event_id_idx` serves `delete_sub_event`'s check
+- Two SQL functions called with `rpc` write it, `start_upload` at pre-flight and `complete_upload` at completion, and §4 has what each decides (D-95). Each locks the event row `FOR NO KEY UPDATE`, as D-121's functions do (D-122). Both take the user as a parameter, so `execute` is granted to `service_role` only. `start_upload` runs as `security invoker`. `complete_upload` runs as `security definer`, because `pgmq.send` writes to the `pgmq` schema, where the API's role has no privilege, and the function is the API's one way to put a job on the queue
+- RLS is on with no policy until S-13 adds `SELECT` for Realtime (§1). `anon` and `authenticated` keep `SELECT` and read no rows, and hold no write privilege, so a policy added by mistake still could not let the app write. `apps/api/tests/integration/rls.test.ts` checks both functions, their refusals, the table's checks and these grants against the dev project
 
 ### `face`
 One row per detected face, written only by the worker.
@@ -240,15 +246,15 @@ Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project,
 Spec §4.8, Handbook §7.
 
 1. **Client.** Orientation applied to the pixels, then an EXIF strip keeping only the timestamp (D-99), anything not JPEG to JPEG, resize only past 4096px, a WebP thumbnail 300px on its long edge, SHA-256 over the upload bytes with `expo-crypto`. Identical for every role (D-58, D-105).
-2. **Pre-flight, JSON only.** Hash, sub-event ID, the capture time (D-98), and any verification records the device holds: a GPS reading or a Venue QR scan, each with its time (D-85, D-89). The photo itself carries no location. The API checks, in order (D-82):
+2. **Pre-flight, JSON only.** Hash, sub-event ID, the capture time (D-98), and any verification records the device holds: a GPS reading or a Venue QR scan, each with its time (D-85, D-89). The photo itself carries no location. The checks, in order, are below (D-82). The API makes the first itself. `start_upload` makes the rest under the event lock (step 3), and the API makes no lookup of its own for them, so no check runs twice (D-122).
    - the caller is an `active` member, the event is not deleted, and `album_open` is true (D-12). An archived event takes uploads like any other. S-12 writes the album check behind one constant, switched off, and S-31 switches it on (D-122)
    - the sub-event belongs to the event in the path. One that does not, or that was deleted after the photo was queued, answers 409 `sub_event_missing` (D-122)
    - the hash. The caller's own row with no `uploaded_at` is a crashed upload, and pre-flight re-signs its existing keys and stops there, even when another user's finished row has the same hash, and completion then answers `duplicate`. Otherwise a row with this hash and `uploaded_at` set, deleted or not, is an exact duplicate, rejected silently. Another user's unfinished row is ignored (D-53, D-96, D-122)
    - for a new row only: verification passes, meaning a `venue_verification` row OR `admin_verified_at IS NOT NULL` OR `role = 'photographer'` (D-15), and then the event holds fewer than 2,000 media rows that are not soft-deleted, finished or not, counted inside `start_upload` with the event row locked (§4.17, D-95). S-12 writes no verification query, and S-15 adds the check with `venue_verification` (D-122)
    All of these are indexed lookups.
-3. **Keys and URLs.** The API makes the media id and builds both upload keys from it. `start_upload` locks the event row `FOR NO KEY UPDATE`, checks the sub-event and the hash again under the lock, and returns the caller's own unfinished row rather than inserting a second one, so two devices on one account sending the same photo at once end with one row. Otherwise it counts and inserts the media row with the keys. The API presigns two PUT URLs that live 15 minutes (D-70, D-95, D-122).
+3. **Keys and URLs.** The API makes the media id, builds both upload keys from it, and calls `start_upload` with them. It locks the event row `FOR NO KEY UPDATE` and makes every check after the first, in step 2's order. It returns the caller's own unfinished row rather than inserting a second one, so two devices on one account sending the same photo at once end with one row. Otherwise it counts and inserts the media row with the keys. The API presigns two PUT URLs that live 15 minutes, for the keys `start_upload` returned, which on a resume are the row's own (D-70, D-95, D-122).
 4. **Upload.** The client PUTs the photo and the thumbnail to R2, one photo at a time per session, then calls completion.
-5. **Complete and enqueue.** The API looks up the row first. A row that no longer exists answers `duplicate`, because a duplicate completion is the only thing that deletes one. Then it answers 403 `not_uploader` to anyone but the uploader, 403 `not_member` to an uploader who is no longer an active member, and 404 `not_found` when the event was deleted since pre-flight (D-122). The API sends R2 a HEAD for both objects and answers `upload_missing` if either is absent. Then `complete_upload` locks the event row `FOR NO KEY UPDATE`, checks the caller uploaded the row, sets `uploaded_at` where it is null, stores `size_bytes`, and sends exactly one message to the `jobs` queue, all in one transaction: `thumbnail_dims` until S-21, `face_process` after (D-72, D-95). A repeated call changes nothing and answers `completed`. If another finished row already has the hash, it deletes this row, the API deletes its two objects, and it answers `duplicate` (D-96). Under the lock, two completions of one hash end as one `completed` and one `duplicate`, never a unique violation. A failed object delete is logged and the answer is still `duplicate` (D-122).
+5. **Complete and enqueue.** The API looks up the row first. A row that no longer exists answers `duplicate`, because a duplicate completion is the only thing that deletes one. Then it answers 403 `not_uploader` to anyone but the uploader, then 404 `not_found` when the event was deleted since pre-flight, then 403 `not_member` to an uploader who is no longer an active member. The 404 comes before the 403 as on every event endpoint (D-122). A row already finished answers `completed` there, with no HEAD and no message. The API sends R2 a HEAD for both objects and answers `upload_missing` if either is absent. Then `complete_upload` locks the event row `FOR NO KEY UPDATE`, checks the caller uploaded the row, sets `uploaded_at` where it is null, stores `size_bytes`, and sends exactly one message to the `jobs` queue, all in one transaction: `thumbnail_dims` until S-21, `face_process` after (D-72, D-95). A repeated call changes nothing and answers `completed`. If another finished row already has the hash, it deletes this row, the API deletes its two objects, and it answers `duplicate` (D-96). Under the lock, two completions of one hash end as one `completed` and one `duplicate`, never a unique violation. A failed object delete is logged and the answer is still `duplicate` (D-122).
 6. **Publish.** The worker sets `processed_at` last. The row passes the `media` policy and Realtime delivers it to every member (D-55).
 
 Until verification passes or while the album is closed, photos wait in the device's SQLite queue. The queue is per device and per account (§4.1).
@@ -280,7 +286,7 @@ Until verification passes or while the album is closed, photos wait in the devic
 ## 5. Worker jobs
 <!-- abstract: Five pgmq jobs: thumbnail_dims, face_process, reference_process, reprocess and blur_region, with their triggers, plus blur geometry, the model and the one-process-per-machine rule. -->
 
-Every job is a message on one pgmq queue, `jobs`: `{ "job": "<name>" }` plus the ids in the second column. The worker handles one message at a time, oldest first (D-103).
+Every job is a message on one pgmq queue, `jobs`: `{ "job": "<name>" }` plus the ids in the second column. The worker handles one message at a time, oldest first (D-103). S-12's migration installs `pgmq` and creates `jobs`. pgmq is not on the Data API, so the API sends a message only from inside a SQL function (§1).
 
 | Job | Message ids | Trigger | Does |
 |---|---|---|---|
@@ -295,6 +301,7 @@ Every job is a message on one pgmq queue, `jobs`: `{ "job": "<name>" }` plus the
 - **Model.** InsightFace through ONNX Runtime, loaded once at startup (D-40). `buffalo_l`, detection and recognition modules only (D-92).
 - **Processes.** One worker process per machine, one message at a time (Handbook §6, D-103).
 - **Failures.** A message that fails three times is archived and logged, and reported to Sentry once the worker has it. If it names a photo, the worker also clears that photo's `processed_at`, so the photo leaves the album and never stays up with files a failed job should have replaced. To run the job again, send the archived message from pgmq's archive for `jobs` back to `jobs` (D-103, D-108).
+- **A row that is gone.** A message whose media row no longer exists is deleted as done, with no retry, no archive and no Sentry report. An event's hard delete leaves such messages, and so do the dev project's test runs (D-122). S-18a builds this.
 - **Cleanup.** After a regeneration commits, the worker deletes the objects the rows no longer point at, never the upload keys (D-103).
 - **Scheduled work.** None in demo scope. Retention deletion (§4.21) appears in no demo beat (D-44). If it gets built, `pg_cron` enqueues a daily pgmq message and the worker deletes the objects and rows.
 
