@@ -1,23 +1,23 @@
 import type { EventSummary } from '@momentlens/shared-types';
 import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState, type ReactNode } from 'react';
-import { Alert, BackHandler, Text, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, BackHandler, Platform, View } from 'react-native';
 
-import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
-import { TextLink } from '@/components/ui/text-link';
+import { Row, Section } from '@/components/ui/grouped';
 import { eventHref } from '@/features/event-shell/tabs';
 import { uploadCover } from '@/features/events/cover';
 import { markCreated, renewRequestId, useEventDraft } from '@/features/events/draft';
 import { buildCreateEventRequest, sortSubEvents } from '@/features/events/request';
-import { SubEventCard } from '@/features/events/sub-event-card';
+import { DraftSubEventRow } from '@/features/events/draft-sub-event-row';
 import { SubEventSheet, type SheetTarget } from '@/features/events/sub-event-sheet';
-import { EVENT_TYPE_LABEL } from '@/features/events/type-select';
+import { EVENT_TYPE_LABEL } from '@/features/events/event-type';
 import { rememberCover, rememberCreatedEvent } from '@/features/events/use-events';
 import { subEventsProblem } from '@/features/events/validation';
 import { WizardFrame } from '@/features/events/wizard-frame';
 import { ApiError, createEvent } from '@/lib/api';
+import { byPlatform } from '@/lib/copy';
 
 type Phase = 'review' | 'creating' | 'uploadingCover' | 'coverFailed';
 
@@ -39,30 +39,6 @@ function createProblem(error: unknown): string {
     }
   }
   return 'Something went wrong on our side. Try again in a moment.';
-}
-
-function Card({
-  title,
-  onEdit,
-  children,
-}: {
-  title: string;
-  onEdit?: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <View className="gap-3 rounded-2xl border border-border bg-surface p-4">
-      <View className="flex-row items-center justify-between">
-        <Text
-          accessibilityRole="header"
-          className="font-fieldLabel text-fieldLabel text-textPrimary">
-          {title}
-        </Text>
-        {onEdit ? <TextLink label="Edit" onPress={onEdit} /> : null}
-      </View>
-      {children}
-    </View>
-  );
 }
 
 // Step 3: review and confirm (spec §2.1.2). Create sends the whole draft in one POST /events,
@@ -139,106 +115,120 @@ export default function ReviewStep() {
   }
 
   function cancel() {
-    Alert.alert('Discard this event?', 'What you have entered will be lost.', [
-      { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => router.dismissTo('/') },
-    ]);
+    Alert.alert(
+      byPlatform('Discard This Event?', 'Discard this event?'),
+      'What you have entered will be lost.',
+      [
+        { text: byPlatform('Keep Editing', 'Keep editing'), style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => router.dismissTo('/') },
+      ],
+    );
   }
 
-  const footer =
-    phase === 'coverFailed' || phase === 'uploadingCover' ? (
-      <View className="flex-row gap-3">
-        <View className="flex-1">
-          <Button
-            label="Skip cover"
-            variant="secondary"
-            disabled={phase === 'uploadingCover'}
-            onPress={() => draft.created && land(draft.created)}
-          />
-        </View>
-        <View className="flex-1">
-          <Button
-            label={phase === 'uploadingCover' ? 'Uploading' : 'Try again'}
-            busy={phase === 'uploadingCover'}
-            onPress={() => void create()}
-          />
-        </View>
-      </View>
-    ) : (
-      <View className="flex-row gap-3">
-        <View className="flex-1">
-          <Button label="Cancel" variant="secondary" disabled={locked} onPress={cancel} />
-        </View>
-        <View className="flex-1">
-          <Button
-            label={phase === 'creating' ? 'Creating' : 'Create Event'}
-            busy={phase === 'creating'}
-            onPress={() => void create()}
-          />
-        </View>
-      </View>
-    );
+  const coverStep = phase === 'coverFailed' || phase === 'uploadingCover';
+  const created = draft.created;
 
   return (
     <>
       <WizardFrame
         step={3}
-        title="Review & Confirm"
-        back={{
-          icon: 'chevron-left',
-          label: 'Back to sub-events',
-          onPress: () => router.back(),
-          disabled: locked,
-        }}
-        footer={footer}>
-        {problem ? <FormMessage message={problem} /> : null}
-
-        <Card
-          title="Basic Info"
-          onEdit={locked ? undefined : () => router.dismissTo('/events/new')}>
-          <View className="flex-row items-center gap-3">
-            <View className="h-14 w-14 overflow-hidden rounded-lg bg-surfaceMuted">
-              {draft.cover ? (
-                <Image
-                  source={{ uri: draft.cover.uri }}
-                  style={{ width: 56, height: 56 }}
-                  contentFit="cover"
-                  accessibilityIgnoresInvertColors
-                />
-              ) : null}
-            </View>
-            <View className="flex-1 gap-0.5">
-              <Text className="font-fieldLabel text-fieldLabel text-textPrimary">
-                {draft.name.trim()}
-              </Text>
-              <Text className="font-caption text-caption text-textSecondary">
-                {draft.type ? EVENT_TYPE_LABEL[draft.type] : ''}
-              </Text>
-            </View>
+        leading={
+          coverStep
+            ? {
+                kind: 'back',
+                label: 'Back to sub-events',
+                onPress: () => router.back(),
+                disabled: true,
+              }
+            : {
+                kind: 'back',
+                label: 'Back to sub-events',
+                onPress: () => router.back(),
+                disabled: locked,
+              }
+        }
+        primary={
+          coverStep
+            ? {
+                label:
+                  phase === 'uploadingCover' ? 'Uploading' : byPlatform('Try Again', 'Try again'),
+                busy: phase === 'uploadingCover',
+                onPress: () => void create(),
+              }
+            : {
+                label:
+                  phase === 'creating' ? 'Creating' : byPlatform('Create Event', 'Create event'),
+                busy: phase === 'creating',
+                onPress: () => void create(),
+              }
+        }
+        secondary={
+          coverStep
+            ? {
+                label: byPlatform('Skip Cover', 'Skip cover'),
+                disabled: phase === 'uploadingCover',
+                onPress: () => created && land(created),
+              }
+            : Platform.OS === 'android'
+              ? { label: 'Cancel', disabled: locked, onPress: cancel }
+              : undefined
+        }>
+        {problem ? (
+          <View className="ios:px-5 android:px-4">
+            <FormMessage message={problem} />
           </View>
-          {draft.description.trim() ? (
-            <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-              {draft.description.trim()}
-            </Text>
-          ) : null}
-          <Text className="font-caption text-caption text-textSecondary">
-            {draft.approvalRequired
-              ? 'Approval Mode on: you approve each new member.'
-              : 'Approval Mode off: anyone with an invite joins straight away.'}
-          </Text>
-        </Card>
+        ) : null}
 
-        <Card
-          title={`Sub-Events (${subEvents.length})`}
-          onEdit={locked ? undefined : () => router.back()}>
-          {subEvents.map((subEvent) => (
-            <SubEventCard
+        <Section
+          header={byPlatform('Basic Info', 'Basic info')}
+          headerAction={
+            locked ? undefined : { label: 'Edit', onPress: () => router.dismissTo('/events/new') }
+          }>
+          <Row
+            leading={
+              <View className="h-11 w-11 overflow-hidden rounded-[10px] bg-surfaceMuted">
+                {draft.cover ? (
+                  <Image
+                    source={{ uri: draft.cover.uri }}
+                    style={{ width: 44, height: 44 }}
+                    contentFit="cover"
+                    accessibilityIgnoresInvertColors
+                  />
+                ) : null}
+              </View>
+            }
+            leadingWidth={44}
+            title={draft.name.trim()}
+            subtitle={draft.type ? EVENT_TYPE_LABEL[draft.type] : undefined}
+          />
+          {draft.description.trim() ? <Row subtitle={draft.description.trim()} /> : null}
+          <Row title="Approval Mode" value={draft.approvalRequired ? 'On' : 'Off'} />
+        </Section>
+
+        <Section
+          header={`${byPlatform('Sub-Events', 'Sub-events')} (${subEvents.length})`}
+          headerAction={locked ? undefined : { label: 'Edit', onPress: () => router.back() }}>
+          {subEvents.map((subEvent, i) => (
+            <DraftSubEventRow
               key={subEvent.key}
               subEvent={subEvent}
-              onEdit={() => !locked && setTarget({ kind: 'edit', subEvent })}
+              number={i + 1}
+              onPress={locked ? undefined : () => setTarget({ kind: 'edit', subEvent })}
             />
           ))}
-        </Card>
+        </Section>
+
+        {Platform.OS === 'ios' && !coverStep ? (
+          <Section>
+            <Row
+              title={byPlatform('Discard Event', 'Discard event')}
+              destructive
+              center
+              disabled={locked}
+              onPress={cancel}
+            />
+          </Section>
+        ) : null}
       </WizardFrame>
       <SubEventSheet target={target} onClose={() => setTarget(null)} />
     </>

@@ -1,8 +1,9 @@
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, BackHandler, Text, View } from 'react-native';
+import { Alert, BackHandler } from 'react-native';
 
-import { Button } from '@/components/ui/button';
+import { FieldGroup } from '@/components/ui/field-group';
+import { Row, Section } from '@/components/ui/grouped';
 import { TextField } from '@/components/ui/text-field';
 import { Toggle } from '@/components/ui/toggle';
 import { CoverField } from '@/features/events/cover-field';
@@ -10,6 +11,7 @@ import { draftHasContent, updateBasics, useEventDraft } from '@/features/events/
 import { TypeSelect } from '@/features/events/type-select';
 import { basicsProblems } from '@/features/events/validation';
 import { WizardFrame } from '@/features/events/wizard-frame';
+import { byPlatform } from '@/lib/copy';
 
 // Step 1, basic info: name, type, cover, description and Approval Mode (spec §2.1.2, D-111).
 export default function BasicInfoStep() {
@@ -24,10 +26,14 @@ export default function BasicInfoStep() {
       router.back();
       return;
     }
-    Alert.alert('Discard this event?', 'What you have entered so far will be lost.', [
-      { text: 'Keep editing', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: () => router.back() },
-    ]);
+    Alert.alert(
+      byPlatform('Discard This Event?', 'Discard this event?'),
+      'What you have entered so far will be lost.',
+      [
+        { text: byPlatform('Keep Editing', 'Keep editing'), style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: () => router.back() },
+      ],
+    );
   }, [router]);
 
   // Android's back button on the first step would close the wizard without asking. iOS has no
@@ -52,45 +58,52 @@ export default function BasicInfoStep() {
   return (
     <WizardFrame
       step={1}
-      title="Basic Info"
-      back={{ icon: 'x', label: 'Close', onPress: close }}
-      footer={<Button label="Next" onPress={next} />}>
+      leading={{ kind: 'close', label: 'Close', onPress: close }}
+      primary={{ label: 'Next', onPress: next }}>
       <CoverField cover={draft.cover} onChange={(cover) => updateBasics({ cover })} />
-      <TextField
-        label="Event name"
-        placeholder="Event name"
-        value={draft.name}
-        onChangeText={(name) => updateBasics({ name })}
-        autoCapitalize="words"
-        returnKeyType="done"
-        error={problems.name}
-      />
-      <TypeSelect
-        value={draft.type}
-        onChange={(type) => updateBasics({ type })}
-        error={problems.type}
-      />
-      <TextField
-        label="Description"
-        placeholder="Tell guests what to expect"
-        value={draft.description}
-        onChangeText={(description) => updateBasics({ description })}
-        multiline
-        error={problems.description}
-      />
-      <View className="flex-row items-center justify-between gap-4 rounded-xl border border-border bg-surface px-4 py-3">
-        <View className="flex-1 gap-0.5">
-          <Text className="font-fieldLabel text-fieldLabel text-textPrimary">Approval Mode</Text>
-          <Text className="font-caption text-caption text-textSecondary">
-            Approve each new member yourself. Off lets anyone with an invite straight in.
-          </Text>
-        </View>
-        <Toggle
-          accessibilityLabel="Approval Mode"
-          value={draft.approvalRequired}
-          onValueChange={(approvalRequired) => updateBasics({ approvalRequired })}
+      <FieldGroup>
+        <TextField
+          label="Event name"
+          placeholder="Ayesha & Bilal"
+          value={draft.name}
+          onChangeText={(name) => updateBasics({ name })}
+          autoCapitalize="words"
+          returnKeyType="done"
+          error={problems.name}
         />
-      </View>
+        <TypeSelect
+          value={draft.type}
+          onChange={(type) => updateBasics({ type })}
+          error={problems.type}
+        />
+      </FieldGroup>
+      <FieldGroup>
+        <TextField
+          label={byPlatform('Description (Optional)', 'Description (optional)')}
+          placeholder="Tell guests what to expect"
+          value={draft.description}
+          onChangeText={(description) => updateBasics({ description })}
+          multiline
+          error={problems.description}
+        />
+      </FieldGroup>
+      <Section
+        footer={
+          draft.approvalRequired
+            ? 'You approve each person before they join.'
+            : 'Anyone with an invite joins straight away. Turn it on to approve each person first.'
+        }>
+        <Row
+          title="Approval Mode"
+          trailing={
+            <Toggle
+              accessibilityLabel="Approval Mode"
+              value={draft.approvalRequired}
+              onValueChange={(approvalRequired) => updateBasics({ approvalRequired })}
+            />
+          }
+        />
+      </Section>
     </WizardFrame>
   );
 }

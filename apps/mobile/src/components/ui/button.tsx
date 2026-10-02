@@ -29,12 +29,12 @@ interface ButtonProps {
 // screen's main action and 40dp in a row. A disabled button turns grey on both, as each platform
 // draws one, rather than fading the gold so it still looks pressable.
 const CONTAINER: Record<Variant, string> = {
-  primary: 'rounded-full bg-accent ios:active:bg-accentPressed',
+  primary: 'rounded-full bg-accent active:bg-accentPressed',
   secondary:
-    'rounded-full ios:bg-textPrimary/10 ios:active:bg-textPrimary/20 android:border android:border-borderStrong',
-  tonal: 'rounded-full bg-accentTint ios:active:opacity-80',
-  quiet: 'rounded-full',
-  destructive: 'rounded-full',
+    'rounded-full ios:bg-textPrimary/10 android:border android:border-borderStrong active:opacity-70',
+  tonal: 'rounded-full bg-accentTint active:opacity-80',
+  quiet: 'rounded-full active:opacity-60',
+  destructive: 'rounded-full active:opacity-60',
 };
 
 const LABEL: Record<Variant, string> = {
@@ -63,7 +63,13 @@ export function Button({
   const inactive = busy || disabled;
   const ripple = useTokenColor('textPrimary', 0.12);
   const filled = variant === 'primary' || variant === 'tonal';
-  const container = disabled && filled ? 'rounded-full bg-textPrimary/10' : CONTAINER[variant];
+  // A disabled filled button keeps an active: class, so its class list has the same modifiers in
+  // both states: NativeWind upgrades a component the first time its classes gain one, and its
+  // development warning crashed when a button went from disabled to enabled.
+  const container =
+    disabled && filled
+      ? 'rounded-full bg-textPrimary/10 active:bg-textPrimary/10'
+      : CONTAINER[variant];
   const labelTone = disabled ? 'text-textMuted' : LABEL[variant];
   const text =
     size === 'small' ? 'font-buttonLabel text-bodySecondary' : 'font-buttonLabel text-buttonLabel';

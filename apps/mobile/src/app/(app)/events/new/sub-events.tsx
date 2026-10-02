@@ -1,16 +1,18 @@
 import { MAX_SUB_EVENTS } from '@momentlens/shared-types';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Platform, View } from 'react-native';
 
-import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
+import { GLYPH, Glyph } from '@/components/ui/glyph';
+import { Row, Section } from '@/components/ui/grouped';
 import { useEventDraft } from '@/features/events/draft';
 import { sortSubEvents } from '@/features/events/request';
-import { SubEventCard } from '@/features/events/sub-event-card';
+import { DraftSubEventRow } from '@/features/events/draft-sub-event-row';
 import { SubEventSheet, type SheetTarget } from '@/features/events/sub-event-sheet';
 import { subEventsProblem } from '@/features/events/validation';
 import { WizardFrame } from '@/features/events/wizard-frame';
+import { byPlatform } from '@/lib/copy';
 
 // Step 2: one to 15 sub-events, each added in the Add Sub-Event sheet and listed by start time.
 // Next stays disabled until there is one, and there is no Skip (spec §2.1.2, D-111).
@@ -25,49 +27,45 @@ export default function SubEventsStep() {
     <>
       <WizardFrame
         step={2}
-        title="Sub-Events"
-        back={{ icon: 'chevron-left', label: 'Back to basic info', onPress: () => router.back() }}
-        footer={
-          <Button
-            label="Next"
-            disabled={problem !== null}
-            accessibilityHint={problem ?? undefined}
-            onPress={() => router.push('/events/new/review')}
-          />
+        leading={{ kind: 'back', label: 'Back to basic info', onPress: () => router.back() }}
+        primary={{
+          label: 'Next',
+          disabled: problem !== null,
+          onPress: () => router.push('/events/new/review'),
+        }}
+        secondary={
+          Platform.OS === 'android' ? { label: 'Back', onPress: () => router.back() } : undefined
         }>
-        <View className="flex-row items-center justify-between">
-          <Text className="font-caption text-caption text-textSecondary">
-            {subEvents.length === 1 ? '1 sub-event added' : `${subEvents.length} sub-events added`}
-          </Text>
-          <Text className="font-caption text-caption text-accentText">Max {MAX_SUB_EVENTS}</Text>
-        </View>
-        <Button
-          label="Add Sub-Event"
-          variant="secondary"
-          icon="plus"
-          disabled={full}
-          accessibilityHint={full ? `An event can have ${MAX_SUB_EVENTS} sub-events.` : undefined}
-          onPress={() => setTarget({ kind: 'new' })}
-        />
-        {full ? (
-          <Text className="font-caption text-caption text-textSecondary">
-            This event has {MAX_SUB_EVENTS} sub-events, the most one can have.
-          </Text>
-        ) : null}
-        {sortSubEvents(subEvents).map((subEvent) => (
-          <SubEventCard
-            key={subEvent.key}
-            subEvent={subEvent}
-            onEdit={() => setTarget({ kind: 'edit', subEvent })}
+        <Section
+          header={`${byPlatform('Sub-Events', 'Sub-events')} · ${subEvents.length} of ${MAX_SUB_EVENTS}`}
+          footer={
+            subEvents.length === 0
+              ? 'Add the parts of the event, such as the mehndi, the nikah and the walima. Each has its own time, venue and check-in radius.'
+              : full
+                ? `This event has ${MAX_SUB_EVENTS} sub-events, the most one can have.`
+                : undefined
+          }>
+          {sortSubEvents(subEvents).map((subEvent, i) => (
+            <DraftSubEventRow
+              key={subEvent.key}
+              subEvent={subEvent}
+              number={i + 1}
+              onPress={() => setTarget({ kind: 'edit', subEvent })}
+            />
+          ))}
+          <Row
+            leading={<Glyph name={GLYPH.add} size={22} tone="accentText" />}
+            title={byPlatform('Add Sub-Event', 'Add sub-event')}
+            action
+            disabled={full}
+            accessibilityHint={full ? `An event can have ${MAX_SUB_EVENTS} sub-events.` : undefined}
+            onPress={() => setTarget({ kind: 'new' })}
           />
-        ))}
-        {subEvents.length === 0 ? (
-          <Text className="py-6 text-center font-bodySecondary text-bodySecondary text-textSecondary">
-            Add the parts of the event, such as the mehndi, the nikkah and the walima. Each has its
-            own time, venue and check-in radius.
-          </Text>
-        ) : problem ? (
-          <FormMessage message={problem} />
+        </Section>
+        {subEvents.length > 0 && problem ? (
+          <View className="ios:px-5 android:px-4">
+            <FormMessage message={problem} />
+          </View>
         ) : null}
       </WizardFrame>
       <SubEventSheet target={target} onClose={() => setTarget(null)} />
