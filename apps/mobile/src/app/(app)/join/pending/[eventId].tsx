@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { AppHeader } from '@/components/ui/app-header';
+import { BackButton } from '@/components/ui/back-button';
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { Icon } from '@/components/ui/icon';
@@ -15,6 +15,7 @@ import { EVENTS_QUERY_KEY, forgetJoinRequest, useEvents } from '@/features/event
 import { RolePill } from '@/features/join/role-pill';
 import { cancelJoinRequest } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
+import { byPlatform } from '@/lib/copy';
 
 // How often the screen asks whether the organizer has answered, on top of every return to the
 // foreground (D-115). The Approval Alerts push replaces waiting on it in Phase 6 (hb §14.6).
@@ -89,12 +90,12 @@ export default function PendingApprovalScreen() {
 
   function confirmCancel() {
     Alert.alert(
-      'Cancel your request?',
+      byPlatform('Cancel Your Request?', 'Cancel your request?'),
       `To ask to join ${eventName} again, you will need the invite link or code.`,
       [
-        { text: 'Keep waiting', style: 'cancel' },
+        { text: byPlatform('Keep Waiting', 'Keep waiting'), style: 'cancel' },
         {
-          text: 'Cancel request',
+          text: byPlatform('Cancel Request', 'Cancel request'),
           style: 'destructive',
           onPress: () => {
             setNotice(null);
@@ -109,43 +110,37 @@ export default function PendingApprovalScreen() {
     <View className="flex-1 bg-background">
       {/* SafeAreaView is not a React Native core component, so its layout stays in style. */}
       <SafeAreaView style={{ flex: 1 }}>
-        <View className="px-4">
-          <AppHeader left={{ icon: 'chevron-left', label: 'Events', onPress: toEvents }} />
+        <View className="h-14 flex-row items-center ios:px-4 android:px-1">
+          <BackButton label="Back to Events" onPress={toEvents} />
         </View>
 
-        <ScrollView contentContainerClassName="flex-grow justify-center px-6 py-8">
-          <View className="w-full max-w-md items-center gap-6 self-center">
-            <View className="h-20 w-20 items-center justify-center rounded-full bg-accentTint">
-              <Icon name="clock" size={32} className="text-accent" />
+        <ScrollView contentContainerClassName="flex-grow justify-center px-8 py-8">
+          <View className="w-full max-w-md items-center gap-4 self-center">
+            <View className="mb-1 h-16 w-16 items-center justify-center rounded-full bg-textPrimary/5">
+              <Icon name="clock" size={28} className="text-textSecondary" />
             </View>
-            <View className="items-center gap-3">
-              <Text
-                accessibilityRole="header"
-                className="text-center font-h1 text-h1 text-textPrimary">
-                Waiting for approval
-              </Text>
-              <Text className="text-center font-body text-body text-textSecondary">
-                Waiting for the organizer to approve your request to join{' '}
-                <Text className="font-semibold text-textPrimary">{eventName}</Text>.
-              </Text>
-            </View>
+            <Text
+              accessibilityRole="header"
+              className="text-center font-h1 text-h1 text-textPrimary">
+              {byPlatform('Waiting for Approval', 'Waiting for approval')}
+            </Text>
+            <Text className="text-center font-body text-body text-textSecondary">
+              The organizer of <Text className="font-semibold text-textPrimary">{eventName}</Text>{' '}
+              approves each new member. The event opens here once they do.
+            </Text>
             {request ? (
-              <View className="self-center">
-                <RolePill role={request.role} label={`Requested as ${ROLE_LABEL[request.role]}`} />
-              </View>
+              <RolePill role={request.role} label={`Requested as ${ROLE_LABEL[request.role]}`} />
             ) : null}
             <Text className="text-center font-caption text-caption text-textSecondary">
-              The event opens here once they approve. You can leave this screen: the request stays
-              on your Events list.
+              You can leave this screen. The request stays on your Events list.
             </Text>
           </View>
         </ScrollView>
 
         <View className="w-full max-w-md gap-2 self-center px-4 pb-2 pt-3">
           {notice ? <FormMessage message={notice} /> : null}
-          <Button label="Back to events" variant="secondary" onPress={toEvents} />
           <Button
-            label="Cancel request"
+            label={byPlatform('Cancel Request', 'Cancel request')}
             variant="destructive"
             busy={cancel.isPending}
             onPress={confirmCancel}
