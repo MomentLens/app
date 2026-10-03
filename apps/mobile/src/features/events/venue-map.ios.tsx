@@ -26,7 +26,7 @@ function regionAround(lat: number, lng: number, radiusM: number) {
 
 // The venue on Apple Maps, which needs no key (D-110), filling the picker under its search (D-128).
 // Tap the map or drag the pin to move it.
-export function VenueMap({ point, radiusM, onPick }: VenueMapProps) {
+export function VenueMap({ point, radiusM, onPick, bottomInset = 0 }: VenueMapProps) {
   const map = useRef<MapView>(null);
 
   // Follows a point chosen from a search or the phone's location, without taking the map away
@@ -41,6 +41,9 @@ export function VenueMap({ point, radiusM, onPick }: VenueMapProps) {
       <MapView
         ref={map}
         style={{ flex: 1 }}
+        // Apple Maps keeps its logo and Legal link inside these margins, which Apple requires to
+        // stay visible, so they move above the card rather than under it.
+        mapPadding={{ top: 0, right: 0, bottom: bottomInset, left: 0 }}
         initialRegion={point ? regionAround(point.lat, point.lng, radiusM) : undefined}
         onPress={(event) => {
           const { latitude, longitude } = event.nativeEvent.coordinate;
