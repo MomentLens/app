@@ -3,6 +3,7 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import { Button } from '@/components/ui/button';
 import { Icon, type IconName } from '@/components/ui/icon';
 import type { LostAccess } from '@/features/event-shell/use-event';
+import { byPlatform } from '@/lib/copy';
 
 const COPY: Record<LostAccess, { icon: IconName; title: string; body: string }> = {
   not_member: {
@@ -22,9 +23,9 @@ const COPY: Record<LostAccess, { icon: IconName; title: string; body: string }> 
 export function NoAccess({ reason, onBack }: { reason: LostAccess; onBack: () => void }) {
   const copy = COPY[reason];
   return (
-    <View className="flex-1 items-center justify-center gap-6 px-6 pb-10">
-      <View className="h-20 w-20 items-center justify-center rounded-full bg-surfaceMuted">
-        <Icon name={copy.icon} size={32} className="text-textSecondary" />
+    <View className="flex-1 items-center justify-center gap-6 px-8 pb-10">
+      <View className="h-16 w-16 items-center justify-center rounded-full bg-textPrimary/5">
+        <Icon name={copy.icon} size={28} className="text-textSecondary" />
       </View>
       <View className="w-full max-w-md items-center gap-3">
         <Text accessibilityRole="header" className="text-center font-h1 text-h1 text-textPrimary">
@@ -32,7 +33,7 @@ export function NoAccess({ reason, onBack }: { reason: LostAccess; onBack: () =>
         </Text>
         <Text className="text-center font-body text-body text-textSecondary">{copy.body}</Text>
       </View>
-      <Button label="Back to events" variant="secondary" onPress={onBack} />
+      <Button label={byPlatform('Back to Events', 'Back to events')} onPress={onBack} />
     </View>
   );
 }
@@ -49,7 +50,7 @@ export function LoadFailed({ retrying, onRetry }: { retrying: boolean; onRetry: 
         Check the connection and try again.
       </Text>
       <Button
-        label={retrying ? 'Trying again' : 'Try again'}
+        label={retrying ? 'Trying again' : byPlatform('Try Again', 'Try again')}
         variant="secondary"
         busy={retrying}
         onPress={onRetry}
@@ -61,7 +62,7 @@ export function LoadFailed({ retrying, onRetry }: { retrying: boolean; onRetry: 
 export function Loading() {
   return (
     <View className="flex-1 items-center justify-center pb-10">
-      <ActivityIndicator className="text-accent" />
+      <ActivityIndicator className="text-textSecondary" />
     </View>
   );
 }

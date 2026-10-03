@@ -12,6 +12,7 @@ import { inviteQuery, isDeadInvite } from '@/features/join/invite-query';
 import { PasteButton } from '@/features/join/paste-button';
 import { queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
+import { byPlatform } from '@/lib/copy';
 
 // What shows under the boxes. A field notice is about the code and turns the boxes red; any other
 // notice is about getting an answer, and Continue tries again.
@@ -116,7 +117,7 @@ export default function JoinCodeScreen() {
 
   return (
     <AuthScreen
-      title="Join with a code"
+      title={byPlatform('Join with Code', 'Join with code')}
       subtitle="Enter the 6-character code from your invite, or paste the invite link."
       onBack={back}
       footer={
@@ -127,7 +128,7 @@ export default function JoinCodeScreen() {
           onPress={submit}
         />
       }>
-      <View className="gap-3 pt-2">
+      <View className="gap-3 pt-2 ios:px-5 android:px-6">
         <CodeBoxes
           code={code}
           onChangeText={take}
