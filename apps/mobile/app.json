@@ -8,6 +8,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "momentlens",
     "userInterfaceStyle": "automatic",
+    "primaryColor": "#C89B3C",
     "ios": {
       "bundleIdentifier": "me.momentlens.app",
       "icon": "./assets/expo.icon"
@@ -16,9 +17,8 @@
       "package": "me.momentlens.app",
       "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#FAF6EF",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false
@@ -32,9 +32,13 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#FAF6EF",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 96,
+          "dark": {
+            "backgroundColor": "#17140F",
+            "image": "./assets/images/splash-icon-dark.png"
+          }
         }
       ],
       [
@@ -96,7 +100,8 @@
             "buildArchs": ["arm64-v8a"]
           }
         }
-      ]
+      ],
+      "./plugins/with-android-theme"
     ],
     "experiments": {
       "typedRoutes": true,
