@@ -126,7 +126,9 @@ export function CodeBoxes({ code, onChangeText, onSubmit, invalid }: CodeBoxesPr
         submitBehavior="submit"
         caretHidden
         selectionColor="transparent"
-        className="absolute inset-0 text-transparent"
+        // Android draws a transparent text color in the default color instead, so there the
+        // field hides by opacity. It still takes focus, typing and a paste.
+        className="absolute inset-0 text-transparent android:opacity-0"
       />
     </View>
   );
