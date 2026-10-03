@@ -11,7 +11,6 @@ import { useEffect } from 'react';
 import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { startSessionSync } from '@/features/auth/session';
 import { persistOptions, queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
@@ -53,10 +52,17 @@ function RootLayout() {
     }
   }, [fontError]);
 
-  // AnimatedSplashOverlay hides the native splash as soon as it lays out, so rendering nothing keeps
-  // the splash up until the fonts settle. A failed load still renders the app, with system fonts,
-  // rather than holding the splash forever.
-  if (!fontsLoaded && !fontError) {
+  // The native splash, the aperture on cream (D-124), stays up until the fonts settle, so the first
+  // frame already has its titles in Fraunces. A failed load still hides it and renders the app with
+  // system fonts, rather than holding the splash forever.
+  const fontsSettled = fontsLoaded || fontError !== null;
+  useEffect(() => {
+    if (fontsSettled) {
+      void SplashScreen.hideAsync();
+    }
+  }, [fontsSettled]);
+
+  if (!fontsSettled) {
     return null;
   }
 
@@ -74,7 +80,6 @@ function RootLayout() {
           {/* Dark icons on the light palette and light on the dark one. Without it Android kept the
             template theme's white icons, which vanished on the cream background. */}
           <StatusBar style="auto" />
-          <AnimatedSplashOverlay />
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Protected guard={status === 'signedIn'}>
               <Stack.Screen name="(app)" />
