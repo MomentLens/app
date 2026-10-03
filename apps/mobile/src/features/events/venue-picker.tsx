@@ -75,6 +75,8 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
   const [nameFromPlace, setNameFromPlace] = useState(true);
   // The point most recently chosen, so a slow description of an older pin cannot rename it.
   const latest = useRef<LatLng | null>(null);
+  // The height of the card or hint over the map's foot.
+  const [overlay, setOverlay] = useState(0);
   const map = MAP_AVAILABILITY === 'map';
 
   function choose(place: Place) {
@@ -254,7 +256,12 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
         {problemLine}
       </View>
       <View className="flex-1 overflow-hidden">
-        <VenueMap point={point} radiusM={radiusM} onPick={(next) => void pin(next)} />
+        <VenueMap
+          point={point}
+          radiusM={radiusM}
+          onPick={(next) => void pin(next)}
+          bottomInset={overlay}
+        />
 
         {busy === 'search' || results !== null ? (
           <ResultsPanel
@@ -265,8 +272,11 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
           />
         ) : null}
 
-        <View className="absolute bottom-0 left-0 right-0 gap-3 p-3">
-          <View className="items-end">
+        <View
+          pointerEvents="box-none"
+          onLayout={(event) => setOverlay(Math.round(event.nativeEvent.layout.height))}
+          className="absolute bottom-0 left-0 right-0 gap-3 p-3">
+          <View pointerEvents="box-none" className="items-end">
             <GlassButton label="Use my current location" onPress={() => void takeCurrentPlace()}>
               {busy === 'here' ? (
                 <ActivityIndicator />
@@ -302,7 +312,7 @@ export function VenuePicker({ radiusM, onDone, onBack }: VenuePickerProps) {
               />
             </View>
           ) : (
-            <View key="hint" className="items-center">
+            <View key="hint" pointerEvents="box-none" className="items-center">
               <View className="rounded-full bg-surface/90 px-4 py-2">
                 <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
                   Search, or tap the map to drop a pin
