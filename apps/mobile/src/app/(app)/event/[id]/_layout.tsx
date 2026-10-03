@@ -1,5 +1,5 @@
 import type { MembershipRole } from '@momentlens/shared-types';
-import { Redirect, useLocalSearchParams, useRouter, useSegments } from 'expo-router';
+import { Redirect, useIsFocused, useLocalSearchParams, useRouter, useSegments } from 'expo-router';
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import type { ComponentProps, ReactNode } from 'react';
 import { View } from 'react-native';
@@ -39,7 +39,12 @@ export default function EventShellLayout() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   // [(app), event, [id], tab]: the tab is missing until the tabs have mounted on their first one.
-  const tab = (useSegments() as string[])[3];
+  // The segments are the focused route's, so while a sheet in the (app) Stack covers the shell they
+  // name the sheet, and for a render after it closes focus is back before they are. Read without
+  // both checks, they redirected: the tabs under the sheet unmounted and reopened on the first tab.
+  const segments = useSegments() as string[];
+  const focused = useIsFocused();
+  const tab = focused && segments[1] === 'event' ? segments[3] : undefined;
   const event = useEvent(id);
   const lost = lostAccess(event.error);
   const view = shellBody({
