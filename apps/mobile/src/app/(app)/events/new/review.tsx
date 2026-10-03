@@ -202,7 +202,10 @@ export default function ReviewStep() {
             subtitle={draft.type ? EVENT_TYPE_LABEL[draft.type] : undefined}
           />
           {draft.description.trim() ? <Row subtitle={draft.description.trim()} /> : null}
-          <Row title="Approval Mode" value={draft.approvalRequired ? 'On' : 'Off'} />
+          <Row
+            title={byPlatform('Approval Mode', 'Approval mode')}
+            value={draft.approvalRequired ? 'On' : 'Off'}
+          />
         </Section>
 
         <Section

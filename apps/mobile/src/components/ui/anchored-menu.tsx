@@ -30,22 +30,35 @@ interface AnchoredMenuProps {
   anchor: MenuAnchor | null;
   items: readonly MenuItem[];
   onClose: () => void;
+  // An exposed dropdown's menu, which takes the field's width under it rather than sitting at the
+  // end of a row.
+  matchAnchorWidth?: boolean;
 }
 
 // Material 3's menu on Android, opened by a long press on a list row and anchored to it: 48dp
 // items with a leading icon on the container tone, under the row or above it when the row sits
-// low on the screen (D-127). iOS gets UIKit's context menu instead (expo-router's Link.Menu).
-export function AnchoredMenu({ anchor, items, onClose }: AnchoredMenuProps) {
+// low on the screen (D-127). iOS gets UIKit's context menu instead (expo-router's Link.Menu). A
+// select field's menu opens the same way, the field's width (D-124).
+export function AnchoredMenu({
+  anchor,
+  items,
+  onClose,
+  matchAnchorWidth = false,
+}: AnchoredMenuProps) {
   const window = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const ripple = useTokenColor('textPrimary', 0.12);
   if (anchor === null) return null;
 
   const height = items.length * ITEM + PAD * 2;
-  const below = anchor.y + anchor.height - 8;
+  // A row's menu overlaps the row's foot; a field's opens just clear of its outline.
+  const below = matchAnchorWidth ? anchor.y + anchor.height + 4 : anchor.y + anchor.height - 8;
   const fitsBelow = below + height < window.height - insets.bottom - 96;
   const top = fitsBelow ? below : Math.max(insets.top + 8, anchor.y - height + 8);
-  const left = Math.min(anchor.x + anchor.width - WIDTH - 12, window.width - WIDTH - 12);
+  const width = matchAnchorWidth ? anchor.width : WIDTH;
+  const left = matchAnchorWidth
+    ? anchor.x
+    : Math.min(anchor.x + anchor.width - WIDTH - 12, window.width - WIDTH - 12);
 
   return (
     <Modal
@@ -58,7 +71,7 @@ export function AnchoredMenu({ anchor, items, onClose }: AnchoredMenuProps) {
       <Pressable accessibilityLabel="Close the menu" onPress={onClose} style={{ flex: 1 }}>
         <View
           accessibilityRole="menu"
-          style={{ position: 'absolute', top, left, width: WIDTH, elevation: 3 }}
+          style={{ position: 'absolute', top, left, width, elevation: 3 }}
           className="rounded-xl bg-surfaceContainer py-2">
           {items.map((item) => (
             <Pressable

@@ -57,6 +57,7 @@ export function TypeSelect({ value, onChange, error }: TypeSelectProps) {
           onPress: () => onChange(type),
         }))}
         onClose={() => setAnchor(null)}
+        matchAnchorWidth
       />
     </View>
   );
