@@ -141,8 +141,8 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification`, and writing pre-flight's verification check | §4.5, §4.14, §4.10, D-14, D-36, D-89, D-122, arch:sub_event, arch:venue_verification | U | S-11, S-12 |
-| S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, Scan tab, **offline scan record** with its scan time | §4.5, §4.14, §2.5.1, D-17, D-85, arch:venue, arch:venue_verification | C | S-15 |
-| S-17 | Force Verify (`admin_verified_at`), queue banner, "Ask the organizer to verify you", and the Attendees filter by verification status that S-06 leaves out | §4.5, §2.5.3, §2.5.7, arch:venue_verification | B | S-15, S-06 |
+| S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, the full-screen Scan Venue QR route opened from My Media's check-in banner (no tab), **offline scan record** with its scan time | §4.5, §4.14, §2.5.3, D-17, D-85, D-131, D-133, arch:venue, arch:venue_verification | C | S-15 |
+| S-17 | Force Verify (`admin_verified_at`), labelled "Check In Manually", queue banner, "Ask the organizer to check you in", and the Attendees filter by check-in status that S-06 leaves out | §4.5, §2.5.3, §2.5.7, D-133, arch:venue_verification | B | S-15, S-06 |
 
 **S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Photos carry no location. The device keeps one reading per sub-event when its check passes and sends it with the next pre-flight (D-89). The event response also carries the user's server-side verification state, so a Force Verify or a verification on another device unlocks this device's queue (spec §4.5). The gate is the `unverified` row of S-11's queue table (arch §4), and the reading rides on S-11's pre-flight call, so S-15 changes the upload queue's state machine and a human reads that change before it merges.
 
@@ -157,17 +157,18 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, HB §14.5 Phase 5, D-40, arch §5 | U | S-18a, P0-5 |
 | S-19 | **Blur regions**: drawing a rectangle on a photo (Guests and the Admin), the endpoints and `manual_blur_region`, removal by the drawer or the Admin. Build this before S-20 | §4.11.4.4, D-83, HB §14.5, arch:manual_blur_region | B | S-13 |
 | S-19a | `blur_region` job: regenerate a photo's files and thumbnails with every stored blur region, at new versioned keys | §4.11.4.4, D-83, D-60, D-69, arch §5, arch:manual_blur_region | U | S-18a, S-19 |
-| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload (up to 5, one face each, rejected otherwise), `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, D-91, arch §5, arch §6, arch:face_reference, arch:face | U | S-18 |
+| S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload per event from Event Preferences (up to 5 per event, one face each, rejected otherwise), the `face_reference` migration with `event_id`, `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, D-91, arch §5, arch §6, arch:face_reference, arch:face, D-141 | U | S-18 |
 | S-26 | **Threshold calibration.** Not code. Measure on 30 real photos, write into ARCHITECTURE.md | HB §11.4, arch §6 | U | S-20 |
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, every stored blur region applied, versioned keys on the rows, the subject's file and own-variant flag added to S-13's **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-83, D-86, D-27, D-30, arch §1, arch §3, arch §5, arch §6, arch:subject, arch:dnp_subject, D-93 | U | S-13, S-19a, S-20 |
-| S-23 | Find My Photos, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29, D-35 | C | S-20, S-13 |
-| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Blur a region (opening S-19's screen), Delete and the Admin's Remove | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, HB §4, arch:photo_flag | B | S-21 |
-| S-25 | `reprocess` job: retroactive DNP, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, arch §3, arch §5 | U | S-21, S-07 |
-| S-24 | Review Queue: blur regions (Keep / Remove), flagged photos (Keep / Remove), removed photos (Restore) | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22, S-07a |
+| S-23 | Find My Photos inside one event, against that event's references, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29, D-35, D-141 | C | S-20, S-13 |
+| S-22a | `media_delete` job: delete every object under a deleted photo's `{media_id}/` prefix and its `face`, `dnp_subject` and `manual_blur_region` rows, and skip a deleted photo in every other job | §4.21, D-130, D-96, arch §5, arch:media | U | S-21 |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Blur a region (opening S-19's screen) and Delete for the uploader and the Admin, permanent, with its confirm, `DELETE /media/{mediaId}` and `delete_media`, and the migration that lets a deleted photo upload again | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, D-130, HB §4, arch:media, arch:photo_flag | B | S-21, S-22a |
+| S-25 | `reprocess` job: retroactive DNP for the one event it was turned on in, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, D-129, arch §3, arch §5 | U | S-21, S-07 |
+| S-24 | Review Queue: blur regions (Keep / Remove) and flagged photos (Keep / Delete, permanent). No removed photos and no Restore | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, D-130, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22, S-07a |
 
 **S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6). The rectangle is stored as fractions of the upright stored image, the frame the worker's face boxes use (D-99). Its real entry point is S-22's action bar; until S-22 lands, reach the drawing screen through a development-only route, and S-22 deletes that route.
 
-**S-20 also builds setting a profile photo**, for the signup step in spec §2.1.1 and for S-29's Settings row. Setting one can create the subject and the `profile` reference with its `reference_process` message, so it is one SQL function (arch:face_reference, D-95). S-01 left it out.
+**S-20 also builds setting a profile photo**, for the signup step in spec §2.1.1 and for S-29's Settings row. It writes `avatar_key` and nothing else, because the profile photo is never a reference (D-141). S-01 left it out. Its reference photos screen opens from Event Preferences, which S-29 builds; until S-29 lands, reach it through a development-only route.
 
 **S-26 comes straight after S-20.** It needs nothing else, and until it records thresholds the worker matches nobody (D-104), so S-21, S-23 and S-25 cannot be tested on a real match.
 
@@ -179,7 +180,9 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-25 looks skippable and is not.** Three things break at once without it (HB §14.5 Phase 5). It regenerates thumbnails as well as full files; forgetting them throws nothing and shows the face in the grid only (D-69). It adds the enqueue to S-03's and S-07's join paths, so a Do Not Publish user who joins late is blurred in the photos already there (D-84). And it applies every stored blur region to what it regenerates, or a region someone drew disappears on the next run (root invariant 6).
 
-**S-24's Remove on a blur region** deletes the row and enqueues `blur_region`, which rebuilds the photo without it. Restoring a removed photo clears `deleted_at` and nothing else, because its files never changed.
+**S-24's Remove on a blur region** deletes the row and enqueues `blur_region`, which rebuilds the photo without it. Delete on a flagged photo calls S-22's `delete_media`, and nothing restores it (D-130).
+
+**S-22a before S-22.** S-22's `delete_media` sends `media_delete`, and a worker without the job archives the message on its first try, leaving the deleted photo's files in R2 (arch §5). S-22a tests the job with messages it sends itself.
 
 ---
 
@@ -188,7 +191,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
-| S-29 | Settings, theme, and the **Do Not Publish activation flow**. Reference photo management is S-20's | §4.19, §2.5.9, D-35, D-56, D-87 | B | S-01, S-20, S-25 |
+| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141 | B | S-01, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent | B | S-08, S-13, S-12, S-07a |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile | C | S-07, S-31 |
@@ -198,9 +201,9 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-31 also writes the `consent` migration**, as the first slice to write that table. S-01's signup ends at Home with no consent screen, so the gate blocks every account with no row for the current policy version, the ones made before S-31 included (arch:consent).
 
-**S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle. Get it right in this slice rather than polishing it later. "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV; the push toggles are `profile.notify_approval` and `profile.notify_album`, which S-27's sender checks.
+**S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle, and set per event (D-129). Get it right in this slice rather than polishing it later. Its migration adds `membership.dnp_activated_at` and drops `subject.dnp_activated_at`, and the activation is one SQL function that sets the column and enqueues `reprocess` for that event (arch:membership). "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV; the push toggles are `profile.notify_approval` and `profile.notify_album`, which S-27's sender checks.
 
-**S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens Account Settings (spec §2.5.9, D-118).
+**S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens that event's Event Preferences, whose account row opens Account Settings (spec §2.5.11, D-132).
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 
@@ -338,4 +341,4 @@ Measured over all 41 slices with `cl100k_base`, counting the tool-call framing a
 
 **An agent will add something nobody asked for.** Small PRs are the defense. D-68 dropped the rule that someone must be able to explain every line, so PR size is what keeps a review meaningful. A slice that produces a 900-line PR was scoped too big; split it along feature boundaries and re-review (HB §18).
 
-**Ukasha will become the bottleneck.** Ukasha owns the worker, the docs and most of Phase 5, including S-19a's `blur_region` job and S-25's `reprocess` job, and S-18a adds one more slice in Phase 3. Watch the board. S-28 was already moved to C to keep worker jobs on U; if two slices are waiting on him for more than a few days, reassign a non-worker slice, because a team moving at one person's speed is the failure mode this whole file exists to prevent.
+**Ukasha will become the bottleneck.** Ukasha owns the worker, the docs and most of Phase 5, including S-19a's `blur_region` job, S-22a's `media_delete` job and S-25's `reprocess` job, and S-18a adds one more slice in Phase 3. Watch the board. S-28 was already moved to C to keep worker jobs on U; if two slices are waiting on him for more than a few days, reassign a non-worker slice, because a team moving at one person's speed is the failure mode this whole file exists to prevent.

@@ -222,6 +222,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** Two different objects. Enabling DNP cannot be undone by anyone, ever. A single per-photo manual blur correction can be reverted by the Admin if judged fraudulent (D-24).
 **Why.** Conflating them in the UI copy is the easiest way to make the irreversibility warning look like a lie.
 **Amended (see D-83).** The single manual blur here is now a blur region. Any Guest or the Admin draws one, and its drawer or the Admin removes it; "reverted by the Admin if judged fraudulent" no longer describes it.
+**Amended (see D-129).** Do Not Publish is set per event. Within its event it stays permanent for anyone; another event is not affected.
 
 ---
 
@@ -255,6 +256,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** The image is replaced by a name-initial placeholder everywhere, including for the Admin. The name still appears where a workflow requires it, such as Pending Approvals and the Attendees list.
 **Why.** v9.1 said DNP hides the profile photo "everywhere with no exception, including the Admin," while other sections rendered requester photos and names in the approval queue. An Admin cannot approve a join request from an anonymous row.
 **Amended (see D-109).** "Everywhere" means every other viewer. The user still sees their own profile photo.
+**Amended (see D-129).** The placeholder applies wherever an event shows the person, in each event where their membership has Do Not Publish on. Another event shows the photo.
 
 ### D-36 — GPS is transmitted for verification and not persisted
 **Decision.** Stripped from the image file. A separate reading rides with the pre-flight request, is validated against the sub-event's coordinates, and is not written to the media record.
@@ -304,6 +306,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 ### D-42 — Retention windows live in one table
 **Decision.** Photo soft delete 30 days, event soft delete 14 days, album visibility 30 days after close, expiry warning 7 days ahead, recoverable grace period 7 days.
 **Why.** v9.1 had four windows scattered across four sections, one of them written as a range ("7 to 14 days") rather than a decision. Three people will implement three of them inconsistently if the numbers are not in one place.
+**Amended (see D-130).** A deleted photo has no window. Deletion is permanent, nobody can restore it, and the worker deletes its files at once. The event, album and expiry windows stand.
 
 ### D-43 — Two notification channels, not four
 **Decision.** Approval Alerts and Album Lifecycle only. Settings shows exactly two toggles.
@@ -403,6 +406,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Why.** Spec v10 made both optional and gated activation on a checkbox, so a user could complete a permanent, irreversible privacy action, see a static "Active" badge, and be protected against nobody, because the pipeline had no vector to match on. This is the same class of bug as D-34, where "Private mode" wrote to the camera roll: a name that promises something the mechanism does not do.
 **Rejected.** Activating anyway and prompting for references afterwards, which leaves a window where the badge lies.
 **Amended (see D-87 and D-91).** "A reference" means an accepted `face_reference` row: the worker found exactly one face in it. The last one cannot be deleted while Do Not Publish is active.
+**Amended (see D-129 and D-141).** Activation is per event and needs an accepted reference in that event. The last one there cannot be deleted while Do Not Publish is on there. A profile photo is never a reference.
 
 ### D-57 — Personalized variants replace the crop-and-overlay design ⚠
 **Decision.** For a photo with N Do Not Publish subjects the worker writes N+1 files: one public with every subject blurred, and one per subject with only that subject clear. One serving endpoint checks whether the requester is a subject and mints a presigned R2 URL for the correct file. Viewing and downloading use the same mechanism.
@@ -630,6 +634,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** `face_process` matches against the subjects who are active members at the moment a photo is processed (D-74). A Do Not Publish user who joins after photos were uploaded stays unblurred in all of them, and nothing reruns the match. The same gap leaves Find My Photos missing every photo taken before the user joined.
 **Rejected.** Matching against every subject in the system, which D-74 and spec §4.11.4.5 scope to event members on purpose.
 **Cost.** One enqueue on each join path. The job is milliseconds of cosine comparison (D-66).
+**Amended (see D-129 and D-141).** References belong to one event, so a new member has none there and the join enqueues nothing. The job runs for a removed member who rejoins, whose references in the event survived the removal.
 
 ### D-85: A Venue QR verifies the sub-event running at its venue when it was scanned
 **Decision.** The QR payload carries the venue and its `qr_secret`, never a sub-event. The device stores the scan time with the payload. At pre-flight the API checks the secret and writes a `venue_verification` row for the sub-event at that venue that was In Progress at the scan time, by spec §4.3's rule. A scan while nothing at that venue was In Progress verifies nothing.
@@ -648,6 +653,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Allowing the deletion behind a warning, which is the failure D-56 exists to prevent.
 **Amended (see D-83).** The audit's draft also made `is_curated` a generated column. With no auto-added references that column has nothing to distinguish, and it is dropped.
 **Amended (see D-91).** A reference counts only once `reference_process` has accepted it with exactly one face. A pending or rejected one does not.
+**Amended (see D-129 and D-141).** References and the flag are both per event. Activation in an event counts accepted references in that event, and the API refuses to delete the last one there while that event has Do Not Publish on.
 
 ---
 
@@ -677,6 +683,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Rejecting with a 400 at upload, which needs face detection in Express, against root invariant 5 and the rule that the worker never serves live requests (Handbook §2). Taking the largest face, which is a guess.
 **Cost.** The rejection arrives a few seconds after the upload rather than with it, so the app polls the reference until the worker has decided.
 
+**Amended (see D-141).** A profile photo is never a reference, so it gets no check. Each reference photo belongs to one event, and the one-face rule applies to each.
 ### D-92: The worker runs `buffalo_l`
 **Decision.** The worker uses InsightFace's `buffalo_l` model pack, with the detection and recognition modules only, the configuration D-78 benchmarked. `buffalo_s` is not a fallback.
 **Why.** Blur and Find My Photos both rest on recognition accuracy, and a missed match is the costly failure (spec §4.11.4.5). `buffalo_l` is the more accurate pack, and D-78's timings were measured on it, so the latency the team knows is the latency of the model it ships.
@@ -713,6 +720,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** An index that skips deleted rows, which makes Restore fail once the photo was uploaded again.
 **Cost.** A photo someone deleted can never be uploaded to that event again. Two guests can both spend the upload on the same photo before one of them loses.
 **Amended (see D-122).** Two completions of one hash take turns on the event lock, so the second answers `duplicate` instead of failing on the unique index.
+**Amended (see D-130).** A deleted photo is no longer a duplicate. The hash is unique among finished rows that are not deleted, so the same bytes upload again as a new photo. Nothing restores the old row, so the collision this entry guarded against cannot happen. A finished photo that is not deleted still blocks its copies.
 
 ### D-97: S-11 owns the phone's upload loop and its queue states
 **Decision.** S-11 builds the loop that sends pre-flight, PUTs both files, calls completion and moves each queue item to the state its answer leads to. `docs/ARCHITECTURE.md` §4 holds the table from each answer to a state. S-10 builds the queue's storage and its badges. S-11 is a human-read slice (D-68). It depends on S-12, and S-12 now depends on S-03 and S-04 for its tables instead of on S-11.
@@ -831,6 +839,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** S-01's read-back found each one unstated or contradicted.
 **Rejected.** Creating the profile with an API call after `signUp`, which leaves an account with no profile when the app dies in between. `getUser` on every request, a round trip to Auth each time. supabase-js's default global sign-out, which logs out the other device. Hiding a Do Not Publish user's avatar and reference photos from the user too, which protects them from nobody and leaves them managing references they cannot see. `expo-secure-store` for the session, a native package and a rebuild on every machine.
 **Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
+**Amended (see D-129).** The avatar is hidden from everyone but the user only where an event in which their membership has Do Not Publish on shows them.
 
 ### D-110: Event rulings from S-02's read-back
 **Decision.** Amends D-105. Ukasha ruled on each of these on 2026-09-25.
@@ -982,6 +991,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** One endpoint, one read-only SQL function and their tests. Two JavaScript packages. A persisted cover URL expires an hour after it was signed, so offline the header shows the cover only if `expo-image` cached it. A role change shows on the next foreground or the next 403, not at once.
 **Reopen if.** A tester reports stale tabs after a role change.
 **Amended (see D-119).** The Event header shows no cover. The persister is `@tanstack/query-async-storage-persister`, and the `GET /events` list survives a restart along with the event.
+**Amended (see D-132).** The avatar S-29 adds opens that event's Event Preferences, not Account Settings.
 
 ### D-119: S-08's mobile build rulings
 **Decision.** Amends D-118. Ukasha ruled on these on 2026-10-01, during S-08's mobile build.
@@ -992,6 +1002,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** The cover in the header. The deprecated sync persister. Persisting the event and not the list.
 **Cost.** One more persisted query. Every event the user belongs to stays on the phone for up to 14 days with the app closed, or until a logout. A persisted cover URL on an Events card expires an hour after it was signed, so offline a card shows its cover only if `expo-image` cached it.
 **Amended (see D-125).** Back is the platform's own button instead of "‹ Events", and the header is the native stack header on iOS and a Material 3 top app bar on Android. It still shows no cover.
+**Amended (see D-132).** The avatar slot opens Event Preferences for the event.
 
 ### D-120: Code owners keep a discussion log too
 **Decision.** Amends D-117. Ukasha ruled on 2026-10-01. A code owner's own slice keeps a discussion log in every stage, as every other slice does. Each stage posts its log to the slice's issue, and the done stage copies every log into the top PR (D-116). The rest of D-117 stands, and a code owner's stack still merges on a green CI run and `/code-review`. A slice already under way when this landed keeps a log from its next stage on.
@@ -1082,6 +1093,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Retrying through pgmq's visibility timeout, which lets a newer job on the same photo run first. Pillow for the dimensions, which reads only the header and is not in Handbook §17. A written rule alone against a second worker, which nothing enforces. Guarding `thumbnail_dims` on `processed_at`, which D-108 clears.
 **Cost.** One failing message holds the queue for the length of its retries. The real-SQL test needs a secret in GitHub and runs against the shared dev project. The API's RLS suite completes uploads with no file in R2, so each run leaves a few messages that the dev server's worker archives with an error line and a Sentry report. OpenCV decodes the whole photo to read two numbers, about 150 ms each. A lost database connection or an R2 outage during a job costs that message a try, as a crash does, so a message whose third try meets one is archived and its `processed_at` cleared. Ukasha kept this at S-18a's done stage rather than count those tries apart. The worker reads an upload whole before it decodes it, and D-122 sets no size limit, so one very large file can stop the worker three times before its message is archived. Ukasha deferred a byte cap at the same stage to a client-side guard, which limits the app and not a direct PUT to a presigned URL.
 **Reopen if.** The worker needs to run jobs in parallel, which the lock and the order both forbid.
+**Amended (see D-130).** The worker no longer processes a soft-deleted photo. A message naming one is deleted as done, and `media_delete` removes its files.
 
 ### D-124: Each platform draws the controls, and the brand stays in the content
 **Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
@@ -1119,6 +1131,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Restyling the custom header, which still misses the collapse and the glass that UIKit draws. One header component for both platforms. The cover in the header (D-119). `@expo/ui`'s `BottomSheet` for Detail and Delay on Android, which adds a second sheet component when moving the route already fixes the scrim.
 **Cost.** Each Event shell tab gets a Stack layout of its own, and the header is two components, one per platform. A screen whose content does not scroll keeps its large title. Detail and Delay change routes, and every link to them changes too.
 **Reopen if.** A sheet presented from `(app)` still leaves the Event header or the tab bar uncovered on the Pixel. Then Android takes `@expo/ui`'s `BottomSheet` for both.
+**Amended (see D-132).** The avatar in the Event header opens Event Preferences, a sheet over the event.
 
 ### D-126: The Events tab is one list in three sections
 **Decision.** Amends D-115 and spec §2.5.1. Ukasha ruled on these on 2026-10-03, from the critique in D-124.
@@ -1162,6 +1175,153 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** The wheel (D-110). `@react-native-community/datetimepicker`, which duplicates `@expo/ui` and costs a rebuild (`apps/mobile/AGENTS.md`).
 **Cost.** The date and time field is two components, one per platform. Removing the wheel is JavaScript only, so no machine rebuilds.
 **Reopen if.** Compose's picker cannot open from a field inside the Add Sub-Event sheet on the Pixel.
+
+---
+
+# Q. Round 2 of the design critique (2026-10-03)
+
+Ukasha ruled on each entry in this section on 2026-10-03, after the critique of the Figma frames for the album, privacy and Manage screens. The prototypes that draw them are in the critique artifact, and every one keeps these rulings.
+
+### D-129: Do Not Publish is set per event
+**Decision.** Amends D-31, D-35, D-56, D-84, D-87 and D-109, and replaces the account-wide scope in spec §2.5.9, §4.2 and §4.19.
+- A person turns Do Not Publish on for one event at a time. Hiding their face at one event changes nothing at another, where everyone keeps seeing it.
+- It lives in that event's Event Preferences (D-132) and nowhere else. Account Settings has no Do Not Publish row.
+- Within its event it stays permanent (D-31). Nobody turns it off there, the Admin included, and spec §6.1 keeps reverting it out of scope.
+- The flag moves from `subject.dnp_activated_at` to `membership.dnp_activated_at`, set once and never cleared. A new membership starts with it off. Remove from Event keeps the row, so a removed member who rejoins keeps it (D-102).
+- Reference photos are per event too (D-141). Turning Do Not Publish on in an event needs an accepted reference in that event (D-56, D-87), and the last one there cannot be deleted while it is on there.
+- The worker blurs a matched face when the subject's membership in the photo's event has Do Not Publish on. Turning it on enqueues `reprocess` for that subject in that event only.
+- The avatar shows as initials to everyone else wherever that event shows the person: Attendees, Pending Approvals, the uploader line and the people sheet. In an event where they left it off, the avatar shows.
+- The self-visible marker, the viewer-scoped filter and the N+1 files work as before, inside each event (D-26, D-46, D-57).
+**Why.** People want different rules at different events. A guest may hide at a colleague's wedding and show at a sibling's. Account-wide meant one permanent switch over every event to come, which pushes a cautious person never to turn it on. The Figma frames designed it per event, with copy that says so.
+**Rejected.** Account-wide, spec v11's scope. A per-event setting that can be turned off, which D-31 rejects inside one event for the same reasons. Copying the setting into each new event by default, which brings the account-wide switch back.
+**Cost.** A migration adds the column to `membership` and drops it from `subject`; S-29 writes it. The avatar rule reads memberships instead of the subject. Someone who wants privacy everywhere turns it on in each event, and photos uploaded between their join and that tap show their face until `reprocess` finishes. The demo account turns it on in the demo event beforehand.
+**Reopen if.** Testers turn it on in every event they join, which says they wanted one switch.
+
+### D-130: Only the uploader or the Admin deletes a photo, and nobody restores it
+**Decision.** Amends D-42, D-96 and D-123, and spec §2.5.6, §2.5.7 and §4.21.
+- A photo is deleted by the person who uploaded it or by the event's Admin, and by nobody else. The API answers anyone else 403.
+- Deletion is permanent. Neither the uploader nor the Admin can restore the photo, and the 30-day window for photos goes. The Review Queue loses its Removed Photos section and every Restore button.
+- The Admin's action is called Delete too. "Remove" stays the word for a blur region and for a person.
+- Delete asks first, in a destructive alert: "Delete this photo? It's removed from the album for everyone and can't be restored." A multi-select delete in My Media asks once for the batch. No Undo snackbar follows.
+- `DELETE /media/{mediaId}` calls one SQL function, `delete_media`, which sets `deleted_at` and sends a `media_delete` message in one transaction. The row stays, so Realtime tells every phone, and the 2,000 cap stops counting it.
+- A deleted photo can be uploaded again. Its hash no longer counts as a duplicate, so the same bytes, from its uploader or anyone else, come back as a new photo with a new id, new files and a fresh face pass. This amends D-96. The merged `media_event_id_content_hash_key` index, `start_upload` and `complete_upload` still count deleted rows, so S-22 writes a migration that leaves them out of all three.
+- The worker's `media_delete` deletes every object under the photo's `{media_id}/` prefix and the photo's `face`, `dnp_subject` and `manual_blur_region` rows. Every other job skips a deleted photo (arch §5).
+- A photo still in the phone's queue is deleted on the phone. A deleted event keeps its 14-day soft delete; this entry covers photos only.
+**Why.** Deleting a photo is how a guest takes back one they regret, and how the Admin takes down one that should not be there. A 30-day restore kept the bytes on the server and let the Admin bring back a photo its uploader had deleted.
+**Rejected.** D-42's 30-day soft delete with Restore. An Undo snackbar, which is a restore under another name. Refusing a deleted photo's bytes forever (D-96), which stops someone who deleted a photo by mistake from adding it back from their gallery.
+**Cost.** A tap past the confirm loses the photo, its blur regions and its flags, and uploading it again starts it from nothing. A photo the Admin deleted can come back the same way, so the Admin deletes it again or blocks the person. A sixth worker job, built in S-22a, and a migration in S-22.
+**Reopen if.** Testers delete photos by mistake often enough to ask for them back.
+
+### D-131: Scan leaves the tab bar and opens from My Media
+**Decision.** Amends spec §2.5.1, §2.5.3 and §4.5, and S-16's scope.
+- The Global shell has two tabs, Events and Profile. There is no Scan tab.
+- Scan Venue QR opens full screen from a button in My Media's check-in banner. The banner shows only while a sub-event is In Progress and the person is not checked in for it, whether or not photos are waiting, so a guest can check in before the first photo. A Photographer, exempt from the gate (spec §4.5), never sees it.
+- A result closes the scanner back to My Media. A code for a venue that is not one of this event's says so and records nothing; the app checks the payload's venue against the cached schedule. An offline scan is recorded and travels with the next pre-flight, as before (D-85).
+- Photos waiting on a sub-event that has ended get "Ask the organizer to check you in." with no scan button, because a scan verifies only the sub-event In Progress at the venue (D-85).
+**Why.** A tab is a place people go back to. Scanning happens once per sub-event, only for someone GPS could not check in, and only while photos wait, which My Media shows. Everyone checked in by GPS, by Force Verify or as a Photographer had a tab that did nothing for them.
+**Rejected.** The Scan tab, spec v11's layout. A scan button in the Viewfinder, which is for taking photos. Keeping the button after the sub-event ends, when a scan can verify nothing.
+**Cost.** S-16 builds a full-screen route instead of a tab. Someone who never opens My Media never sees the button.
+**Reopen if.** Guests at the rehearsal look for a way to scan outside My Media.
+
+### D-132: The avatar opens Event Preferences inside an event
+**Decision.** Amends D-118, D-119 and D-125, and spec §2.5.1 and §2.5.9. It replaces round 2's proposal to fold the Figma's Event Preferences into Account Settings.
+- Inside an event, the avatar in the header opens that event's Event Preferences, a page sheet with its own stack on iOS and a full-screen dialog on Android (spec §2.5.11).
+- Event Preferences holds an account row, photo, name and email, that opens Account Settings inside the same sheet, and a "This Event" section with Reference Photos (D-141) and Do Not Publish (D-129), whose footer names the event.
+- Account-wide settings stay in Account Settings, reached from the Profile tab and from that row. Event Preferences repeats none of them.
+**Why.** Do Not Publish now belongs to one event, so it needs a screen that belongs to one event. The avatar is on every Event shell tab for every role, so every member reaches it in one tap. The Figma frames' notification and upload switches were account-wide settings drawn on an event's screen, where a switch reads as that event's.
+**Rejected.** Folding Do Not Publish into Account Settings, round 2's proposal, which puts a per-event control in a global place. A gear on Home only, which a Photographer never sees. Copying the notification and upload switches in.
+**Cost.** One screen with two per-event rows today. S-29 builds it, and S-20's reference photos screen opens from it.
+**Reopen if.** Another per-event setting arrives. It goes in the same section.
+
+### D-133: The app says "checked in", never "verified"
+**Decision.** Amends the user-facing copy in spec §2.5.3, §2.5.7, §4.5 and §5.2.
+- Every string a user reads says "checked in" for a verification. Force Verify reads "Check In Manually" on the Attendees sheet. The queue banner says "X waiting to check in" and "Ask the organizer to check you in." The Attendees filter offers "Checked In" and "Not Checked In".
+- Code, tables and these docs keep "verification": `venue_verification`, `admin_verified_at`, the `unverified` answer and Force Verify as the action's name.
+**Why.** Guests read "verified" as an identity check, like a blue tick. "Checked in" is what a guest does at a venue, and it is what the QR and the GPS check do.
+**Rejected.** Renaming the tables and columns, a migration that changes no behavior.
+**Cost.** The docs and the app use two words for one thing, and this entry is the bridge between them.
+**Reopen if.** Testers read "checked in" as attendance tracking.
+
+### D-134: Public and Local Only switch under the shutter, as each platform's camera does
+**Decision.** Amends spec §2.5.4 and §4.7.
+- The Viewfinder's Public / Local Only switch sits below the shutter, where the system cameras put Photo and Video. On iOS it is two text labels, the selected one in the accent, switched by a tap or a horizontal swipe on the preview, as in the Camera app since iOS 26. On Android it is a two-segment pill with an icon and a label in each, as Pixel Camera's photo and video switch.
+- While Local Only is on, a pill with a lock reading "Local Only" stays at the top of the preview, where the eye is while framing.
+- The rest of the screen follows each platform's camera. On iOS: close in a glass circle and the live sub-event's name in a glass capsule at the top, the session stack at the leading end of the shutter row, flip in a glass circle at the trailing end. On Android: close and the sub-event's name at the top, flip at the leading end and the session stack at the trailing end, both rounded squares, and Material 3 Expressive's shutter, a filled circle inside a ring.
+- No flash, zoom or settings button (spec §2.5.4, §7).
+**Why.** Spec §2.5.4 put the switch at the top, out of the thumb's reach and where neither platform's camera puts a mode. iOS 26 moved Photo and Video under the shutter, and Pixel Camera puts its photo and video switch there, so people already look there for the mode.
+**Rejected.** The switch at the top. A segmented control above the shutter, round 2's first draft, which matches neither camera.
+**Cost.** The two platforms' Viewfinders differ in layout, so the screen is two components.
+**Reopen if.** Testers take Local Only photos by mistake.
+
+### D-135: The session's photos stack in the gallery button's place
+**Decision.** Amends spec §2.5.4 and §4.7.
+- The running strip of the session's captures becomes a stack of the last three, newest on top, with the count on it, in the slot each system camera gives its gallery button. It is round on iOS and a rounded square on Android. It replaces the separate capture counter.
+- Tapping it closes the Viewfinder to My Media at the live sub-event's section, where the new photos are (spec §4.7). It never opens a picker.
+- Before the first capture the slot is empty.
+**Why.** A strip across the preview covers what is being framed, and the counter was a second element saying the same thing. People already look at that corner for the last photo they took.
+**Rejected.** The strip over the preview. A separate counter.
+**Cost.** The session's earlier photos show only in My Media.
+**Reopen if.** Testers want to check each shot without leaving the camera.
+
+### D-136: My Media says when the camera opens
+**Decision.** Amends spec §2.5.3 and §2.5.4.
+- Between sub-events the camera button stays hidden (spec §2.5.4). A line in its place says when it comes back: "The camera opens at 7:00 PM, for the Nikah." After the last sub-event it says the event has ended and points to "+ Add Media".
+- The line comes from the cached schedule, `currentSubEvent` and the next start, so it works offline.
+**Why.** A button that disappears with no word reads as a bug, most of all to a guest who used it an hour earlier.
+**Rejected.** A disabled camera button, which invites a tap that does nothing.
+**Cost.** One line of state on My Media.
+**Reopen if.** Never likely; copy only.
+
+### D-137: My Media puts the newest sub-event first
+**Decision.** Amends spec §2.5.3.
+- My Media's sections run newest sub-event first, so the live one is on top. Home's album keeps the schedule's order, oldest first, because it reads as the story of the event.
+**Why.** My Media is where people check what they just took and what is still waiting. By the third day the live section sat under every earlier one.
+**Rejected.** The schedule's order in My Media.
+**Cost.** The two tabs share the section pattern but sort it in opposite orders.
+**Reopen if.** Testers expect both tabs in the same order.
+
+### D-138: Home shows the cover before the event starts
+**Decision.** Amends spec §2.5.2 and keeps D-119's header without a cover.
+- Before the first sub-event starts, Home shows the cover the width of the screen as content, with the event's name, dates and a countdown, above the itinerary that stands in for the grid.
+- Once photos arrive, Home is the grid with no cover. The cover never goes back in the header (D-119, D-125).
+**Why.** Before the day Home has no photos, and the cover is the one picture the event has. It belongs in the content, which scrolls, and not in the bar.
+**Rejected.** The cover in the header (D-119). An empty state alone.
+**Cost.** One more state on Home.
+**Reopen if.** The Admin skips the cover often enough that the state is mostly a placeholder.
+
+### D-139: Approve All asks first only when it admits a Photographer
+**Decision.** Amends spec §2.5.7.
+- On Pending Approvals, Approve All approves at once when every selected request is for Guest.
+- When the batch holds a Photographer request, it asks first and names the Photographers, because a Photographer uploads from anywhere with no check-in (spec §4.10).
+**Why.** Most batches are guests, and a confirm on every batch teaches the Admin to tap through it. The Photographer link is the sensitive one (spec §2.1.3).
+**Rejected.** A confirm on every bulk action. No confirm at all.
+**Cost.** The confirm reads the roles in the selection.
+**Reopen if.** An Admin approves a stranger as a Guest by bulk action and asks for a confirm there too.
+
+### D-140: Account Settings groups what stays on the phone
+**Decision.** Amends spec §4.19's grouping and D-105.
+- Account Settings, from the Profile tab and from Event Preferences' account row, has these sections, in order: the account row; Notifications, with Approval Alerts and Album Opens and Closes; "On This Phone", with Upload over Mobile Data, Camera Starts In, Appearance and Storage; Account, with Change Password, About and Legal and Delete My Account; and Log Out.
+- "On This Phone" has a footer saying these settings stay on this phone and don't follow the account (D-105).
+- Nothing about faces is here. Reference photos and Do Not Publish are both per event, in Event Preferences (D-129, D-141).
+**Why.** D-105 keeps mobile data and the camera default on the phone, and the theme and the cache live there too. Grouping them tells the person that a second phone needs them set again.
+**Rejected.** Spec §4.19's Upload, Appearance and Storage groups, which mix device settings in among account ones by name only.
+**Cost.** None beyond the layout.
+**Reopen if.** A setting that follows the account joins "On This Phone".
+
+### D-141: Reference photos belong to one event, and Find My Photos searches one event
+**Decision.** Amends D-56, D-84, D-87, D-91, D-109 and D-129, and spec §4.2, §4.11.2, §4.11.3, §4.17 and §4.19.
+- A person adds reference photos to one event at a time, in that event's Event Preferences, up to 5 per event, each with exactly one face (D-91). Nothing carries from one event to another, and Account Settings has no reference photos.
+- The profile photo is never a reference. It is the avatar and nothing more, so setting one queues no job.
+- `face_reference` gets `event_id` and loses `source`. Matching in an event, for Find My Photos, the Recognized Faces strip and Do Not Publish, uses only the references people added to that event.
+- Find My Photos works inside one event, from Home's filter sheet, against that event's references. With none there it asks the person to add some for this event. No screen searches across events.
+- Do Not Publish in an event needs an accepted reference in that event, and the last one there cannot be deleted while Do Not Publish is on there (D-87).
+- Adding or removing a reference enqueues `reprocess` for that subject in that event only, so every `reprocess` message names its event.
+- Remove from Event keeps the person's references with the membership, and a rejoin matches them again (D-84). Deleting the account deletes them.
+- A reference photo's key carries its event, `users/{user_id}/events/{event_id}/reference_{upload_id}.jpg`, and only its owner gets it presigned (D-109).
+**Why.** People look different at each event. Bridal makeup, a dupatta over the hair or a new beard at one event matches badly against a plain selfie from another, and a weak match fails both ways: Find My Photos misses the person, and Do Not Publish leaves their face unblurred. References taken for the event match the face the camera sees there. Keeping them in one event also means no event's photos are searched with a face someone gave to another.
+**Rejected.** One reference set for the account, spec v11's design. An account set with extra photos per event, which brings back the stale look. The profile photo as a reference.
+**Cost.** People add references in each event, and Find My Photos and Do Not Publish do nothing for them in an event until they do. More reference photos stored per person. The `face_reference` migration, still unwritten, takes the new columns; S-20 writes it.
+**Reopen if.** S-26's measurements show one set of references matching as well across events as per-event ones.
 
 ## Open items that are not decisions yet
 
