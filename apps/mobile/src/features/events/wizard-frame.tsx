@@ -94,7 +94,7 @@ export function WizardFrame({ step, leading, primary, secondary, children }: Wiz
           accessibilityRole="progressbar"
           accessibilityLabel={`Step ${step} of ${WIZARD_STEPS}`}
           accessibilityValue={{ min: 1, max: WIZARD_STEPS, now: step }}
-          className="flex-row gap-1.5 ios:px-5 android:px-4">
+          className="flex-row gap-1.5 ios:px-5 android:px-4 android:pt-1">
           {Array.from({ length: WIZARD_STEPS }, (_, i) => (
             <View
               key={i}

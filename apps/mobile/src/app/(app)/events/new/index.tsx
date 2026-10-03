@@ -94,10 +94,10 @@ export default function BasicInfoStep() {
             : 'Anyone with an invite joins straight away. Turn it on to approve each person first.'
         }>
         <Row
-          title="Approval Mode"
+          title={byPlatform('Approval Mode', 'Approval mode')}
           trailing={
             <Toggle
-              accessibilityLabel="Approval Mode"
+              accessibilityLabel={byPlatform('Approval Mode', 'Approval mode')}
               value={draft.approvalRequired}
               onValueChange={(approvalRequired) => updateBasics({ approvalRequired })}
             />
