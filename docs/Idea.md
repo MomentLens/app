@@ -125,8 +125,9 @@ There is no Videographer role, because there is no video. There is no Moderator 
     (name, photo, join time) → Approve / Reject / Block, individually or in
     bulk.
 
-11. Manage attendees: searchable list, check-in / verification status, manual
-    role change as a fallback, Force Verify, remove from event.
+11. Manage attendees: searchable list, check-in status, manual role change
+    as a fallback, Force Verify ("Check In Manually", D-133), remove from
+    event.
 ```
 
 #### 2.1.4 Phase D — during the event
@@ -136,14 +137,13 @@ There is no Videographer role, because there is no video. There is no Moderator 
 
 13. Admin actions, always available:
     ├── Open / close the album (manual, the only mechanism)
-    ├── Remove / restore any photo (soft delete, §4.21)
+    ├── Delete any photo, permanently, with no restore (§4.21, D-130)
     ├── Change any user's role between Guest and Photographer, or remove
     │   them (there is one Admin, D-102)
     ├── Force Verify any user from the Attendee list (covers every
     │   sub-event at once)
     ├── Delay a sub-event by any amount of time
-    └── Review Queue: flagged photos, blur regions and removed photos
-        (§2.5.7)
+    └── Review Queue: flagged photos and blur regions (§2.5.7)
 
 14. Sub-event status updates itself from timestamps (§4.3).
 ```
@@ -236,13 +236,15 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
    flips the local queue to ready, keeps that one reading for the server,
    and the queue starts flushing (§4.5).
 
-9. If GPS fails or is unreliable, the Guest can scan the Venue Check-In QR
-   printed at the venue. This works offline; the scan is recorded locally
-   with its time and travels with the next pre-flight request (§4.5).
+9. If GPS fails or is unreliable, the Guest taps "Scan Venue QR" in My
+   Media and scans the Venue Check-In QR printed at the venue. This works
+   offline; the scan is recorded locally with its time and travels with the
+   next pre-flight request (§4.5, D-131).
 
 10. If neither works, the upload queue banner reads "Ask the organizer to
-    verify you." The Admin taps Force Verify once on the Attendee list, and
-    that user is verified for every sub-event in the event.
+    check you in." The Admin taps Force Verify ("Check In Manually") once on
+    the Attendee list, and that user is verified for every sub-event in the
+    event (D-133).
 
 11. Viewing the shared album: every Guest sees the same album everyone else
     does, including the Photographer's uploads.
@@ -284,7 +286,7 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
 
 3. "Log In" (returning user):
    ├── Email + password → logged in
-   └── Lands on Events list (Active / Upcoming / Past tabs)
+   └── Lands on Events list (Happening now, Upcoming and Past, D-126)
 
 4. "Create Account" (no event yet):
    ├── Creates profile
@@ -292,7 +294,7 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
        or event code"
 ```
 
-The Scan tab is solely for the Venue Check-In QR verification action in §4.5. It is not a way to join an event; there is no invite QR.
+Scan Venue QR, opened from My Media (§2.5.3, D-131), is solely for the Venue Check-In QR verification action in §4.5. It is not a way to join an event; there is no invite QR.
 
 ---
 
@@ -300,15 +302,16 @@ The Scan tab is solely for the Venue Check-In QR verification action in §4.5. I
 
 #### 2.5.1 Two-tier tab bar
 
-The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (the platform's back button to Events, the event's name, and the user's avatar, which opens Account Settings per §2.5.9, D-119, D-125) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting. The name opens as a large title and collapses into the bar on scroll.
+The bottom tab bar is not one static set of tabs. It swaps between a **Global shell** (account-level, outside any specific event) and an **Event shell** (after opening a specific event), and the Event shell's tabs differ by role. This mirrors how Discord and Slack keep a persistent workspace rail while the tab set underneath changes. A persistent header (the platform's back button to Events, the event's name, and the user's avatar, which opens that event's Event Preferences per §2.5.11, D-119, D-125, D-132) stays visible the whole time inside an Event shell, specifically to keep the swap from feeling disorienting. The name opens as a large title and collapses into the bar on scroll.
 
-**Global shell** (3 tabs):
+**Global shell** (2 tabs, D-131):
 
 | Tab | Purpose |
 |---|---|
 | Events | Default landing. One list in three sections, Happening now, Upcoming and Past (D-126). "+" opens the Create Event Wizard. From iOS 26 it is the round button at the trailing end of the tab bar, on every Global shell tab. On Android it is a Material 3 FAB at the bottom right of Events, and on iOS before 26 a floating circle there (D-112). Visible to everyone, since creating an event is how someone becomes Admin rather than a prerequisite of already being one. |
-| Scan | Venue Check-In QR only (§4.5). Works standalone, since the QR payload carries its venue, and the server works out which sub-event it verifies from the scan time (D-85). |
 | Profile | Avatar → Account Settings (§4.19). |
+
+There is no Scan tab. Scan Venue QR opens from My Media, only while a sub-event is In Progress and the person is not checked in for it (§2.5.3, D-131).
 
 The Events tab sorts an event by its span, from its first sub-event's start to its last sub-event's end (D-88). Upcoming is before the span starts, Active, shown as "Happening now", is inside it, gaps between sub-events included, and Past is after it. An archived event is Past. The list holds every event where the user's membership is active, and no soft-deleted event (D-110). Each pending join request shows as a row at the top of the list that opens Pending Approval, and a "Join" action in the bar opens Manual Join Entry (D-115, D-126).
 
@@ -326,26 +329,28 @@ There is **no Camera tab**. Camera is a full-screen modal Viewfinder launched vi
 
 Home and Album are one screen, not two, and not per-sub-event folders. Every sub-event's folder would render the identical grid with identical actions, so folder navigation would add a navigation tax without adding distinct functionality. The filtering language below already implies flat-with-filters.
 
-- Collapsing header: cover photo, name, countdown/status, and the album-state banner. Admin's banner includes the Open/Close Album toggle inline, since it is the most time-critical Admin action and shouldn't require a trip to Manage.
+- Collapsing header: the event's name as the large title, with no cover (D-119, D-125). Under it, the status and the album-state banner. Admin's banner includes the Open/Close Album toggle inline, since it is the most time-critical Admin action and shouldn't require a trip to Manage.
 - **Sub-event chip row**, always visible directly under the header. "All" by default, auto-scrolled to whichever sub-event is currently In Progress. Past roughly 5 or 6 visible chips, overflow collapses into a "More" bottom sheet, since events can have up to 15 sub-events.
-- **Filter icon** (funnel, in the header), deliberately separate from the chip row and not another chip, because it filters a different dimension. Identity, not time. Opens a bottom sheet with **People** (Find My Photos pinned at top, then a searchable list of the named people matched in this event's photos, with Do Not Publish subjects left out for every viewer but themselves, §4.11.3; "Unknown" clusters aren't searchable by name here, they're only reachable by tapping a face inside a photo) and **Uploader** (searchable list of contributors, including the Photographer).
+- **Filter icon** (funnel, in the header), deliberately separate from the chip row and not another chip, because it filters a different dimension. Identity, not time. Opens a bottom sheet with **People** (Find My Photos pinned at top, searching this event with this event's reference photos (D-141), then a searchable list of the named people matched in this event's photos, with Do Not Publish subjects left out for every viewer but themselves, §4.11.3; "Unknown" clusters aren't searchable by name here, they're only reachable by tapping a face inside a photo) and **Uploader** (searchable list of contributors, including the Photographer).
 - **Active-filter pill** renders above the grid only when a People or Uploader filter is active, with its own "×" to clear. Stacks with an active sub-event chip; the query is an AND of active params, which is cheap and genuinely useful for "Sarah's photos from the reception."
 - Grid: virtualized, sticky sub-event section headers, 300px WebP thumbnails center-cropped to square, full display resolution on open.
-- Pre-event: grid replaced by the itinerary inline. Post-event: read-only, capture disabled, download surfaced in the header.
+- Pre-event: the cover full width as content, with the dates and a countdown, then the itinerary inline in place of the grid. The cover leaves once photos arrive (D-138). Post-event: read-only, capture disabled, download surfaced in the header.
 
 #### 2.5.3 My media
 
-- **Sectioned by sub-event**, the same visual pattern as the Home grid (sticky header with numeral, sub-event name, date/venue subtitle, item count). Capture-time auto-tagging (§4.7) attaches the correct sub-event at the moment of capture, so the section a photo lands in is already correct data; the sectioning just makes that data visible.
+- **Sectioned by sub-event**, the same visual pattern as the Home grid (sticky header with numeral, sub-event name, date/venue subtitle, item count), newest sub-event first, so the live one is on top (D-137). Capture-time auto-tagging (§4.7) attaches the correct sub-event at the moment of capture, so the section a photo lands in is already correct data; the sectioning just makes that data visible.
 - **"+ Add Media" control per section header**, a pill-shaped button right-aligned next to the section's item count. Opens the device image picker **only**, scoped to add existing photos into that specific sub-event. It never opens the camera. Selected photos go through the same upload pipeline as camera captures. For Photographers, this is the primary and effectively only path into the app.
 - Per-thumbnail status badges: clock = queued or gated, spinner = uploading, check = uploaded, lock = Local Only. Optional All / Queued / Uploaded / Local segment control for narrowing on top of the sections.
-- Upload queue banner, non-permanent chrome that renders only when the queue is non-empty: "X waiting for verification · Y uploading," collapsible, with a one-tap "Scan Venue QR" shortcut deep-linking to the Scan tab and, if the user has been waiting on verification, the line "Ask the organizer to verify you."
+- Upload queue banner, non-permanent chrome that renders only when the queue is non-empty: "X waiting to check in · Y uploading," collapsible (D-133).
+- **Check-in banner and Scan Venue QR**, the only way to the scanner (D-131). While a sub-event is In Progress and the person is not checked in for it, My Media shows a banner with a "Scan Venue QR" button, whether or not photos are waiting. The button opens the scanner full screen, and its result returns here. Photos waiting on a sub-event that has ended get "Ask the organizer to check you in." with no button, because a scan verifies only the sub-event In Progress (D-85). A Photographer never sees either.
+- **When the camera is hidden**, between sub-events, a line in its place says when it opens: "The camera opens at 7:00 PM, for the Nikah." After the last sub-event it says the event has ended and points to "+ Add Media" (D-136).
 
 #### 2.5.4 Camera FAB & viewfinder
 
 - FAB (camera icon, bottom-right) renders on My Media for Guest and Admin. Photographers see it too; the pipeline is identical, they simply rarely use it.
 - **The FAB is hidden when no sub-event is currently In Progress.** There is no capture path that can produce an ambiguous-sub-event photo. A sub-event ends at its scheduled end (§4.3), so the FAB is also hidden between sub-events, and the Admin delays one that runs late. Photos taken meanwhile with the phone's own camera can still be added through "+ Add Media".
 - Tapping the FAB opens the Viewfinder as a full-screen modal, hiding the tab bar, and drops straight into the currently live sub-event's capture context. No sub-event picker at capture time.
-- Viewfinder components: live preview at the camera's native aspect ratio with no forced crop, front/back flip icon (bottom-right), Public / Local Only toggle (top, changeable mid-session), large shutter button, running thumbnail strip of the current session, capture counter. No lens zoom control (§7) and no gallery picker; gallery access is exclusively the "+ Add Media" button per sub-event section in My Media. Exit (X) dismisses the modal and lands on My Media, with new captures appearing at the top of the relevant section immediately via optimistic UI.
+- Viewfinder components, laid out as each platform's own camera lays them out (D-134): live preview at the camera's native aspect ratio with no forced crop, the close button and the live sub-event's name at the top, the large shutter button, front/back flip, the Public / Local Only switch below the shutter where iOS and Pixel Camera put Photo and Video (changeable mid-session, with a "Local Only" pill on the preview while it is on), and the session's captures as a stack with their count in the slot the system camera gives its gallery button (D-135). Tapping the stack exits to My Media. On iOS the stack is at the leading end and flip at the trailing end; on Android flip leads and the stack trails. No lens zoom control (§7), no flash and no gallery picker; gallery access is exclusively the "+ Add Media" button per sub-event section in My Media. Exit (X) dismisses the modal and lands on My Media, with new captures appearing at the top of the relevant section immediately via optimistic UI.
 
 #### 2.5.5 Schedule
 
@@ -359,19 +364,18 @@ Full-screen swipeable pager. Tap toggles the metadata overlay (capture time, sub
 - **Blur info icon (ⓘ)** next to any blurred face surfaces the §4.18 transparency notice: "This person has requested privacy." A blur region somebody else drew is not a request from the person under it, so its ⓘ says "Someone at this event blurred this area" instead.
 - **Self-visible marker.** When you view a photo you appear in with Do Not Publish active, a small lock badge renders on the image and the metadata overlay reads "Your face here is visible only to you." It is the only way to tell "personalized blur is working" from "the match failed and everyone can see me" (§4.11.4.2). It is a static badge, not a positioned box, so zoom cannot move it out of place.
 - **Blur a region.** Any Guest or the Admin can draw a rectangle over part of the photo, usually a face the detector missed. It blurs for every viewer at once, in every file of the photo. The person who drew it and the Admin can remove it (§4.11.4.4, D-83). A Photographer never sees this.
-- Action bar: Download / Share / Flag / Blur a region / Delete, present or absent per role and photo ownership; the Admin sees Remove on anyone's photo. Delete and Remove are soft deletes the Admin can undo for 30 days (§4.21). Share opens the phone's share sheet with the same file Download saves (§4.15); it is not a sharing link. Suppressed for Photographers on their own photos except Delete.
+- Action bar: Download / Share / Flag / Blur a region / Delete, present or absent per role and photo ownership. Delete shows on a photo the viewer uploaded, and the Admin sees it on every photo; nobody else can delete one. It asks first, in a destructive alert, "Delete this photo? It's removed from the album for everyone and can't be restored." Deletion is permanent: nobody can restore the photo, the Admin included, and there is no Undo (§4.21, D-130). Share opens the phone's share sheet with the same file Download saves (§4.15); it is not a sharing link. Suppressed for Photographers on their own photos except Delete.
 
 #### 2.5.7 Manage (admin only)
 
 Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-screen, not one long page:
 
 - **Live status card** (top): upload count, current sub-event and status, Open/Close Album toggle (mirrors the Home banner, same state, two entry points).
-- **Pending Approvals**, kept structurally separate from the Review Queue below. Different data, different actions, not one "moderation" bucket. Row per join requester (photo, name, role they're joining as, determined by which link they used), Approve/Reject per row, multi-select plus bulk action bar.
-- **Review Queue**, three sections in one screen:
-  - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Remove.
+- **Pending Approvals**, kept structurally separate from the Review Queue below. Different data, different actions, not one "moderation" bucket. Row per join requester (photo, name, role they're joining as, determined by which link they used), Approve/Reject per row, multi-select plus bulk action bar. Approve All approves at once, and asks first, naming them, only when the batch holds a Photographer (D-139).
+- **Review Queue**, two sections in one screen:
+  - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Delete. Delete is permanent and confirms first (D-130).
   - *Blur regions*, each already applied. The card shows the photo with the region outlined, who drew it and when. Actions: Keep / Remove region; removing restores what was there (D-83).
-  - *Removed photos*, deleted by their uploader or removed by the Admin, within the 30-day window (§4.21). Action: Restore.
-- **Attendees**: search, filter by role and verification status, row → detail sheet (Change Role, Force Verify, Remove from Event, Block).
+- **Attendees**: search, filter by role and check-in status, row → detail sheet (Change Role, Force Verify labelled "Check In Manually", Remove from Event, Block) (D-133).
 - **Invite**: Guest Link and Photographer Link cards (shortcode prominent, URL secondary, Copy, Share, Revoke & Regenerate), plus one Venue QR per venue (preview, "Download for printing," regenerate).
 - **Sub-events**: deep-links into the Schedule tab rather than duplicating it, since Admin's Delay affordance already lives there.
 - **Event Settings**: edit form (name, description, cover, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). Venue and verification radius belong to each sub-event and are edited there too (D-111). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
@@ -390,9 +394,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 
 #### 2.5.9 Account settings (global, §4.19)
 
-Reachable from the Profile tab and, redundantly, from an avatar icon in the Event shell header. These are account-wide, not event-specific, so they aren't duplicated per event. Grouped list matching §4.19 exactly, with one deliberate exception in how Privacy renders.
-
-**Do Not Publish is not a toggle, and it has a precondition.** Without an accepted reference (§4.2) the screen says what is missing, the confirm button stays disabled, and a link goes to reference photos. Otherwise the row shows its state ("Off"), because a plain switch implies a reversibility this action does not have. Tapping it opens a full explanation screen: the blur applies to every other viewer with no exceptions, it applies retroactively through reprocessing, and nobody can ever reverse it. A checkbox, "I understand this is permanent," gates the confirm button. Once active, the row becomes a static "Active" badge with no chevron and no tap target, because there is nothing left to toggle.
+Reachable from the Profile tab and from the account row at the top of an event's Event Preferences (§2.5.11, D-132). These are account-wide, not event-specific, so they aren't duplicated per event. Grouped list matching §4.19 exactly. Reference photos and Do Not Publish are not here: both are set per event, in Event Preferences (D-129, D-141).
 
 #### 2.5.10 Notification deep-links
 
@@ -404,6 +406,17 @@ Push-only. There is no in-app history screen; §6.2 defers a Notification Center
 | Album Lifecycle | Home (Guest), My Media (Photographer) | Home |
 
 A lightweight substitute for a full history: event cards on the global Events list carry a "new since last visit" dot, comparing a stored `lastViewedAt` against latest activity. This recovers most of what a notification center would have provided without rebuilding the feature that was cut.
+
+#### 2.5.11 Event preferences (per event)
+
+The avatar in the Event shell header opens Event Preferences for that event, a page sheet with its own stack on iOS and a full-screen dialog on Android (D-132). It holds two things:
+
+- An account row (photo, name, email) that opens Account Settings (§2.5.9) inside the same sheet.
+- A "This Event" section with Reference Photos and Do Not Publish, whose footer names the event and says other events keep their own (D-129, D-141). Reference Photos opens the event's references: up to 5, each with exactly one face, shown to their owner alone (§4.2).
+
+It repeats no account-wide setting, because a switch on an event's screen reads as that event's.
+
+**Do Not Publish is not a toggle, and it has a precondition.** Without an accepted reference (§4.2) the screen says what is missing, the confirm button stays disabled, and a link goes to reference photos. Otherwise the row shows its state ("Off"), because a plain switch implies a reversibility this action does not have. Tapping it opens a full explanation screen: in this event the blur applies to every other viewer with no exceptions, the Admin included; it applies retroactively through reprocessing; nobody can ever reverse it for this event; and the person's other events are not affected. A checkbox, "I understand this is permanent," gates the confirm button. Once active, the row becomes a static "Active" badge with no chevron and no tap target, because there is nothing left to toggle in this event.
 
 ---
 
@@ -468,10 +481,10 @@ A lightweight substitute for a full history: event cards on the global Events li
 ### 4.2 User profile
 - Full name and profile photo. No bio field (§6.1).
 - Email address as the primary identifier.
-- **Reference photos are separate from the profile photo.** A user may upload up to 5 reference photos of themselves for a stronger multi-angle reference embedding, and may do so without ever setting a profile photo. If a profile photo exists, it is also used as a reference. **Each must show exactly one face.** The worker checks within seconds of the upload and rejects a photo with none or several, and the app shows why, for several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." A profile photo that fails the check stays the avatar but is not used as a reference (D-91).
-- **Do Not Publish needs an accepted reference to match on**, a reference or profile photo the worker accepted. Activation is blocked until one exists, and while Do Not Publish is active the last one cannot be deleted. Without one the pipeline has nothing to match, and the Settings row would read "Active" while protecting nobody (D-56, D-87).
-- **Do Not Publish privacy flag.** Once enabled, this user's faces in uploaded photos are blurred for every other viewer, and their profile photo is replaced by a name-initial placeholder everywhere in the app, with **no exception for any other viewer, including the Admin**. The user still sees their own, and their reference photos are shown to them alone (D-109). Their *name* still appears where it is functionally required (Pending Approvals, Attendees list), because an Admin cannot approve a join request from an anonymous row. The image is what is hidden, not the identity.
-- Profile photo can be updated at any time. Updating it does not retroactively change an already-active Do Not Publish reference set; use the reference photos for that.
+- **Reference photos belong to one event** (D-141). In each event a user may upload up to 5 reference photos of themselves, as they look at that event, for a stronger multi-angle reference embedding. Makeup, hair and dress change from one event to the next, so nothing carries from one event to another. **The profile photo is never a reference**; it is the avatar only. **Each must show exactly one face.** The worker checks within seconds of the upload and rejects a photo with none or several, and the app shows why, for several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." (D-91)
+- **Do Not Publish needs an accepted reference to match on**, a reference photo for that event the worker accepted. Activation in an event is blocked until one exists there, and while Do Not Publish is on there the last one cannot be deleted (D-129, D-141). Without one the pipeline has nothing to match, and the Event Preferences row would read "Active" while protecting nobody (D-56, D-87).
+- **Do Not Publish privacy flag, set per event** (D-129). Once enabled in an event, this user's faces in that event's photos are blurred for every other viewer, and their profile photo is replaced by a name-initial placeholder everywhere that event shows them, with **no exception for any other viewer, including the Admin**. Another event where they left it off shows their face and their photo. The user still sees their own, and their reference photos are shown to them alone (D-109). Their *name* still appears where it is functionally required (Pending Approvals, Attendees list), because an Admin cannot approve a join request from an anonymous row. The image is what is hidden, not the identity.
+- Profile photo can be updated at any time. It changes no reference set, because it is not one (D-141).
 - Account deletion is handled by contacting the team directly rather than a self-service flow. The full "My Data" dashboard is Future Work.
 
 ---
@@ -520,8 +533,8 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - **On-device GPS check.** While the app is open, it periodically reads GPS and compares it against the active sub-event's cached coordinates and radius **locally**, without needing the network. A match flips the local queue to ready. Wedding venue connectivity is unreliable enough that requiring a round-trip before a guest can even start queueing would fail most of the time.
 - **The server records, the client does not decide.** The client's local check is optimistic. When it passes, the device keeps that one reading with its time and sends it with the next pre-flight request (§4.8). The server checks it against the venue and the sub-event In Progress at that time, then writes the `VenueVerification` row. A tampered client can bypass the local gate, but it cannot manufacture a server-side verification record.
 - **Photos carry no location.** Verification belongs to the person, so a photo taken with location off, or added from the gallery, uploads once its sub-event is verified (D-89).
-- **Venue Check-In QR override.** If GPS is unreliable indoors, a Guest scans the QR printed at the venue. **This works offline**: the payload and the scan time are written to local SQLite and travel with the next pre-flight request. The payload names the venue, not a sub-event. The server checks the venue's secret and verifies the sub-event that was In Progress at that venue at the scan time, so a QR shared by the mehndi and the nikkah verifies only the one being held (D-85). Nothing is pre-cached; you cannot hold the secret of a QR you have not scanned.
-- **Admin override.** Force Verify on the Attendee list sets `admin_verified_at` on that user's membership row, and the pre-flight check (§4.8.2) accepts it for every sub-event in the event, past and future. This is deliberately blunt: the Admin should be able to say "this person is fine, stop asking" once, not per session.
+- **Venue Check-In QR override.** If GPS is unreliable indoors, a Guest scans the QR printed at the venue, from the "Scan Venue QR" button in My Media (§2.5.3, D-131). **This works offline**: the payload and the scan time are written to local SQLite and travel with the next pre-flight request. The payload names the venue, not a sub-event. The server checks the venue's secret and verifies the sub-event that was In Progress at that venue at the scan time, so a QR shared by the mehndi and the nikkah verifies only the one being held (D-85). Nothing is pre-cached; you cannot hold the secret of a QR you have not scanned.
+- **Admin override.** Force Verify on the Attendee list, labelled "Check In Manually" (D-133), sets `admin_verified_at` on that user's membership row, and the pre-flight check (§4.8.2) accepts it for every sub-event in the event, past and future. This is deliberately blunt: the Admin should be able to say "this person is fine, stop asking" once, not per session.
 - **The device learns what the server decided.** The event response carries the user's verification state: `admin_verified_at` and the sub-events they hold a verification row for. The queue unlocks on either the local check or that state, and the app refetches it on foreground and on reconnect. Without this, a Force Verify, or a verification made on the user's other device, never reaches a queue the local check keeps shut.
 - **Photographers are exempt from the gate entirely.** They upload from home, hours after the event, by design (§2.2). A role-linked invite already establishes who they are. Requiring the Admin to remember a Force Verify tap at 2am in order to receive his own wedding photos is a worse trade than the risk this gate mitigates.
 
@@ -537,9 +550,9 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 ### 4.7 Media capture (viewfinder)
 - A custom in-app camera Viewfinder, not the OS native camera. Full-screen live preview.
 - **Native aspect ratio.** Capture is not cropped to any fixed ratio; the photo keeps whatever the device sensor produces, and the preview matches the capture bounds so what is framed is what is captured.
-- Public / Local Only toggle always visible, setting the mode for the next capture, changeable at any point mid-session.
+- Public / Local Only switch always visible below the shutter, setting the mode for the next capture, changeable at any point mid-session. While Local Only is on, a "Local Only" pill stays at the top of the preview (D-134).
 - **A Public capture is also saved to the phone's gallery**, as the camera took it; the copy that uploads is the stripped one (§4.8.1). A Local Only capture is not saved there (§4.12, D-90).
-- Tap to capture, repeatable. A single Viewfinder session can capture multiple photos in a row without leaving the screen, building a running thumbnail strip.
+- Tap to capture, repeatable. A single Viewfinder session can capture multiple photos in a row without leaving the screen, stacking them with their count in the gallery button's slot (D-135).
 - **No gallery picker in the Viewfinder.** Adding existing photos is done exclusively via "+ Add Media" per sub-event section in My Media (§2.5).
 - Exiting always lands on My Media for review.
 - No caption field anywhere in the capture flow (§6.1).
@@ -587,8 +600,7 @@ The album is a single shared view for every Guest and the Admin. Everyone sees t
 - Lazy loading with progressive placeholders: 300px WebP cached via `expo-image`, display resolution on open.
 - **A media row is not album-visible until processing completes.** The album query filters on `processed_at IS NOT NULL`. Until the worker finishes, the photo is visible only to its uploader in My Media, carrying a spinner badge. Keyed off upload completion instead, an unblurred photo would sit in the shared album for the length of the worker backlog. Say out loud that "a photo appears within seconds" holds when the queue is empty and degrades under a burst (D-55).
 - Real-time updates via Supabase Realtime; a photo appears on every device the moment its row becomes visible, without manual refresh.
-- Any user can delete their own uploaded photo via My Media (soft delete, §4.21).
-- Admin can additionally remove or restore anyone's photo.
+- Only the photo's uploader and the Admin can delete it, the uploader from My Media or the photo view, the Admin from the photo view or the Review Queue. Deletion is permanent and confirms first; nobody can restore it (§4.21, D-130).
 - Multi-select download to the device gallery, or individual download (§4.15).
 
 #### Album state
@@ -622,14 +634,14 @@ SHA-256 over the exact byte stream the client uploads (§4.8). An exact match is
 #### 4.11.2 Face detection & embedding, the shared foundation
 - **One detection pass per photo, on the uploaded file.** A face embedding is extracted for every detected face in every uploaded photo at processing time, regardless of whether that person is a registered user, a Do Not Publish user, or a complete stranger to the app. This is identity-agnostic; the network converts a detected face into a comparable vector without knowing who it is looking at. Everything downstream is a cheap similarity search against this already-computed data, not a re-run of detection.
 - **The worker records each photo's pixel width and height on the media row** during this pass. It is already opening the file, and the columns are what a masonry grid would need without a backfill against R2 (D-22). Blur correctness does not depend on them.
-- **References.** A user may upload up to 5 reference photos of themselves, and their profile photo is used as a further reference if it exists, for six in total (§4.2, `docs/ARCHITECTURE.md` §2). Each must show exactly one face (D-91). Matching and Find My Photos use every accepted reference. No reference is ever added automatically (D-83).
+- **References.** A user may upload up to 5 reference photos of themselves in each event, and the profile photo is not one (§4.2, `docs/ARCHITECTURE.md` §2, D-141). Each must show exactly one face (D-91). Matching in an event, and Find My Photos there, use every accepted reference added to that event and none from any other. No reference is ever added automatically (D-83).
 - **Detection is not re-run on the blurred output.** The Recognized Faces list comes from the single detection pass, with a viewer-scoped filter applied at read time (below). Detectors find heavily blurred heads, so a second pass would not have excluded anyone (D-29).
 
 #### 4.11.3 Face recognition: named & unknown clustering
-- **Find My Photos**: one tap, using the reference embeddings already on the user's profile. If they have neither a profile photo nor reference photos, they are prompted to add reference photos in Settings.
+- **Find My Photos**: one tap in Home's filter sheet, searching this event's photos with the reference photos the user added to this event. If they have none here, they are prompted to add some for this event, in Event Preferences. **It searches one event at a time.** No screen runs it across every event the user belongs to (D-141).
 - **Recognized Faces strip** on a single photo: every detected face is matched against known reference embeddings. Matches get the person's name; non-matches are clustered against each other and shown as "Unknown," consistently the same Unknown identity across multiple photos of the same unregistered person via embedding-similarity clustering. Expect this bucket to be less precise than named matching, since there is no curated reference to check it against.
 - Tapping any face, named or Unknown, filters the album to every photo containing that person. Note that this makes the app a face-search index over people who never installed it; §8 states that limitation plainly rather than burying it.
-- **The Do Not Publish filter is viewer-scoped, not global.** A face matched to a Do Not Publish user is hidden from the Recognized Faces strip and the People filter (§2.5.2) for every viewer *except that user themselves*, who sees their own face listed normally. No other viewer can filter the album by that person.
+- **The Do Not Publish filter is viewer-scoped, not global.** A face matched to a user with Do Not Publish on in this event (D-129) is hidden from the Recognized Faces strip and the People filter (§2.5.2) for every viewer *except that user themselves*, who sees their own face listed normally. No other viewer can filter the album by that person.
 
   This distinction is load-bearing and easy to get wrong. A global exclusion would mean **Find My Photos returns nothing for a Do Not Publish user**, so the one person who most needs to audit which photos contain them would be the one person who cannot search for them. It would also break the correction path below, which assumes the subject can navigate to photos containing themselves. Implement the filter as a predicate on the read, parameterized by the requesting user, never as a hard exclusion at write time.
 - Find My Photos therefore works normally for a Do Not Publish user and shows every photo the system matched them in. It cannot show a missed match, because a missed face was never matched to them, so the subject checks for those by browsing the album (§4.11.4.4, D-105).
@@ -640,7 +652,7 @@ This is the app's centerpiece feature and it is core scope, not a stretch goal.
 
 ##### 4.11.4.1 Activation and the files generated per photo
 
-**Activation requires an accepted reference** (§4.2, D-56, D-87).
+**Activation requires an accepted reference** (§4.2, D-56, D-87). **It is per event** (D-129): a person is a Do Not Publish subject in a photo only when their membership in that photo's event has it on. In another event the same face is matched for Find My Photos and nothing more.
 
 **What is generated per photo.** For a photo containing N Do Not Publish subjects, the worker writes N+1 files:
 
@@ -675,13 +687,14 @@ The count is linear, never combinatorial, because no viewer ever needs two diffe
 
 ##### 4.11.4.5 Retroactive reprocessing
 
-**Retroactive reprocessing is a match job, never a detection job.** Enabling Do Not Publish after photos are already published triggers asynchronous reprocessing. That job compares the **stored embeddings** for every face already on record in the event against the newly-active reference set, which is milliseconds of cosine comparison. Then, for every photo whose set of Do Not Publish subjects changed, it regenerates the public file, every subject's file in that photo and all their thumbnails, with every stored blur region, at the next `variant_version`. A subject who was already in the photo gets a new file too; their old one still shows the newly protected face. Photos whose subjects did not change are left alone. It never re-runs face detection, because every face in every photo already has an embedding from its original processing pass. Re-running the model would be the expensive version of a job that is nearly free.
+**Retroactive reprocessing is a match job, never a detection job.** Enabling Do Not Publish in an event after photos are already published triggers asynchronous reprocessing of that event's photos, and no other event's. That job compares the **stored embeddings** for every face already on record in the event against the newly-active reference set, which is milliseconds of cosine comparison. Then, for every photo whose set of Do Not Publish subjects changed, it regenerates the public file, every subject's file in that photo and all their thumbnails, with every stored blur region, at the next `variant_version`. A subject who was already in the photo gets a new file too; their old one still shows the newly protected face. Photos whose subjects did not change are left alone. It never re-runs face detection, because every face in every photo already has an embedding from its original processing pass. Re-running the model would be the expensive version of a job that is nearly free.
 
 **Other properties:**
-- Every uploaded photo is checked against the reference sets of **users who are active members of this event**, not globally. The system cannot protect anyone who has not installed the app and uploaded a reference (§8).
-- **Joining an event triggers the same job.** A user with references who becomes an active member is matched against the photos already in the event. Otherwise a Do Not Publish user who joins late stays unblurred in every earlier photo, and Find My Photos misses them all (D-84).
+- Every uploaded photo is checked against the references that **active members of this event** added to this event, not globally (D-141). The system cannot protect anyone who has not installed the app and uploaded a reference (§8).
+- **Adding a reference triggers the same job**, for that event only. A member who adds references after photos are in is matched against them, so Find My Photos finds the earlier photos and Do Not Publish blurs them (D-141).
+- **Rejoining triggers it too.** A removed member keeps their references in the event, and when they become active again they are matched against the photos taken while they were out (D-84, D-129).
 - Matching is biased toward blurring when uncertain: the match threshold is set low, since a missed match is the costly failure. This bias will produce false positives, particularly among relatives who resemble each other. A person missed in error is fixed with a blur region once someone notices; a person blurred in error stays blurred (§8).
-- **Do Not Publish itself is permanently irreversible**, for anyone, self-service or Admin-assisted. A blur region is a different object: its drawer or the Admin can remove it (§4.11.4.4). Do not conflate the two in the UI copy.
+- **Do Not Publish itself is permanently irreversible within its event**, for anyone, self-service or Admin-assisted (D-129). A blur region is a different object: its drawer or the Admin can remove it (§4.11.4.4). Do not conflate the two in the UI copy.
 - **What the system guarantees: no viewer ever receives a file in which a Do Not Publish face other than their own is unblurred.** A subject's own variant can be byte-identical to the uploaded file, when they are the only subject in the photo and it has no blur region (D-27, D-83).
 
 ---
@@ -752,7 +765,7 @@ There is no `PlanTier` concept in v1. Subscriptions are entirely Future Work (§
 - Maximum guest count per event: **150** active Guests. The Admin and Photographers do not count (D-102)
 - Maximum upload count per event: **2,000**
 - Maximum sub-events per event: **15** (§4.3)
-- Maximum reference photos per user: **5**, not counting the profile photo (§4.2)
+- Maximum reference photos per person in one event: **5** (§4.2, D-141)
 
 These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests when a join is approved, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded.
 
@@ -762,7 +775,7 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
 - Explicit consent screen right after signup, before anything else renders. Consent is recorded per account (`docs/ARCHITECTURE.md` §2), so it needs the account to exist. It covers:
   - Account creation and basic profile data retention.
   - **Face detection and processing**, stated accurately: every face in every uploaded photo is detected and converted into an embedding, including faces belonging to people who are not app users, in order to support Find My Photos and Do Not Publish blurring.
-  - The permanent, non-reversible nature of Do Not Publish.
+  - The permanent, non-reversible nature of Do Not Publish, set separately in each event.
 - Consent version tracking: if the Privacy Policy materially changes, all active sessions are paused on next launch until the new version is accepted.
 - **Accurate metadata statement.** GPS, camera model, and device serial are stripped from the image file before it leaves the device. One GPS reading per sub-event, taken when the device's check passes, travels to the server for verification only, is checked against the venue, and is stored nowhere. Photos carry none (D-89). Never claim that GPS does not reach the network (D-36).
 - Blur transparency: a user viewing a blurred face can tap a small info icon explaining why ("This person has requested privacy"), which reduces confusion about whether the image is simply failing to load.
@@ -771,11 +784,12 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
 ---
 
 ### 4.19 Settings & preferences
-- **Account:** update profile photo, manage reference photos (up to 5, and never the last accepted one while Do Not Publish is active, §4.2), request account deletion (contacts support; no automated workflow yet), change password, log out.
+- **Account:** update profile photo, request account deletion (contacts support; no automated workflow yet), change password, log out.
 - **Appearance:** theme (Light / Dark / System Default).
 - **Notifications:** push toggles for **Approval Alerts** and **Album Lifecycle**, stored with the profile so the server checks them before sending (D-105). These are the only two channels that exist (§4.16); earlier versions of this document listed four toggles for two features.
 - **Upload:** "Upload over Mobile Data" toggle (default on; phone JPEGs run 1 to 3MB and upload without resizing, §4.8); default Viewfinder mode (start Public vs. start Local Only). Both live on the phone, since only the phone acts on them (D-105).
-- **Privacy:** Do Not Publish activation, rendered as described in §2.5.9, one-way, and blocked without an accepted reference (§4.2).
+- **Privacy:** none here. Reference photos and Do Not Publish are set per event in Event Preferences (§2.5.11, D-129, D-141).
+- **Grouping** (D-140): the account row; Notifications; "On This Phone", holding Upload over Mobile Data, Camera Starts In, Appearance and Storage, with a footer saying they stay on this phone (D-105); Account, holding Change Password, About and Legal and Delete My Account; then Log Out.
 - **Storage:** clear local image cache; storage usage breakdown (app size vs. cache vs. Local Only files).
 - **About & Legal:** Terms of Service, Privacy Policy, Open Source Licenses, app version and build number.
 
@@ -800,7 +814,7 @@ Consolidated here because four scattered numbers in four sections is how a three
 
 | Object | Window | Behavior |
 |---|---|---|
-| Deleted photo (by uploader or Admin) | 30 days | Soft delete. Admin can restore within the window. |
+| Deleted photo (by uploader or Admin) | None | Permanent. Nobody can restore it, and the worker deletes its files at once. The same photo can be uploaded again, as a new photo (D-130). |
 | Deleted event | 14 days | Soft delete. Guests and Admin notified with a download prompt; Photographers are not notified. Download remains available during the window. |
 | Album visibility after Admin closes it | 30 days | Album stays browsable, view-only. Flat, not tier-dependent. |
 | Expiry warning | 7 days before | Album Lifecycle notification. |
@@ -824,8 +838,9 @@ One table per area, so a slice cites the part it needs.
 
 | Scenario | System behavior |
 |---|---|
-| User not verified for the active sub-event | Upload does not proceed. Photos wait in the local queue. Banner offers "Scan Venue QR" and "Ask the organizer to verify you." |
+| User not verified for the active sub-event | Upload does not proceed. Photos wait in the local queue. My Media's banner offers "Scan Venue QR" while the sub-event is In Progress, and "Ask the organizer to check you in." once it has ended (D-131, D-133). |
 | Guest scans the Venue QR, offline | Scan recorded locally; travels with the next pre-flight on reconnect, then the queue flushes. |
+| Guest scans a venue QR of another event | The scanner says the code belongs to another event and records nothing. The app checks the payload's venue against this event's cached venues (D-131). |
 | Admin taps Force Verify, or the user verifies on another device | `admin_verified_at` or the verification row is set on the server. The device learns of it the next time it fetches the event, on foreground or reconnect, and every queued photo it covers unlocks (§4.5). |
 | User never gets verified at all | Photos remain in the local queue indefinitely and are visible in My Media with a clock badge. They are not lost, and they are not uploaded. The user can delete them locally. |
 
@@ -834,7 +849,7 @@ One table per area, so a slice cites the part it needs.
 | Scenario | System behavior |
 |---|---|
 | A sub-event runs past its scheduled end | It completes at its scheduled end and the capture FAB hides, unless the Admin delays it (§4.3). Photos taken with the phone's own camera can still be added to it through "+ Add Media". |
-| No sub-event is In Progress, inside the event's span | The capture FAB is hidden. Gallery imports into any sub-event section still work (§2.5.4). |
+| No sub-event is In Progress, inside the event's span | The capture FAB is hidden, and My Media says when it opens next (D-136). Gallery imports into any sub-event section still work (§2.5.4). |
 | Sub-events overlap because the Admin scheduled them that way | Capture tags to the most recently started one. |
 
 ### 5.4 Uploads and the queue
@@ -842,7 +857,8 @@ One table per area, so a slice cites the part it needs.
 | Scenario | System behavior |
 |---|---|
 | Exact duplicate detected (identical SHA-256 of the uploaded bytes) | Silently rejected before any file transfer. No prompt. |
-| A photo is deleted by its uploader or removed by the Admin | It leaves every album at once. The Admin can restore it from the Review Queue for 30 days (§4.21). |
+| A photo is deleted by its uploader or by the Admin | It leaves every album at once, after a confirm. Nobody can restore it, and the worker deletes its files (§4.21, D-130). |
+| Anyone else tries to delete a photo | The app shows no Delete, and the API answers 403 (D-130). |
 | Upload succeeded but the worker has not processed it yet | The row exists with `processed_at` null. Visible only to the uploader in My Media with a spinner badge, never in the shared album (§4.9). |
 | Photographer uploads at 2am from home | Proceeds. Photographers are exempt from the location gate, and are otherwise handled by the same single upload pipeline as everyone else (§4.8). |
 | A file larger than 4096px on the longest edge is added via "+ Add Media" | Resized to 4096px client-side before upload. This never fires on a phone photo (§4.8). |
@@ -850,7 +866,7 @@ One table per area, so a slice cites the part it needs.
 | Photographer uploads after the Admin closed the album | Blocked, same as any role. The Close Album confirm dialog (§4.9) names any Photographer who has uploaded nothing yet, specifically to prevent this. |
 | Any user tries to upload while the album is closed | Upload disabled with a clear banner. Applies to Admin too, who is prompted to open the album first. Pre-flight rejects it as well, so a modified app gets nowhere (§4.8.2). |
 | The album closes while photos are queued | They stay in the local queue and upload if the Admin reopens the album. |
-| A guest re-uploads a photo that was deleted from the album | Rejected as a duplicate, with no prompt. A deleted photo's bytes cannot come back except through Restore (D-96). |
+| Someone uploads a photo that was deleted from the album | It uploads as a new photo, with new files, a fresh face pass and none of the old one's blur regions or flags. A deleted photo is not a duplicate (D-96, D-130). |
 | Two guests upload the same photo and one of them crashes mid-upload | The other's upload is not blocked. Whoever completes first wins, and the other is treated as a duplicate (D-96). |
 | The event reaches its 2,000-photo cap with photos still queued | Each one stays in My Media with "This event is full" and never uploads. The person can delete it (D-97). |
 | A user with queued photos is removed or blocked | The app shows Access Removed, and the queued photos stay on the phone, stopped, until the membership is active again (§4.1, D-102). |
@@ -860,17 +876,19 @@ One table per area, so a slice cites the part it needs.
 
 | Scenario | System behavior |
 |---|---|
-| A user with no accepted reference tries to enable Do Not Publish, including one whose reference photo is still processing or was rejected | Blocked. The confirm button stays disabled and the screen links to Add Reference Photos (§4.2). |
-| A Do Not Publish user tries to delete their last accepted reference | Refused, with the reason. Deleting it would leave the flag protecting nobody (§4.2). |
+| A user with no accepted reference in an event tries to enable Do Not Publish there, including one whose reference photo is still processing or was rejected | Blocked. The confirm button stays disabled and the screen links to Add Reference Photos (§4.2). |
+| A user with Do Not Publish on in an event tries to delete their last accepted reference there | Refused, with the reason. Deleting it would leave the flag protecting nobody (§4.2, D-129, D-141). |
+| A user's look at one event differs from their references at another | Nothing crosses over. Each event matches only against the references added to it (D-141). |
+| A user has Do Not Publish on in one event and off in another | The first event blurs them for everyone else; the second shows their face and their profile photo. Neither setting touches the other (D-129). |
 | A reference photo shows no face, or several | Rejected within seconds of the upload, with the reason. For several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." (§4.2) |
 | Do Not Publish match confidence is borderline at upload | At or above the match threshold, which is set low on purpose (§4.11.4.5), the face blurs. Below it nothing blurs automatically and nothing reaches a human; anyone can draw a blur region over it (§4.11.4.4). |
 | A Do Not Publish face is missed, by matching or by detection, and someone notices | They draw a blur region over it. It applies at once for everyone, and its drawer or the Admin can remove it (§4.11.4.4). |
-| Someone enables Do Not Publish after 100 photos are already in the album | The reprocess job compares stored embeddings against the new reference set. For each photo whose set of subjects changed, it regenerates the public file, every subject's file and all their thumbnails, not only the new subject's, and bumps `variant_version` so clients holding a cached copy re-resolve (§4.11, §4.13). Detection is never re-run. |
+| Someone enables Do Not Publish in an event after 100 photos are already in its album | The reprocess job, for that event only, compares stored embeddings against the new reference set. For each photo whose set of subjects changed, it regenerates the public file, every subject's file and all their thumbnails, not only the new subject's, and bumps `variant_version` so clients holding a cached copy re-resolve (§4.11, §4.13). Detection is never re-run. |
 | Someone draws a blur region over another person to hide them | It applies. The Admin sees it in the Review Queue, with who drew it, and removes it (§4.11.4.4). |
 | A photo with a blur region is reprocessed | The region is applied again. No regeneration drops it (root invariant 6). |
 | Photo uploaded before a Do Not Publish flag is activated | Existing photos are reprocessed asynchronously to blur that face. |
 | A job to reprocess or re-blur a published photo keeps failing | The photo leaves the album until the job runs again, and its uploader sees it as processing in My Media. It never stays up with files the failed job should have replaced (D-108). |
-| A Do Not Publish user joins an event that already has photos | Joining triggers reprocessing for that user in that event, so earlier photos blur the same way (§4.11.4.5). |
+| A user with Do Not Publish on in other events joins a new one | It starts off in the new event, with no references there. Their face shows until they add a reference and turn it on in that event's preferences, and reprocessing then blurs the earlier photos (§4.11.4.5, D-129, D-141). |
 
 ### 5.6 The event and the service
 
@@ -884,7 +902,7 @@ One table per area, so a slice cites the part it needs.
 ## 6. Deferred & out of scope
 
 ### 6.1 Not planned (permanently out of scope)
-Reverting Do Not Publish. Face-recognition opt-out. i18n. User bio. Captioning. Feed view. RAW file handling.
+Reverting Do Not Publish in an event. Face-recognition opt-out. i18n. User bio. Captioning. Feed view. RAW file handling.
 
 ### 6.2 Future work (post-FYP roadmap)
 - **Video support**, including face blur for video, which is materially harder than the photo case because it requires tracking a face across frames rather than detecting it once.
@@ -921,7 +939,7 @@ Build these only after the core scope above is working, tested, and demo-stable.
 
 Every one of these will be asked about in the viva. Having a written answer is worth more than pretending they don't exist.
 
-**Do Not Publish only protects people who install the app.** Protection requires a registered account, a reference photo, and an explicit opt-in. It cannot protect a guest who never used the app, which is most of the room. The feature is a tool for people who care enough to configure it, not a blanket guarantee for everyone in a photo. There is no remedy in v1 for a non-user who asks to be removed beyond the Admin deleting the photo; Proxy Blur (§6.2) is the designed answer and it is deferred.
+**Do Not Publish only protects people who install the app.** Protection requires a registered account, and a reference photo and an explicit opt-in in each event (D-129, D-141). It cannot protect a guest who never used the app, which is most of the room. The feature is a tool for people who care enough to configure it, not a blanket guarantee for everyone in a photo. There is no remedy in v1 for a non-user who asks to be removed beyond the Admin deleting the photo; Proxy Blur (§6.2) is the designed answer and it is deferred.
 
 **The app builds a face index over people who never consented to one, and that is a real cost, not just a caveat.** Every detected face is embedded, and unregistered people are clustered into a persistent "Unknown" identity that any event member can tap to filter the album to every photo containing them. Consent for that processing comes from the uploader, not the subject, which under a strict reading of biometric-data rules is the app's most exposed area. The usual comparison, that a bounded album with an expiry date and stripped metadata beats two hundred phones and a dozen WhatsApp groups, holds on distribution, retention and metadata. It does **not** hold on face indexing, where this app does something WhatsApp does not. Say both halves. The mitigations are real but partial: face embeddings belong to one event's photos, are never exported, and a subject can act on their own face through Do Not Publish. The retention job that would delete them with the event is not built in v1 (§4.21, D-44).
 
@@ -955,7 +973,7 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 
 **Backend.** The API and worker run on the Netcup server the team developed against, on its stable hostname (§4.20). The demo stack against the stable project has been up for a month (D-76).
 
-**Pre-configured accounts.** Do Not Publish is enabled beforehand on one team account, used in beats 5 and 6. Never ask a judge to enable it; the action is permanently irreversible for anyone.
+**Pre-configured accounts.** Do Not Publish is enabled beforehand in the demo event on one team account, used in beats 5 and 6. Never ask a judge to enable it; within an event the action is permanently irreversible for anyone (D-129).
 
 **Seeded dataset**, roughly 100 photos, loading in ten seconds.
 
@@ -966,10 +984,10 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 1. **Create the event.** Two sub-events, one currently live. Show the Guest Link and Photographer Link, and the printed Venue QR.
 2. **Judges join.** Two judges open or paste the Guest Link on the handed-around devices and land in the album. This is where deep links, auth, and role assignment all prove themselves at once.
 3. **Capture and upload.** A judge takes a photo. Location verifies silently; the photo appears in the shared album on every device within seconds once the worker finishes and the row becomes visible (§4.9). Then show the queue gate: deny location permission, clear it with a Venue QR scan.
-4. **Find My Photos.** A judge with reference photos set taps once and sees only the photos they appear in.
-5. **Do Not Publish.** On a second team account with no accepted reference, open the activation screen and show that it is blocked until a reference is accepted (§4.2), without confirming anything. Then switch to the pre-configured team account, where Do Not Publish is already active, and hand phones around (D-105): the subject sees their own face clearly with the lock badge and "visible only to you," every other phone shows it blurred. This is the moment the project earns its grade.
+4. **Find My Photos.** A judge with reference photos added to the demo event taps once and sees only the photos they appear in.
+5. **Do Not Publish.** On a second team account with no accepted reference, open the activation screen and show that it is blocked until a reference is accepted (§4.2), without confirming anything. Then switch to the pre-configured team account, where Do Not Publish is already active in this event, and hand phones around (D-105): the subject sees their own face clearly with the lock badge and "visible only to you," every other phone shows it blurred. This is the moment the project earns its grade.
 6. **A missed face.** Use a **pre-seeded photo where the detector genuinely misses the subject's face**, turned away or partly covered, so the miss is real and reproducible. Do not try to manufacture a miss live, and do not ship code that fakes one. The subject draws a blur region over it, and it updates on the other phones.
-7. **Admin restore.** A judge draws a blur region over the Admin's face in another photo. The Admin opens the Review Queue, sees who drew it, and removes it, and the face is back on every phone. Short beat, and it shows why a region anyone can draw is acceptable: nothing stays hidden without the Admin seeing it.
+7. **Admin removes a blur region.** A judge draws a blur region over the Admin's face in another photo. The Admin opens the Review Queue, sees who drew it, and removes it, and the face is back on every phone. Short beat, and it shows why a region anyone can draw is acceptable: nothing stays hidden without the Admin seeing it.
 8. **Photographer delivery.** A team member on the Photographer account uploads two photos from the gallery, with no location verification, through the same pipeline everyone else uses. They appear in the shared album alongside everything else. Show that the Photographer's own app cannot browse the album.
 9. **Close and export.** Admin closes the album, the confirm dialog reports whether every Photographer has uploaded, upload controls disable everywhere, and a judge multi-selects three photos and saves them to their camera roll.
 
