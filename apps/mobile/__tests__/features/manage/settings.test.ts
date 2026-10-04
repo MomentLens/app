@@ -248,8 +248,28 @@ describe('saveProblem', () => {
     expect(saveProblem({}, 'details')).toBe(
       'MomentLens could not be reached, so nothing was saved. Check the connection and try again.',
     );
+    expect(saveProblem({}, 'check')).toBe(
+      'MomentLens could not be reached, so nothing was saved. Check the connection and try again.',
+    );
     expect(saveProblem({}, 'cover')).toBe(
       'The cover did not upload. Check the connection and try again.',
+    );
+  });
+
+  // A switch to auto that times out may still have let people in, so it must not read as nothing.
+  it('never says nothing was saved when a write timed out', () => {
+    expect(saveProblem({ timedOut: true }, 'details')).toBe(
+      'MomentLens did not answer in time, so the changes may or may not have saved. If Save is still on once the form refreshes, try again.',
+    );
+    expect(saveProblem({ timedOut: true }, 'cover', true)).toBe(
+      'Your other changes are saved. MomentLens did not answer in time, so the cover may or may not have saved. Try again.',
+    );
+  });
+
+  // The read before a switch writes nothing, so its timeout saved nothing either.
+  it('says nothing was saved when the read before a switch timed out', () => {
+    expect(saveProblem({ timedOut: true }, 'check')).toBe(
+      'MomentLens could not be reached, so nothing was saved. Check the connection and try again.',
     );
   });
 
@@ -273,7 +293,7 @@ describe('saveProblem', () => {
     expect(saveProblem({ status: 403, code: 'wrong_role' }, 'cover')).toBe(
       'You can no longer change this event.',
     );
-    expect(saveProblem({ status: 404, code: 'not_found' }, 'details')).toBe(
+    expect(saveProblem({ status: 404, code: 'not_found' }, 'check')).toBe(
       'This event is no longer available.',
     );
   });

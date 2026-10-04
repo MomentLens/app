@@ -144,23 +144,36 @@ export function stillWaitingMessage(admitted: number, pendingCount: number): str
   return `${letIn}The event is full, so ${waiting}`;
 }
 
-// The two halves of a Save: the PATCH, then the cover's upload once the details are saved.
-export type SavePart = 'details' | 'cover';
+// The steps of a Save, in order. `check` reads the settings again before a switch to auto asks its
+// question, and writes nothing. `details` is the PATCH, and `cover` the cover's upload after it.
+export type SavePart = 'check' | 'details' | 'cover';
 
-// What the Admin reads when part of a Save fails. A status of undefined is no answer at all:
-// offline, timed out, or the cover's PUT to R2 failing. An Admin's write is never queued (D-142,
-// D-121), so it says to try again.
-export function saveProblem(
-  error: { status?: number; code?: ErrorCode },
-  part: SavePart,
-  detailsSaved = false,
-): string {
+// What went wrong, as use-event-settings.ts reads it from the error. `status` is undefined when no
+// answer came. `timedOut` says the request went out and its answer never came, so a write may
+// have landed.
+export interface SaveFailure {
+  status?: number;
+  code?: ErrorCode;
+  timedOut?: boolean;
+}
+
+// What the Admin reads when part of a Save fails. An Admin's write is never queued (D-142, D-121),
+// so it says to try again.
+export function saveProblem(error: SaveFailure, part: SavePart, detailsSaved = false): string {
   const prefix = detailsSaved ? 'Your other changes are saved. ' : '';
   return prefix + reason(error, part);
 }
 
-function reason(error: { status?: number; code?: ErrorCode }, part: SavePart): string {
+function reason(error: SaveFailure, part: SavePart): string {
   if (error.status === undefined) {
+    // A write that timed out may have landed. The form refetches after any failure, so Save goes
+    // off once the refetch shows the change saved.
+    if (error.timedOut && part === 'details') {
+      return 'MomentLens did not answer in time, so the changes may or may not have saved. If Save is still on once the form refreshes, try again.';
+    }
+    if (error.timedOut && part === 'cover') {
+      return 'MomentLens did not answer in time, so the cover may or may not have saved. Try again.';
+    }
     return part === 'cover'
       ? 'The cover did not upload. Check the connection and try again.'
       : 'MomentLens could not be reached, so nothing was saved. Check the connection and try again.';
