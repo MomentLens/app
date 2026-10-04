@@ -21,6 +21,9 @@ interface CoverFieldProps {
   // it gets Undo, which shows the saved one again. The wizard leaves it out.
   saved?: PresignedImage | null;
   disabled?: boolean;
+  // Told when a picked photo starts and stops being prepared, so a form can hold its Save until
+  // the photo is ready rather than save without it.
+  onPreparingChange?: (preparing: boolean) => void;
 }
 
 // A small pill over the photo, on a dark shade so it reads on any cover.
@@ -52,7 +55,13 @@ function PhotoPill({
 // the page once picked, with Change and Remove over it (D-124). The photo is only prepared here; it
 // uploads once the event exists, because its key carries the event's id (arch §3). Event Settings
 // shows the saved cover in the same well and uploads a picked one on Save (D-142).
-export function CoverField({ cover, onChange, saved, disabled = false }: CoverFieldProps) {
+export function CoverField({
+  cover,
+  onChange,
+  saved,
+  disabled = false,
+  onPreparingChange,
+}: CoverFieldProps) {
   const [preparing, setPreparing] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
   const ripple = useTokenColor('textPrimary', 0.08);
@@ -79,12 +88,14 @@ export function CoverField({ cover, onChange, saved, disabled = false }: CoverFi
     const asset = picked.canceled ? undefined : picked.assets[0];
     if (asset === undefined) return;
     setPreparing(true);
+    onPreparingChange?.(true);
     try {
       onChange(await prepareCover(asset.uri));
     } catch {
       setProblem('That photo could not be used. Try another one.');
     } finally {
       setPreparing(false);
+      onPreparingChange?.(false);
     }
   }
 
