@@ -28,6 +28,8 @@ const noEvents: EventStore = {
   findForCaller: () => Promise.resolve(null),
   findAccess: () => Promise.resolve(null),
   setCover: () => Promise.resolve(false),
+  settings: () => Promise.resolve(null),
+  updateSettings: () => Promise.reject(new Error('no event store in this test')),
 };
 
 // An invite store where every invite is dead and no one has a join request.

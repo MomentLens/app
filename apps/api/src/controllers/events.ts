@@ -5,9 +5,12 @@ import {
   CreateEventRequest,
   CreateEventResponse,
   GetEventResponse,
+  GetEventSettingsResponse,
   ListEventsResponse,
   SetEventCoverRequest,
   SetEventCoverResponse,
+  UpdateEventSettingsRequest,
+  UpdateEventSettingsResponse,
 } from '@momentlens/shared-types';
 
 import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
@@ -16,9 +19,11 @@ import { parseInput, PathId } from '../middleware/body';
 import {
   createEvent,
   getEvent,
+  getEventSettings,
   listEvents,
   setEventCover,
   startCoverUpload,
+  updateEventSettings,
 } from '../services/events';
 import type { EventStore } from '../services/events';
 
@@ -80,5 +85,28 @@ export function setEventCoverController(
     const { uploadId } = parseInput(SetEventCoverRequest, req.body);
     const result = await setEventCover(events, objectExists, presignGet, id, eventId, uploadId);
     res.set('Cache-Control', 'no-store').json(SetEventCoverResponse.parse(result));
+  };
+}
+
+// GET /events/{eventId}/settings, for the event's Admin (D-142). The request has no body.
+export function getEventSettingsController(events: EventStore, presignGet: PresignGet) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const result = await getEventSettings(events, presignGet, id, eventId);
+    res.set('Cache-Control', 'no-store').json(GetEventSettingsResponse.parse(result));
+  };
+}
+
+// PATCH /events/{eventId}/settings, for the event's Admin (D-142). The path and the body are
+// parsed before the caller is checked, so a bad request is 400 whoever sends it, as the contract
+// says. The strict body refuses a type, a cover or albumOpen rather than drop it.
+export function updateEventSettingsController(events: EventStore, presignGet: PresignGet) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const request = parseInput(UpdateEventSettingsRequest, req.body);
+    const result = await updateEventSettings(events, presignGet, id, eventId, request);
+    res.set('Cache-Control', 'no-store').json(UpdateEventSettingsResponse.parse(result));
   };
 }

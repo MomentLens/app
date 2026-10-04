@@ -1,7 +1,8 @@
-// POST /events, GET /events, GET /events/{eventId} and the two cover endpoints (D-110, D-115, D-118,
-// arch §3). The event store is an in-memory fake keyed by user, so these tests check what the API
-// does with each answer the store gives. rls.test.ts runs the real store, create_event,
-// list_my_events, get_my_event and the join request list against the dev project.
+// POST /events, GET /events, GET /events/{eventId}, the two cover endpoints and the two settings
+// endpoints (D-110, D-115, D-118, D-142, arch §3). The event store is an in-memory fake keyed by
+// user, so these tests check what the API does with each answer the store gives. rls.test.ts runs
+// the real store, create_event, list_my_events, get_my_event, the join request list,
+// event_settings and update_event_settings against the dev project.
 // URLs are signed by the real R2 presigner with test credentials.
 import { randomUUID } from 'node:crypto';
 
@@ -12,17 +13,21 @@ import {
   CreateEventResponse,
   ErrorResponse,
   GetEventResponse,
+  GetEventSettingsResponse,
   ListEventsResponse,
   MAX_EVENT_SPAN_MS,
   SetEventCoverResponse,
+  UpdateEventSettingsResponse,
   VERIFICATION_RADIUS_DEFAULT_M,
 } from '@momentlens/shared-types';
 import type {
+  ApprovalMode,
   CreateEventRequest,
   JoinRequest,
   MembershipRole,
   MembershipStatus,
   SubEventInput,
+  UpdateEventSettingsRequest,
 } from '@momentlens/shared-types';
 
 import type { AppDeps } from '../../src/app';
@@ -33,6 +38,8 @@ import type {
   MemberAccess,
   EventRecord,
   EventStore,
+  SettingsRecord,
+  UpdateSettingsResult,
 } from '../../src/services/events';
 import { startApp, TEST_R2, testDeps } from '../support/app';
 import type { RunningApp } from '../support/app';
@@ -43,8 +50,12 @@ const B = randomUUID();
 const G = randomUUID();
 const P = randomUUID();
 const PENDING = randomUUID();
+const PENDING_PHOTOGRAPHER = randomUUID();
 const BLOCKED = randomUUID();
 const REMOVED = randomUUID();
+
+// Every user's profile name, for the pending Photographers the settings name.
+const NAMES = new Map<string, string>([[PENDING_PHOTOGRAPHER, 'Kamran Studio']]);
 
 const tokens = new Map([
   ['token-a', A],
@@ -52,6 +63,7 @@ const tokens = new Map([
   ['token-guest', G],
   ['token-photographer', P],
   ['token-pending', PENDING],
+  ['token-pending-photographer', PENDING_PHOTOGRAPHER],
   ['token-blocked', BLOCKED],
   ['token-removed', REMOVED],
 ]);
@@ -66,6 +78,8 @@ interface FakeEvent {
   requestId: string;
   name: string;
   type: EventRecord['type'];
+  description: string | null;
+  approvalMode: ApprovalMode;
   coverKey: string | null;
   startsAt: string;
   endsAt: string;
@@ -86,6 +100,11 @@ class FakeEvents implements EventStore {
   readonly events = new Map<string, FakeEvent>();
   readonly creates: { userId: string; request: CreateEventRequest }[] = [];
   readonly covers: { eventId: string; key: string }[] = [];
+  readonly settingsWrites: {
+    eventId: string;
+    request: UpdateEventSettingsRequest;
+    maxGuests: number;
+  }[] = [];
   failWith: Error | null = null;
   unknownUsers = new Set<string>();
 
@@ -98,6 +117,8 @@ class FakeEvents implements EventStore {
       requestId: randomUUID(),
       name: 'Seeded Event',
       type: 'wedding',
+      description: null,
+      approvalMode: 'auto',
       coverKey: null,
       startsAt: '2026-12-10T14:00:00.000Z',
       endsAt: '2026-12-11T23:00:00.000Z',
@@ -207,6 +228,57 @@ class FakeEvents implements EventStore {
     event.coverKey = key;
     return Promise.resolve(true);
   }
+
+  // As event_settings: null for a deleted event, the pending requests counted, and the pending
+  // Photographers named in the order they were seeded.
+  settings(eventId: string): Promise<SettingsRecord | null> {
+    if (this.failWith) return Promise.reject(this.failWith);
+    const event = this.events.get(eventId);
+    if (event === undefined || event.deleted) return Promise.resolve(null);
+    return Promise.resolve(this.settingsOf(event));
+  }
+
+  // As update_event_settings, except that a switch to auto admits every pending request: the cap
+  // is the dev project's to test, so here it is only recorded.
+  updateSettings(
+    eventId: string,
+    request: UpdateEventSettingsRequest,
+    maxGuests: number,
+  ): Promise<UpdateSettingsResult> {
+    this.settingsWrites.push({ eventId, request, maxGuests });
+    if (this.failWith) return Promise.reject(this.failWith);
+    const event = this.events.get(eventId);
+    if (event === undefined || event.deleted) return Promise.resolve({ outcome: 'not_found' });
+    let admitted = 0;
+    if (request.approvalMode === 'auto' && event.approvalMode === 'manual') {
+      for (const member of event.members.values()) {
+        if (member.status === 'pending') {
+          member.status = 'active';
+          admitted += 1;
+        }
+      }
+    }
+    event.name = request.name ?? event.name;
+    if (request.description !== undefined) {
+      event.description = request.description === '' ? null : request.description;
+    }
+    event.approvalMode = request.approvalMode ?? event.approvalMode;
+    return Promise.resolve({ outcome: 'updated', admitted, settings: this.settingsOf(event) });
+  }
+
+  private settingsOf(event: FakeEvent): SettingsRecord {
+    const pending = [...event.members.entries()].filter(([, m]) => m.status === 'pending');
+    return {
+      name: event.name,
+      description: event.description,
+      approvalMode: event.approvalMode,
+      coverKey: event.coverKey,
+      pendingCount: pending.length,
+      pendingPhotographers: pending
+        .filter(([, m]) => m.role === 'photographer')
+        .map(([user]) => NAMES.get(user) ?? 'No Name'),
+    };
+  }
 }
 
 let store: FakeEvents;
@@ -242,6 +314,7 @@ beforeEach(() => {
   store.events.clear();
   store.creates.length = 0;
   store.covers.length = 0;
+  store.settingsWrites.length = 0;
   store.failWith = null;
   store.unknownUsers.clear();
   uploaded.clear();
@@ -1251,6 +1324,355 @@ describe('the cover endpoints', () => {
           method: 'PUT',
           headers: { Authorization: 'Bearer token-a', 'Content-Type': 'application/json' },
           body: JSON.stringify({ uploadId }),
+        });
+        expect(response.status).toBe(404);
+        expect(await errorCode(response)).toBe('not_found');
+      } finally {
+        await racing.close();
+      }
+    });
+  });
+});
+
+describe('the settings endpoints', () => {
+  let event: FakeEvent;
+  let coverKey: string;
+
+  beforeEach(() => {
+    const id = randomUUID();
+    coverKey = `events/${id}/cover_${randomUUID()}.jpg`;
+    event = store.seed(
+      {
+        [A]: ['admin', 'active'],
+        [G]: ['guest', 'active'],
+        [P]: ['photographer', 'active'],
+        [PENDING]: ['guest', 'pending'],
+        [PENDING_PHOTOGRAPHER]: ['photographer', 'pending'],
+        [BLOCKED]: ['guest', 'blocked'],
+        [REMOVED]: ['guest', 'removed'],
+      },
+      {
+        id,
+        name: 'Mehndi Night',
+        description: 'Yellow dress code',
+        approvalMode: 'manual',
+        coverKey,
+      },
+    );
+  });
+
+  // A refused body names nothing the settings hold: not the name, the description, the cover key
+  // or a URL, and not a pending Photographer.
+  async function expectRefused(response: Response, status: number, code: string) {
+    expect(response.status).toBe(status);
+    const text = await response.text();
+    expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe(code);
+    for (const secret of ['Mehndi Night', 'Yellow dress code', coverKey, 'X-Amz', 'Kamran']) {
+      expect(text).not.toContain(secret);
+    }
+  }
+
+  // Nothing written and nobody admitted.
+  function expectUnchanged() {
+    expect(store.settingsWrites).toEqual([]);
+    expect(event.name).toBe('Mehndi Night');
+    expect(event.approvalMode).toBe('manual');
+    expect(event.members.get(PENDING)?.status).toBe('pending');
+    expect(event.members.get(PENDING_PHOTOGRAPHER)?.status).toBe('pending');
+  }
+
+  // Both endpoints refuse the same callers in the same order. The PATCH carries a switch to auto,
+  // the one write that admits anyone.
+  describe.each([
+    ['GET', undefined],
+    ['PATCH', { approvalMode: 'auto' }],
+  ] as const)('%s /events/{eventId}/settings', (method, body) => {
+    const call = (eventId: string, token?: string) =>
+      send(method, `/events/${eventId}/settings`, token, body);
+
+    it('answers 401 no_session with no token, and writes nothing', async () => {
+      await expectRefused(await call(event.id), 401, 'no_session');
+      expectUnchanged();
+    });
+
+    it.each([
+      ['another user, in no role', 'token-b', 'not_member'],
+      ['a pending Guest', 'token-pending', 'not_member'],
+      ['a pending Photographer', 'token-pending-photographer', 'not_member'],
+      ['a blocked member', 'token-blocked', 'not_member'],
+      ['a removed member', 'token-removed', 'not_member'],
+      ['a Guest', 'token-guest', 'wrong_role'],
+      ['a Photographer', 'token-photographer', 'wrong_role'],
+    ])('refuses %s with 403, and writes nothing', async (_who, token, code) => {
+      await expectRefused(await call(event.id, token), 403, code);
+      expectUnchanged();
+    });
+
+    it("refuses A for another event, though A is this event's Admin", async () => {
+      const other = store.seed(
+        { [B]: ['admin', 'active'], [PENDING]: ['guest', 'pending'] },
+        { name: 'Only B', approvalMode: 'manual' },
+      );
+      const response = await call(other.id, 'token-a');
+      expect(response.status).toBe(403);
+      const text = await response.text();
+      expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('not_member');
+      expect(text).not.toContain('Only B');
+      expect(store.settingsWrites).toEqual([]);
+      expect(other.approvalMode).toBe('manual');
+      expect(other.members.get(PENDING)?.status).toBe('pending');
+    });
+
+    it.each([
+      ['its Admin', 'token-a'],
+      ['a Guest', 'token-guest'],
+      ['another user', 'token-b'],
+    ])('answers 404 not_found for a soft-deleted event, to %s too', async (_who, token) => {
+      event.deleted = true;
+      await expectRefused(await call(event.id, token), 404, 'not_found');
+      expectUnchanged();
+    });
+
+    it('answers 404 not_found for an event that does not exist', async () => {
+      const response = await call(randomUUID(), 'token-a');
+      expect(response.status).toBe(404);
+      expect(await errorCode(response)).toBe('not_found');
+      expect(store.settingsWrites).toEqual([]);
+    });
+
+    it('answers 400 invalid_request for an event id that is not a uuid', async () => {
+      const response = await call('not-a-uuid', 'token-a');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expect(store.settingsWrites).toEqual([]);
+    });
+
+    it('treats an uppercase event id as the same event', async () => {
+      const response = await call(event.id.toUpperCase(), 'token-a');
+      expect(response.status).toBe(200);
+    });
+
+    it('answers 500 internal_error, naming no cause, when the store fails', async () => {
+      store.failWith = new Error('connection reset by the database');
+      const response = await call(event.id, 'token-a');
+      expect(response.status).toBe(500);
+      const text = await response.text();
+      expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('internal_error');
+      expect(text).not.toContain('connection reset');
+    });
+  });
+
+  describe('GET /events/{eventId}/settings', () => {
+    it('gives the Admin the form, the pending count and each pending Photographer by name', async () => {
+      const response = await send('GET', `/events/${event.id}/settings`, 'token-a');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(GetEventSettingsResponse.parse(await response.json())).toEqual({
+        settings: {
+          name: 'Mehndi Night',
+          description: 'Yellow dress code',
+          approvalMode: 'manual',
+          cover: { url: expect.any(String), cacheKey: coverKey },
+          pendingCount: 2,
+          pendingPhotographers: ['Kamran Studio'],
+        },
+      });
+      expect(store.settingsWrites).toEqual([]);
+    });
+
+    it('presigns the cover for the Admin, cached by its key, never a bucket URL', async () => {
+      const { settings } = GetEventSettingsResponse.parse(
+        await (await send('GET', `/events/${event.id}/settings`, 'token-a')).json(),
+      );
+      const url = new URL(settings.cover?.url ?? '');
+      expect(url.hostname).toBe(`${TEST_R2.bucket}.${TEST_R2.accountId}.r2.cloudflarestorage.com`);
+      expect(url.pathname).toBe(`/${coverKey}`);
+      expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
+      expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('sends a null cover and a null description for an event with neither', async () => {
+      event.coverKey = null;
+      event.description = null;
+      const { settings } = GetEventSettingsResponse.parse(
+        await (await send('GET', `/events/${event.id}/settings`, 'token-a')).json(),
+      );
+      expect(settings.cover).toBeNull();
+      expect(settings.description).toBeNull();
+    });
+
+    it('answers an archived event as any other', async () => {
+      event.archivedAt = '2026-12-20T09:30:00.123Z';
+      const response = await send('GET', `/events/${event.id}/settings`, 'token-a');
+      expect(response.status).toBe(200);
+    });
+
+    it('never sends the type or a QR secret, whatever the store row carries', async () => {
+      const text = await (await send('GET', `/events/${event.id}/settings`, 'token-a')).text();
+      expect(text).not.toContain('wedding');
+      expect(text).not.toContain(event.qrSecret);
+    });
+
+    it('answers 404 not_found when the event is deleted between the check and the read', async () => {
+      const racing = await startApp(
+        deps({
+          events: Object.assign(Object.create(store) as FakeEvents, {
+            settings: () => Promise.resolve(null),
+          }),
+        }),
+      );
+      try {
+        const response = await fetch(`${racing.baseUrl}/events/${event.id}/settings`, {
+          headers: { Authorization: 'Bearer token-a' },
+        });
+        expect(response.status).toBe(404);
+        expect(await errorCode(response)).toBe('not_found');
+      } finally {
+        await racing.close();
+      }
+    });
+
+    it('answers 500 rather than name more pending Photographers than pending requests', async () => {
+      const broken = await startApp(
+        deps({
+          events: Object.assign(Object.create(store) as FakeEvents, {
+            settings: (): Promise<SettingsRecord> =>
+              Promise.resolve({
+                name: 'Mehndi Night',
+                description: null,
+                approvalMode: 'manual',
+                coverKey: null,
+                pendingCount: 0,
+                pendingPhotographers: ['Kamran Studio'],
+              }),
+          }),
+        }),
+      );
+      try {
+        const response = await fetch(`${broken.baseUrl}/events/${event.id}/settings`, {
+          headers: { Authorization: 'Bearer token-a' },
+        });
+        expect(response.status).toBe(500);
+        expect(await errorCode(response)).toBe('internal_error');
+      } finally {
+        await broken.close();
+      }
+    });
+  });
+
+  describe('PATCH /events/{eventId}/settings', () => {
+    const patch = (body: unknown, token = 'token-a', eventId = event.id) =>
+      send('PATCH', `/events/${eventId}/settings`, token, body);
+
+    it.each([
+      ['an empty body', {}],
+      ['only undefined fields', { name: undefined }],
+      ['a type', { type: 'engagement' }],
+      ['a cover key', { coverKey: `events/${randomUUID()}/cover_${randomUUID()}.jpg` }],
+      ['an uploadId', { uploadId: randomUUID() }],
+      ['albumOpen', { albumOpen: true }],
+      ['albumOpen beside a valid field', { name: 'New Name', albumOpen: true }],
+      ['a blank name', { name: ' 　\t' }],
+      ['an 81-character name', { name: 'a'.repeat(81) }],
+      ['a name that is not a string', { name: 42 }],
+      ['a 501-character description', { description: 'a'.repeat(501) }],
+      ['a null description', { description: null }],
+      ['an approval mode that does not exist', { approvalMode: 'open' }],
+      ['a body that is an array', [{ name: 'New Name' }]],
+    ])('answers 400 invalid_request for %s, and writes nothing', async (_case, body) => {
+      const response = await patch(body);
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('answers 400 invalid_request for a body that is not JSON', async () => {
+      const response = await patch('{"name": ');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('answers 400 invalid_request for no body at all', async () => {
+      const response = await send('PATCH', `/events/${event.id}/settings`, 'token-a');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('checks the body before the caller, so a bad body is 400 from anyone', async () => {
+      const response = await patch({}, 'token-b');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('passes the store only the fields the body names, trimmed, and the cap of 150', async () => {
+      const response = await patch({ name: '  Mehndi & Dholki  ' });
+      expect(response.status).toBe(200);
+      expect(store.settingsWrites).toEqual([
+        { eventId: event.id, request: { name: 'Mehndi & Dholki' }, maxGuests: 150 },
+      ]);
+    });
+
+    it('answers with the settings after the write, and admits nobody for a name change', async () => {
+      const response = await patch({ name: 'Mehndi & Dholki' });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(UpdateEventSettingsResponse.parse(await response.json())).toEqual({
+        settings: {
+          name: 'Mehndi & Dholki',
+          description: 'Yellow dress code',
+          approvalMode: 'manual',
+          cover: { url: expect.any(String), cacheKey: coverKey },
+          pendingCount: 2,
+          pendingPhotographers: ['Kamran Studio'],
+        },
+        admitted: 0,
+      });
+    });
+
+    it('says how many a switch to auto admitted, and who is still pending', async () => {
+      const response = await patch({ approvalMode: 'auto' });
+      expect(response.status).toBe(200);
+      const body = UpdateEventSettingsResponse.parse(await response.json());
+      expect(body.admitted).toBe(2);
+      expect(body.settings).toMatchObject({
+        approvalMode: 'auto',
+        pendingCount: 0,
+        pendingPhotographers: [],
+      });
+    });
+
+    it('passes an empty description to the store, which clears it', async () => {
+      const response = await patch({ description: '' });
+      expect(response.status).toBe(200);
+      expect(store.settingsWrites[0]?.request).toEqual({ description: '' });
+      const { settings } = UpdateEventSettingsResponse.parse(await response.json());
+      expect(settings.description).toBeNull();
+    });
+
+    it('changes an archived event as any other', async () => {
+      event.archivedAt = '2026-12-20T09:30:00.123Z';
+      const response = await patch({ description: 'Mehndi at home' });
+      expect(response.status).toBe(200);
+      expect(event.description).toBe('Mehndi at home');
+    });
+
+    it('answers 404 not_found when the event is deleted between the check and the write', async () => {
+      const racing = await startApp(
+        deps({
+          events: Object.assign(Object.create(store) as FakeEvents, {
+            updateSettings: (): Promise<UpdateSettingsResult> =>
+              Promise.resolve({ outcome: 'not_found' }),
+          }),
+        }),
+      );
+      try {
+        const response = await fetch(`${racing.baseUrl}/events/${event.id}/settings`, {
+          method: 'PATCH',
+          headers: { Authorization: 'Bearer token-a', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ approvalMode: 'auto' }),
         });
         expect(response.status).toBe(404);
         expect(await errorCode(response)).toBe('not_found');
