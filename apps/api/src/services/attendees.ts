@@ -19,7 +19,7 @@ const Counter = z
   .max(19)
   .regex(/^[1-9][0-9]*$/)
   .refine((value) => BigInt(value) <= 9223372036854775807n);
-const Version = z.strictObject({ id: z.uuid(), version: Counter });
+export const Version = z.strictObject({ id: z.uuid(), version: Counter });
 export type Version = z.infer<typeof Version>;
 const Cursor = z.strictObject({
   eventId: z.uuid(),
@@ -30,17 +30,19 @@ const Cursor = z.strictObject({
 });
 type Cursor = z.infer<typeof Cursor>;
 
-function encode(value: Version | Cursor): string {
+// The opaque tokens the app hands back unchanged: access versions here, and the cursors of
+// Attendees and Pending Approvals (D-143, D-144).
+export function encode(value: object): string {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function decode<T>(schema: z.ZodType<T>, token: string): T {
+export function decode<T>(schema: z.ZodType<T>, token: string): T {
   try {
     const bytes = Buffer.from(token, 'base64url');
     if (bytes.toString('base64url') !== token) throw new Error('Noncanonical token');
     return schema.parse(JSON.parse(bytes.toString('utf8')) as unknown);
   } catch {
-    throw new ApiError('invalid_request', 'Invalid attendee token');
+    throw new ApiError('invalid_request', 'Invalid token');
   }
 }
 
