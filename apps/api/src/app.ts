@@ -4,6 +4,7 @@ import type { Express } from 'express';
 import helmet from 'helmet';
 import type { Logger } from 'pino';
 
+import { attendeeMutationController, listAttendeesController } from './controllers/attendees';
 import {
   createCoverUploadController,
   createEventController,
@@ -31,12 +32,14 @@ import type { DeleteObject, ObjectExists, ObjectSize, PresignGet, PresignPut } f
 import { optionalAuth, requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
 import { errorHandler, notFound } from './middleware/errors';
+import { attendeesRouter } from './routes/attendees';
 import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
 import { invitesRouter } from './routes/invites';
 import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
 import { subEventsRouter } from './routes/sub-events';
+import type { AttendeeStore } from './services/attendees';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { InviteStore } from './services/invites';
@@ -52,6 +55,7 @@ export interface AppDeps {
   verifyToken: VerifyToken;
   findProfile: FindProfile;
   events: EventStore;
+  attendees: AttendeeStore;
   invites: InviteStore;
   subEvents: SubEventStore;
   media: MediaStore;
@@ -89,6 +93,14 @@ export function createApp(deps: AppDeps): Express {
       add: addSubEventController(deps.events, deps.subEvents),
       update: updateSubEventController(deps.events, deps.subEvents),
       remove: deleteSubEventController(deps.events, deps.subEvents),
+    }),
+  );
+  app.use(
+    attendeesRouter(auth, {
+      list: listAttendeesController(deps.events, deps.attendees),
+      role: attendeeMutationController(deps.events, deps.attendees, 'role'),
+      remove: attendeeMutationController(deps.events, deps.attendees, 'remove'),
+      block: attendeeMutationController(deps.events, deps.attendees, 'block'),
     }),
   );
   const mediaDeps = {

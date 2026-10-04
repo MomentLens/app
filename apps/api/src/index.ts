@@ -5,6 +5,7 @@ import { loadEnv, r2Settings } from './config';
 import { createSupabase } from './db/supabase';
 import { createR2 } from './lib/r2';
 import { createTokenVerifier } from './middleware/auth';
+import { createAttendeeStore } from './services/attendees';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createInviteStore } from './services/invites';
@@ -54,6 +55,7 @@ createApp({
   verifyToken: createTokenVerifier(authClient),
   findProfile: createFindProfile(supabase),
   events: createEventStore(supabase),
+  attendees: createAttendeeStore(supabase),
   invites: createInviteStore(supabase),
   subEvents: createSubEventStore(supabase),
   media: createMediaStore(supabase),
