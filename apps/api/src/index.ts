@@ -9,6 +9,7 @@ import { createAttendeeStore } from './services/attendees';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createInviteStore } from './services/invites';
+import { createJoinRequestStore } from './services/join-requests';
 import { createMediaStore } from './services/media';
 import { createFindProfile } from './services/profiles';
 import { createSubEventStore } from './services/sub-events';
@@ -56,6 +57,7 @@ createApp({
   findProfile: createFindProfile(supabase),
   events: createEventStore(supabase),
   attendees: createAttendeeStore(supabase),
+  joinRequests: createJoinRequestStore(supabase),
   invites: createInviteStore(supabase),
   subEvents: createSubEventStore(supabase),
   media: createMediaStore(supabase),
