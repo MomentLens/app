@@ -164,16 +164,19 @@ it('returns active attendees with null avatars and no presigning', async () => {
   expect(presignGet).not.toHaveBeenCalled();
 });
 
-it.each(['?role=admin&role=guest', '?userId=someone', '?cursor=garbage', '?role=owner'])(
-  'rejects query %s',
-  async (query) => {
-    const response = await fetch(`${running.baseUrl}/events/${EVENT}/attendees${query}`, {
-      headers: { Authorization: 'Bearer admin' },
-    });
-    await refusal(response, 400, 'invalid_request');
-    expect(list).not.toHaveBeenCalled();
-  },
-);
+it.each([
+  '?role=admin&role=guest',
+  '?userId=someone',
+  '?cursor=garbage',
+  '?role=owner',
+  `?search=${'a'.repeat(81)}`,
+])('rejects query %s', async (query) => {
+  const response = await fetch(`${running.baseUrl}/events/${EVENT}/attendees${query}`, {
+    headers: { Authorization: 'Bearer admin' },
+  });
+  await refusal(response, 400, 'invalid_request');
+  expect(list).not.toHaveBeenCalled();
+});
 
 it.each(actions.slice(1))(
   'rejects target injection and Admin promotion on $suffix',
@@ -264,7 +267,7 @@ it('returns an empty page and handles a transactional actor recheck', async () =
   await refusal(await send(actions[0]!, 'admin'), 403, 'not_member');
 });
 
-it('passes literal search and uses a cursor bound to the event and filters', async () => {
+it('passes trimmed literal search and uses a cursor bound to the event and filters', async () => {
   const rows = Array.from({ length: 51 }, (_, index) => ({
     id: randomUUID(),
     userId: randomUUID(),
@@ -280,7 +283,7 @@ it('passes literal search and uses a cursor bound to the event and filters', asy
   expect(first.attendees).toHaveLength(50);
   expect(first.nextCursor).not.toBeNull();
   expect(list).toHaveBeenLastCalledWith(EVENT, ADMIN, {
-    search: ' _%\\ ',
+    search: '_%\\',
     role: 'photographer',
     after: null,
   });
@@ -291,7 +294,7 @@ it('passes literal search and uses a cursor bound to the event and filters', asy
   expect(second.attendees).toHaveLength(1);
   expect(second.nextCursor).toBeNull();
   expect(list).toHaveBeenLastCalledWith(EVENT, ADMIN, {
-    search: ' _%\\ ',
+    search: '_%\\',
     role: 'photographer',
     after: { name: rows[49]!.fullName, userId: rows[49]!.userId },
   });
