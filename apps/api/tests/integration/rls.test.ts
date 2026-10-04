@@ -4,8 +4,9 @@
 // signed (D-109), create_event and list_my_events through the API's event store (D-110),
 // get_my_event through the same store (D-118), resolve_invite, join_event, the cancel and the join
 // request list through the API's stores (D-115), sub_event_schedule, add_sub_event,
-// update_sub_event and delete_sub_event through the API's sub-event store (D-121), and media,
-// start_upload and complete_upload through the API's media store (D-95, D-122). It needs a
+// update_sub_event and delete_sub_event through the API's sub-event store (D-121), media,
+// start_upload and complete_upload through the API's media store (D-95, D-122), and
+// event_settings and update_event_settings through the API's event store (D-142). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
 // dev project from the environment. Each test makes its own accounts under @momentlens.me and
 // deletes them after, and deletes the events it made. No email is sent, because the accounts are
@@ -38,7 +39,12 @@ import type {
 import { createServerClient } from '../../src/db/supabase';
 import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
-import { createEventParams, createEventStore, MAX_ACTIVE_GUESTS } from '../../src/services/events';
+import {
+  createEventParams,
+  createEventStore,
+  MAX_ACTIVE_GUESTS,
+  updateEventSettingsParams,
+} from '../../src/services/events';
 import { createDatabaseCheck } from '../../src/services/health';
 import {
   createInviteStore,
@@ -2670,6 +2676,371 @@ if (project === null) {
 
         await expect(mediaRow(upload.mediaId)).resolves.toEqual(before);
         await expect(countMedia(event.id)).resolves.toBe(1);
+      });
+    });
+
+    describe('event_settings and update_event_settings', () => {
+      const invites = createInviteStore(admin);
+      // A small cap, as the join_event tests pass, so the last place costs a few accounts.
+      const CAP = 3;
+
+      async function setEvent(eventId: string, fields: Record<string, unknown>) {
+        const result = await admin.from('event').update(fields).eq('id', eventId);
+        expect(result.error).toBeNull();
+      }
+
+      // A join request made at this time, so a test sets the order a switch admits in.
+      async function addRequest(
+        eventId: string,
+        userId: string,
+        role: string,
+        requestedAt: string,
+      ) {
+        const result = await admin.from('membership').insert({
+          event_id: eventId,
+          user_id: userId,
+          role,
+          status: 'pending',
+          requested_at: requestedAt,
+        });
+        expect(result.error).toBeNull();
+      }
+
+      // Each user's status in the event, in the order given, null for no row.
+      async function statuses(eventId: string, users: { id: string }[]) {
+        const result = await admin
+          .from('membership')
+          .select('user_id, status')
+          .eq('event_id', eventId);
+        expect(result.error).toBeNull();
+        const rows = (result.data ?? []) as { user_id: string; status: string }[];
+        return users.map((user) => rows.find((row) => row.user_id === user.id)?.status ?? null);
+      }
+
+      async function eventRow(eventId: string) {
+        const result = await admin
+          .from('event')
+          .select('name, description, approval_mode')
+          .eq('id', eventId)
+          .single();
+        expect(result.error).toBeNull();
+        return result.data;
+      }
+
+      async function activeGuests(eventId: string) {
+        const result = await admin
+          .from('membership')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId)
+          .eq('role', 'guest')
+          .eq('status', 'active');
+        expect(result.error).toBeNull();
+        return result.count;
+      }
+
+      it('reads the form and the pending requests, and nothing for a deleted or unknown event', async () => {
+        const [a, p1, p2, g, b] = [
+          await createNamedUser(),
+          await createNamedUser('Bilal Studio'),
+          await createNamedUser('Ayesha Lens'),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(
+          a.id,
+          request({ approvalMode: 'manual', description: 'Mehndi at home' }),
+        );
+        await addRequest(event.id, p1.id, 'photographer', iso(T0 + HOUR));
+        await addRequest(event.id, p2.id, 'photographer', iso(T0));
+        await addRequest(event.id, g.id, 'guest', iso(T0));
+        await addMember(event.id, b.id, 'photographer', 'blocked');
+
+        const expected = {
+          name: 'RLS Test Wedding',
+          description: 'Mehndi at home',
+          approvalMode: 'manual',
+          coverKey: null,
+          pendingCount: 3,
+          pendingPhotographers: ['Ayesha Lens', 'Bilal Studio'],
+        };
+        await expect(store.settings(event.id)).resolves.toEqual(expected);
+        await setEvent(event.id, { archived_at: new Date().toISOString() });
+        await expect(store.settings(event.id)).resolves.toEqual(expected);
+        await setEvent(event.id, { deleted_at: new Date().toISOString() });
+        await expect(store.settings(event.id)).resolves.toBeNull();
+        await expect(store.settings(randomUUID())).resolves.toBeNull();
+      });
+
+      it('admits every pending Photographer, then Guests oldest first up to the cap, on a switch to auto', async () => {
+        const [a, g, x1, x2, x3, p1, p2, blocked, removed] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser('Late Photographer'),
+          await createNamedUser('Early Photographer'),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addRequest(event.id, x3.id, 'guest', iso(T0 + 3 * HOUR));
+        await addRequest(event.id, x1.id, 'guest', iso(T0 + HOUR));
+        await addRequest(event.id, x2.id, 'guest', iso(T0 + 2 * HOUR));
+        // Later than every Guest, and still in: Photographers never count toward the cap.
+        await addRequest(event.id, p1.id, 'photographer', iso(T0 + 4 * HOUR));
+        await addRequest(event.id, p2.id, 'photographer', iso(T0));
+        await addMember(event.id, blocked.id, 'guest', 'blocked');
+        await addMember(event.id, removed.id, 'guest', 'removed');
+        // x1 also waits on another of A's events, which this switch must not touch.
+        const other = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(other.id, x1.id, 'guest', iso(T0));
+
+        // A cap of 3 with one Guest active leaves two places, for x1 and x2.
+        await expect(
+          store.updateSettings(event.id, { approvalMode: 'auto' }, CAP),
+        ).resolves.toEqual({
+          outcome: 'updated',
+          admitted: 4,
+          settings: {
+            name: 'RLS Test Wedding',
+            description: null,
+            approvalMode: 'auto',
+            coverKey: null,
+            pendingCount: 1,
+            pendingPhotographers: [],
+          },
+        });
+        await expect(
+          statuses(event.id, [a, g, x1, x2, x3, p1, p2, blocked, removed]),
+        ).resolves.toEqual([
+          'active',
+          'active',
+          'active',
+          'active',
+          'pending',
+          'active',
+          'active',
+          'blocked',
+          'removed',
+        ]);
+        await expect(statuses(other.id, [x1])).resolves.toEqual(['pending']);
+        await expect(eventRow(other.id)).resolves.toMatchObject({ approval_mode: 'manual' });
+
+        // An event already past the cap admits no Guest, and still admits a Photographer.
+        await setEvent(event.id, { approval_mode: 'manual' });
+        await admin
+          .from('membership')
+          .update({ status: 'pending' })
+          .eq('event_id', event.id)
+          .eq('user_id', p1.id);
+        await expect(
+          store.updateSettings(event.id, { approvalMode: 'auto' }, 1),
+        ).resolves.toMatchObject({ outcome: 'updated', admitted: 1 });
+        await expect(statuses(event.id, [x3, p1])).resolves.toEqual(['pending', 'active']);
+      });
+
+      it('changes no membership on a switch to manual, on auto sent to an auto event, or on a name change', async () => {
+        const [a, x, p] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser('Waiting Photographer'),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(event.id, x.id, 'guest', iso(T0));
+        await addRequest(event.id, p.id, 'photographer', iso(T0));
+        const unchanged = {
+          pendingCount: 2,
+          pendingPhotographers: ['Waiting Photographer'],
+        };
+
+        await expect(store.updateSettings(event.id, { name: 'Renamed' }, CAP)).resolves.toEqual({
+          outcome: 'updated',
+          admitted: 0,
+          settings: expect.objectContaining({
+            name: 'Renamed',
+            approvalMode: 'manual',
+            ...unchanged,
+          }),
+        });
+        await expect(
+          store.updateSettings(event.id, { approvalMode: 'manual' }, CAP),
+        ).resolves.toMatchObject({ admitted: 0, settings: unchanged });
+
+        // An auto event with requests still pending, as the cap leaves them: auto again admits
+        // nobody, and manual changes nobody.
+        await setEvent(event.id, { approval_mode: 'auto' });
+        await expect(
+          store.updateSettings(event.id, { approvalMode: 'auto' }, CAP),
+        ).resolves.toMatchObject({ admitted: 0, settings: { approvalMode: 'auto', ...unchanged } });
+        await expect(
+          store.updateSettings(event.id, { approvalMode: 'manual' }, CAP),
+        ).resolves.toMatchObject({
+          admitted: 0,
+          settings: { approvalMode: 'manual', ...unchanged },
+        });
+        await expect(statuses(event.id, [x, p])).resolves.toEqual(['pending', 'pending']);
+      });
+
+      it('writes the name and the description, clears an empty description, and edits an archived event', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id, request({ description: 'Old description' }));
+
+        await expect(
+          store.updateSettings(event.id, { name: 'New Name', description: 'New description' }, CAP),
+        ).resolves.toMatchObject({
+          settings: { name: 'New Name', description: 'New description', approvalMode: 'auto' },
+        });
+        await expect(
+          store.updateSettings(event.id, { description: '' }, CAP),
+        ).resolves.toMatchObject({ settings: { name: 'New Name', description: null } });
+        await expect(eventRow(event.id)).resolves.toEqual({
+          name: 'New Name',
+          description: null,
+          approval_mode: 'auto',
+        });
+
+        await setEvent(event.id, { archived_at: new Date().toISOString() });
+        await expect(
+          store.updateSettings(event.id, { approvalMode: 'manual' }, CAP),
+        ).resolves.toMatchObject({ outcome: 'updated', settings: { approvalMode: 'manual' } });
+      });
+
+      it('answers not_found for a deleted or unknown event, and writes nothing', async () => {
+        const [a, x] = [await createNamedUser(), await createNamedUser()];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(event.id, x.id, 'guest', iso(T0));
+        await setEvent(event.id, { deleted_at: new Date().toISOString() });
+
+        await expect(
+          store.updateSettings(event.id, { name: 'Changed', approvalMode: 'auto' }, CAP),
+        ).resolves.toEqual({ outcome: 'not_found' });
+        await expect(eventRow(event.id)).resolves.toEqual({
+          name: 'RLS Test Wedding',
+          description: null,
+          approval_mode: 'manual',
+        });
+        await expect(statuses(event.id, [x])).resolves.toEqual(['pending']);
+        await expect(
+          store.updateSettings(randomUUID(), { approvalMode: 'auto' }, CAP),
+        ).resolves.toEqual({ outcome: 'not_found' });
+      });
+
+      it('refuses what the contract refuses, with nothing written', async () => {
+        const a = await createNamedUser();
+        const event = await createdEvent(a.id);
+        const params = updateEventSettingsParams(event.id, { name: 'Valid' }, CAP);
+        for (const refused of [
+          { ...params, p_name: '   ' },
+          { ...params, p_name: 'a'.repeat(81) },
+          { ...params, p_description: ' padded ' },
+          { ...params, p_description: 'a'.repeat(501) },
+          { ...params, p_approval_mode: 'open' },
+          { ...params, p_max_guests: -1 },
+          { ...params, p_name: null },
+        ]) {
+          const call = await admin.rpc('update_event_settings', refused);
+          expect(call.error).not.toBeNull();
+        }
+        await expect(eventRow(event.id)).resolves.toEqual({
+          name: 'RLS Test Wedding',
+          description: null,
+          approval_mode: 'auto',
+        });
+      });
+
+      it('lets two switches at once admit each request once, and never past the cap', async () => {
+        const [a, g, x1, x2, x3] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addRequest(event.id, x1.id, 'guest', iso(T0));
+        await addRequest(event.id, x2.id, 'guest', iso(T0 + HOUR));
+        await addRequest(event.id, x3.id, 'guest', iso(T0 + 2 * HOUR));
+
+        const results = await Promise.all([
+          store.updateSettings(event.id, { approvalMode: 'auto' }, CAP),
+          store.updateSettings(event.id, { approvalMode: 'auto' }, CAP),
+        ]);
+        expect(results.map((r) => ('admitted' in r ? r.admitted : null)).sort()).toEqual([0, 2]);
+        await expect(activeGuests(event.id)).resolves.toBe(CAP);
+        await expect(statuses(event.id, [x1, x2, x3])).resolves.toEqual([
+          'active',
+          'active',
+          'pending',
+        ]);
+      });
+
+      it('lets a switch and a join for the last place leave the event at the cap', async () => {
+        const [a, g, x, j] = [
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+          await createNamedUser(),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addRequest(event.id, x.id, 'guest', iso(T0));
+        const invite = await admin
+          .from('invite')
+          .select('token')
+          .eq('event_id', event.id)
+          .eq('role', 'guest')
+          .is('revoked_at', null)
+          .single();
+        expect(invite.error).toBeNull();
+        const { token } = invite.data as { token: string };
+
+        // A cap of 2 leaves one place. The switch first admits x and the join finds the event
+        // full; the join first waits as a request, and the switch admits x, who asked earlier.
+        const [switched, joined] = await Promise.all([
+          store.updateSettings(event.id, { approvalMode: 'auto' }, 2),
+          invites.join(j.id, { token }, 2),
+        ]);
+        expect(switched).toMatchObject({ outcome: 'updated', admitted: 1 });
+        expect(['full', 'created']).toContain(joined.outcome);
+        await expect(activeGuests(event.id)).resolves.toBe(2);
+        await expect(statuses(event.id, [x])).resolves.toEqual(['active']);
+      });
+
+      it('lets neither the publishable key nor a signed-in Admin call either function', async () => {
+        const [a, x] = [await createNamedUser(), await createNamedUser()];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(event.id, x.id, 'guest', iso(T0));
+        const clients = [
+          createServerClient(project.url, project.publishableKey),
+          // The event's own Admin, who still reads and writes nothing directly (root invariant 14).
+          await signedInClient(a),
+        ];
+
+        for (const client of clients) {
+          const read = await client.rpc('event_settings', { p_event_id: event.id });
+          expect(read.error).not.toBeNull();
+          expect(read.data).toBeNull();
+          const write = await client.rpc(
+            'update_event_settings',
+            updateEventSettingsParams(
+              event.id,
+              { name: 'Changed', approvalMode: 'auto' },
+              MAX_ACTIVE_GUESTS,
+            ),
+          );
+          expect(write.error).not.toBeNull();
+          expect(write.data).toBeNull();
+        }
+
+        await expect(eventRow(event.id)).resolves.toEqual({
+          name: 'RLS Test Wedding',
+          description: null,
+          approval_mode: 'manual',
+        });
+        await expect(statuses(event.id, [x])).resolves.toEqual(['pending']);
       });
     });
   });
