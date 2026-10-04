@@ -1,4 +1,8 @@
 import {
+  ApproveRequestsResponse,
+  BlockRequestResponse,
+  ListPendingRequestsResponse,
+  RejectRequestsResponse,
   BlockAttendeeResponse,
   CancelJoinRequestResponse,
   ChangeAttendeeRoleResponse,
@@ -18,6 +22,10 @@ import {
   SetEventCoverResponse,
   UpdateEventSettingsResponse,
   type AddSubEventRequest,
+  type ApproveRequestsRequest,
+  type BlockRequestRequest,
+  type ListPendingRequestsRequest,
+  type RejectRequestsRequest,
   type BlockAttendeeRequest,
   type ChangeAttendeeRoleRequest,
   type CreateEventRequest,
@@ -405,6 +413,57 @@ export async function blockAttendee(
   });
   if (response.status !== 200) throw await errorFrom('POST attendee block', response);
   return parseBody('POST attendee block', response, BlockAttendeeResponse);
+}
+
+export async function listPendingRequests(
+  eventId: string,
+  { cursor }: ListPendingRequestsRequest = {},
+  signal?: AbortSignal,
+): Promise<ListPendingRequestsResponse> {
+  const query = cursor === undefined ? '' : `?cursor=${encodeURIComponent(cursor)}`;
+  const response = await authenticatedRequest(
+    `/events/${encodeURIComponent(eventId)}/join-requests${query}`,
+    { signal },
+  );
+  if (response.status !== 200) throw await errorFrom('GET join requests', response);
+  return parseBody('GET join requests', response, ListPendingRequestsResponse);
+}
+
+export async function approveRequests(
+  eventId: string,
+  body: ApproveRequestsRequest,
+): Promise<ApproveRequestsResponse> {
+  const response = await authenticatedRequest(
+    `/events/${encodeURIComponent(eventId)}/join-requests/approve`,
+    { method: 'POST', body },
+  );
+  if (response.status !== 200) throw await errorFrom('POST approve requests', response);
+  return parseBody('POST approve requests', response, ApproveRequestsResponse);
+}
+
+export async function rejectRequests(
+  eventId: string,
+  body: RejectRequestsRequest,
+): Promise<RejectRequestsResponse> {
+  const response = await authenticatedRequest(
+    `/events/${encodeURIComponent(eventId)}/join-requests/reject`,
+    { method: 'POST', body },
+  );
+  if (response.status !== 200) throw await errorFrom('POST reject requests', response);
+  return parseBody('POST reject requests', response, RejectRequestsResponse);
+}
+
+export async function blockRequest(
+  eventId: string,
+  userId: string,
+  body: BlockRequestRequest,
+): Promise<BlockRequestResponse> {
+  const response = await authenticatedRequest(
+    `/events/${encodeURIComponent(eventId)}/join-requests/${encodeURIComponent(userId)}/block`,
+    { method: 'POST', body },
+  );
+  if (response.status !== 200) throw await errorFrom('POST block request', response);
+  return parseBody('POST block request', response, BlockRequestResponse);
 }
 
 // The event an invite previews, and the caller's own membership when someone is signed in
