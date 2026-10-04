@@ -6,6 +6,7 @@
 // depend on Node or DOM globals.
 export * from './errors';
 export * from './event';
+export * from './event-settings';
 export * from './health';
 export * from './image';
 export * from './invite';
