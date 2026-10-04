@@ -1,6 +1,6 @@
 import { useNavigation, useRouter } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, Alert, Platform, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
@@ -66,6 +66,9 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
   // A picked photo still being re-encoded. Save waits for it, or the save would go without it.
   const [preparingCover, setPreparingCover] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Set before the first await, so a second tap that lands before `saving` re-renders the button
+  // starts no second save.
+  const savingNow = useRef(false);
   const [closing, setClosing] = useState(false);
   const [showProblems, setShowProblems] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -97,16 +100,26 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
     setEdits((current) => ({ ...current, ...change }));
   }
 
-  function stop(message: string) {
-    setProblem(message);
+  function begin() {
+    savingNow.current = true;
+    setSaving(true);
+  }
+
+  function end() {
+    savingNow.current = false;
     setSaving(false);
   }
 
+  function stop(message: string) {
+    setProblem(message);
+    end();
+  }
+
   async function save() {
-    if (saving || preparingCover || !settings || !shown) return;
+    if (savingNow.current || preparingCover || !settings || !shown) return;
     setShowProblems(true);
     if (Object.keys(settingsProblems(shown)).length > 0) return;
-    setSaving(true);
+    begin();
     setProblem(null);
 
     let body = settingsPatch(settings, edits);
@@ -130,7 +143,7 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
           'Save',
         ))
       ) {
-        setSaving(false);
+        end();
         return;
       }
     }
@@ -156,7 +169,7 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
       setCover(null);
     }
 
-    setSaving(false);
+    end();
     setClosing(true);
     if (waiting !== null) {
       Alert.alert(
