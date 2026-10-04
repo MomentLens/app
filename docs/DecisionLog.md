@@ -1200,6 +1200,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** A migration adds the column to `membership` and drops it from `subject`; S-29 writes it. The avatar rule reads memberships instead of the subject. Someone who wants privacy everywhere turns it on in each event, and photos uploaded between their join and that tap show their face until `reprocess` finishes. The demo account turns it on in the demo event beforehand.
 **Reopen if.** Testers turn it on in every event they join, which says they wanted one switch.
 **Amended (see D-143).** Until S-29 supplies event-scoped avatar privacy, S-06 returns no attendee avatar. S-29 replaces that staging rule with this event-scoped rule through the shared presigner.
+**Amended (see D-144).** Reject keeps the row as `removed`, so it keeps the flag too. S-29 makes Cancel Request return a row whose flag is set to `removed` instead of deleting it.
 
 ### D-130: Only the uploader or the Admin deletes a photo, and nobody restores it
 **Decision.** Amends D-42, D-96 and D-123, and spec §2.5.6, §2.5.7 and §4.21.
@@ -1301,6 +1302,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** A confirm on every bulk action. No confirm at all.
 **Cost.** The confirm reads the roles in the selection.
 **Reopen if.** An Admin approves a stranger as a Guest by bulk action and asks for a confirm there too.
+**Amended (see D-144).** "Approve All" means the selection. Any approve whose batch holds a Photographer asks first, a single row included.
 
 ### D-140: Account Settings groups what stays on the phone
 **Decision.** Amends spec §4.19's grouping and D-105.
@@ -1356,6 +1358,26 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Listing inactive people without rules for their actions or profile visibility. Queueing access changes offline. Blind retries and last-write-wins attendee actions. A counter without the membership row identity. Moving S-29's Do Not Publish migration into S-06. Reading the old account-wide flag for attendee avatars. Loading every Photographer in one unbounded list.
 **Cost.** S-06 adds a version column, two update guards, SQL functions and a conflict code. Admins need connectivity and must refetch after a stale or uncertain result. Attendee avatars stay hidden until S-29. S-07 uses the same access-version machinery for pending actions, and S-29 upgrades attendee avatars.
 **Reopen if.** The Admin needs to review removed or blocked people, or testers need attendee management offline.
+**Amended (see D-144).** S-07's batch actions name their targets in the body, each with its `accessVersion`. Pending Approvals returns `avatar: null` under the same staging until S-29.
+
+### D-144: Pending Approvals rulings from S-07's read-back
+**Decision.** Amends D-129, D-139 and D-143, and specifies spec §2.1.3, §2.5.7 and §4.4. Ukasha ruled on the first three on 2026-10-04, at S-07's read-back, and let the routine calls stand.
+- Reject sets the membership to `removed` and keeps the row. The person may ask again through a live invite, as a removed member may (D-102), and the app already routes a `removed` row as it routes no row (D-115). The row keeps the `dnp_activated_at` that S-29 adds, which D-129 says is never cleared. Cancel Request still deletes the caller's own pending row until S-29, which makes a cancel return a row whose `dnp_activated_at` is set to `removed` instead.
+- The Admin blocks a pending request one row at a time, after a confirm. Block sets `blocked`, and the person sees Join Blocked the next time they open an invite (D-115). There is no bulk block.
+- Approve and reject take a batch of 1 to 50 distinct people, and a tap on one row sends a batch of one. The body names each target by `userId` with the `accessVersion` the list returned, so a request cancelled and made again through the other link never matches (D-143). A batch is all or nothing. A target with no row in the event, one that is not `pending`, the Admin's included, or a stale token answers 409 `membership_changed`. Guests that would take the event past 150 active Guests answer 422 `event_full`, and Photographers do not count (D-102). Either refusal writes nothing.
+- Four endpoints, for the event's active Admin only: `GET /events/{eventId}/join-requests`, `POST /events/{eventId}/join-requests/approve`, `POST /events/{eventId}/join-requests/reject` and `POST /events/{eventId}/join-requests/{userId}/block`. Each write is one SQL function called with `rpc`. It takes `join_event`'s `FOR NO KEY UPDATE` lock on the event, rechecks the event and the actor, then locks the target rows in `user_id` order before it checks them, so two overlapping batches cannot deadlock (arch:membership, D-95). The event and actor refusals are D-143's.
+- Routine calls:
+  - The list holds `pending` rows, oldest `requested_at` first, then `user_id`, in pages of 50 with an opaque cursor. Each row carries `userId`, `fullName`, `role`, `requestedAt`, `accessVersion` and `avatar`. The response also carries `guestPlacesLeft`, the active Guest places the cap leaves, because the error body has no room for it and the app says how many fit after a 422.
+  - `avatar` is null for everyone until S-29, as D-143 rules for Attendees.
+  - Any approve whose batch holds a Photographer asks first and names them, a single row included. Reject asks nothing, since the person can ask again.
+  - An archived event permits all three actions, a deleted one answers 404 `not_found`, and sub-event timing gates none of them, as D-142 and D-143 rule.
+  - The writes need a connection, are never queued, and are never retried when their result is uncertain. A 409 or an uncertain result refetches the list before another action (D-143).
+  - The list refetches on focus, on foreground, on pull, after every action, and every 30 seconds while open, as the requester's screen does (D-115). Membership has no Realtime (D-118).
+  - The Manage hub's row has no count badge, and stays enabled on an `auto` event, where the cap can leave requests waiting (D-142).
+**Why.** S-07's read-back found four gaps. Reject deleted the row a rejoined member's Do Not Publish flag will live on. Spec §2.1.3 and §4.4 listed Block on a request and §2.5.7 did not, and no function could block a pending row. "Approve All" had no meaning once the list is paged. Nothing said what a batch that crosses the cap or holds a stale row does.
+**Rejected.** Deleting the row on reject. Bulk block. A partial batch that admits the oldest Guests that fit, as D-142's switch does, because the Admin picked these people by hand. An endpoint that approves every pending request, which admits rows the Admin never loaded. A confirm on reject.
+**Cost.** One migration with four SQL functions. A `removed` row now also means "rejected", so the table cannot tell a rejected requester from a removed member, and nothing reads the difference yet. An Admin whose batch is refused deselects and taps again. S-29 changes Cancel Request.
+**Reopen if.** An Admin needs to see who was rejected, or testers find a batch refused at the cap confusing.
 
 ## Open items that are not decisions yet
 
