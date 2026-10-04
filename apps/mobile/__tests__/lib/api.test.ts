@@ -85,6 +85,122 @@ afterEach(() => {
   delete process.env.EXPO_PUBLIC_API_URL;
 });
 
+describe('pending approval endpoints', () => {
+  const eventId = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const targets = [{ userId, expectedVersion: 'opaque-1' }];
+  const membership = { userId, role: 'guest', status: 'active', accessVersion: 'opaque-2' };
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+  }
+  it('encodes an opaque list cursor and parses the available Guest places', async () => {
+    signIn();
+    const body = { requests: [], nextCursor: null, guestPlacesLeft: 0 };
+    const fetched = answers(200, body);
+    globalThis.fetch = fetched;
+    await expect(
+      loadApi(BASE_URL).listPendingRequests(eventId, { cursor: 'a/b+=' }),
+    ).resolves.toEqual(body);
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/join-requests?cursor=a%2Fb%2B%3D`,
+    );
+    expect(fetched.mock.calls[0]?.[1]?.body).toBeUndefined();
+  });
+  it.each(['approveRequests', 'rejectRequests', 'blockRequest'] as const)(
+    'sends %s once with the loaded version and parses its response',
+    async (method) => {
+      signIn();
+      const status =
+        method === 'approveRequests'
+          ? 'active'
+          : method === 'rejectRequests'
+            ? 'removed'
+            : 'blocked';
+      const result =
+        method === 'blockRequest'
+          ? { membership: { ...membership, status } }
+          : { memberships: [{ ...membership, status }] };
+      const fetched = answers(200, result);
+      globalThis.fetch = fetched;
+      const api = loadApi(BASE_URL);
+      await expect(
+        method === 'blockRequest'
+          ? api.blockRequest(eventId, userId, { expectedVersion: 'opaque-1' })
+          : api[method](eventId, { targets }),
+      ).resolves.toEqual(result);
+      expect(fetched.mock.calls[0]?.[0]).toBe(
+        `https://api.example.test/events/${eventId}/join-requests/${method === 'blockRequest' ? `${userId}/block` : method === 'approveRequests' ? 'approve' : 'reject'}`,
+      );
+      expect(fetched.mock.calls[0]?.[1]?.method).toBe('POST');
+      expect(JSON.parse(fetched.mock.calls[0]?.[1]?.body as string)).toEqual(
+        method === 'blockRequest' ? { expectedVersion: 'opaque-1' } : { targets },
+      );
+      expect(fetched).toHaveBeenCalledTimes(1);
+    },
+  );
+  it.each(['approveRequests', 'rejectRequests', 'blockRequest'] as const)(
+    'allows %s one resend only after Auth refuses it with 401',
+    async (method) => {
+      signIn();
+      mockAuth.refreshSession.mockResolvedValue({
+        data: { session: { access_token: 'fresh' } },
+        error: null,
+      });
+      const status =
+        method === 'approveRequests'
+          ? 'active'
+          : method === 'rejectRequests'
+            ? 'removed'
+            : 'blocked';
+      const result =
+        method === 'blockRequest'
+          ? { membership: { ...membership, status } }
+          : { memberships: [{ ...membership, status }] };
+      const fetched = answers(401, { error: { code: 'no_session', message: 'expired' } });
+      fetched
+        .mockImplementationOnce(answers(401, { error: { code: 'no_session', message: 'expired' } }))
+        .mockImplementationOnce(answers(200, result));
+      globalThis.fetch = fetched;
+      const api = loadApi(BASE_URL);
+      await (method === 'blockRequest'
+        ? api.blockRequest(eventId, userId, { expectedVersion: 'opaque-1' })
+        : api[method](eventId, { targets }));
+      expect(fetched).toHaveBeenCalledTimes(2);
+      expect(fetched.mock.calls[1]?.[1]?.body).toBe(fetched.mock.calls[0]?.[1]?.body);
+      expect((fetched.mock.calls[1]?.[1]?.headers as Record<string, string>).Authorization).toBe(
+        'Bearer fresh',
+      );
+    },
+  );
+  it.each([409, 422, 500])('does not resend an approval after a %s answer', async (status) => {
+    signIn();
+    const fetched = answers(status, {
+      error: {
+        code:
+          status === 409 ? 'membership_changed' : status === 422 ? 'event_full' : 'internal_error',
+        message: 'x',
+      },
+    });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).approveRequests(eventId, { targets })).rejects.toMatchObject({
+      status,
+    });
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+  it('treats a malformed success as uncertain and sends no second write', async () => {
+    signIn();
+    const fetched = answers(200, { memberships: [{ ...membership, status: 'pending' }] });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).approveRequests(eventId, { targets })).rejects.toMatchObject({
+      status: 200,
+    });
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('attendee endpoints', () => {
   const eventId = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
   const userId = '11111111-1111-4111-8111-111111111111';
