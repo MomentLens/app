@@ -57,7 +57,14 @@ export function ManageHub({ eventId }: { eventId: string }) {
       </Section>
       <SectionGap />
       <Section>
-        <Row title="Attendees" leading={<HubGlyph name={GLYPH.attendees} />} {...LATER} />
+        <Row
+          title="Attendees"
+          leading={<HubGlyph name={GLYPH.attendees} />}
+          chevron
+          onPress={() =>
+            router.push({ pathname: '/event/[id]/manage/attendees', params: { id: eventId } })
+          }
+        />
         <Row
           title="Invite"
           {...detail('Links and QR codes')}
