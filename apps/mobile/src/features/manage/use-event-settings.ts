@@ -11,7 +11,7 @@ import { eventQueryKey, recheckEvent, retryUnlessRefused } from '@/features/even
 import { uploadCover } from '@/features/events/cover';
 import type { DraftCover } from '@/features/events/draft';
 import { rememberEventChanges } from '@/features/events/use-events';
-import { saveProblem, type SavePart } from '@/features/manage/settings';
+import { saveProblem, type SaveFailure, type SavePart } from '@/features/manage/settings';
 import { ApiError, getEventSettings, updateEventSettings } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 
@@ -50,7 +50,7 @@ export type Outcome<T> = { ok: true; value: T } | { ok: false; problem: string }
 // cover's own PUT to R2, which never reached the API, so it reads as no answer at all.
 function failure(eventId: string, error: unknown, part: SavePart, detailsSaved = false) {
   void queryClient.invalidateQueries({ queryKey: eventSettingsQueryKey(eventId), exact: true });
-  const refusal: { status?: number; code?: ApiError['code'] } =
+  const refusal: SaveFailure =
     error instanceof ApiError ? error : part === 'cover' ? {} : { status: 500 };
   if (refusal.status === 403 || refusal.status === 404) {
     recheckEvent(eventId);
@@ -70,7 +70,7 @@ export async function freshSettings(eventId: string): Promise<Outcome<EventSetti
     });
     return { ok: true, value: settings };
   } catch (error) {
-    return failure(eventId, error, 'details');
+    return failure(eventId, error, 'check');
   }
 }
 
