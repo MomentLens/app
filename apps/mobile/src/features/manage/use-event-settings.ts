@@ -7,7 +7,7 @@ import type {
 } from '@momentlens/shared-types';
 import { useQuery } from '@tanstack/react-query';
 
-import { eventQueryKey } from '@/features/event-shell/use-event';
+import { eventQueryKey, recheckEvent, retryUnlessRefused } from '@/features/event-shell/use-event';
 import { uploadCover } from '@/features/events/cover';
 import type { DraftCover } from '@/features/events/draft';
 import { rememberEventChanges } from '@/features/events/use-events';
@@ -19,13 +19,6 @@ import { queryClient } from '@/lib/query-client';
 // form alone, as the schedule's key does.
 export function eventSettingsQueryKey(eventId: string) {
   return ['event-settings', eventId] as const;
-}
-
-// A refusal means the caller's place in the event changed: removed, blocked, or the event deleted.
-// The shell reads that from the event query, so the event refetches and the shell shows the lost
-// state or the new role's tabs (hb §5.3, D-118).
-function recheckEvent(eventId: string): void {
-  void queryClient.invalidateQueries({ queryKey: eventQueryKey(eventId), exact: true });
 }
 
 async function fetchSettings(eventId: string, signal?: AbortSignal): Promise<EventSettings> {
@@ -46,10 +39,7 @@ export function useEventSettings(eventId: string) {
   return useQuery({
     queryKey: eventSettingsQueryKey(eventId),
     queryFn: ({ signal }) => fetchSettings(eventId, signal),
-    // A 4xx is the answer, not a hiccup. api.ts has already refreshed and retried a 401 once.
-    retry: (failureCount, error) =>
-      !(error instanceof ApiError && error.status !== undefined && error.status < 500) &&
-      failureCount < 1,
+    retry: retryUnlessRefused,
   });
 }
 

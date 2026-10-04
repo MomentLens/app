@@ -1,7 +1,7 @@
 import type { ErrorCode, ListSubEventsResponse } from '@momentlens/shared-types';
 import { useQuery } from '@tanstack/react-query';
 
-import { eventQueryKey } from '@/features/event-shell/use-event';
+import { eventQueryKey, recheckEvent, retryUnlessRefused } from '@/features/event-shell/use-event';
 import { EVENTS_QUERY_KEY } from '@/features/events/use-events';
 import { writeProblem, type ScheduleWrite } from '@/features/schedule/schedule';
 import { ApiError, listSubEvents } from '@/lib/api';
@@ -11,13 +11,6 @@ import { PERSISTED_QUERY, queryClient } from '@/lib/query-client';
 // every key that starts with it, so the event's refetches would drag the schedule along.
 export function subEventsQueryKey(eventId: string) {
   return ['sub-events', eventId] as const;
-}
-
-// A refusal means the caller's place in the event changed: removed, blocked, or the event deleted.
-// The shell reads that from the event query, so the event refetches and the shell shows the lost
-// state or the new role's tabs (hb §5.3, D-118).
-function recheckEvent(eventId: string): void {
-  void queryClient.invalidateQueries({ queryKey: eventQueryKey(eventId), exact: true });
 }
 
 // GET /events/{eventId}/sub-events as server state, for every role's Schedule and later for the
@@ -36,10 +29,7 @@ export function useSubEvents(eventId: string) {
         throw error;
       }
     },
-    // A 4xx is the answer, not a hiccup. api.ts has already refreshed and retried a 401 once.
-    retry: (failureCount, error) =>
-      !(error instanceof ApiError && error.status !== undefined && error.status < 500) &&
-      failureCount < 1,
+    retry: retryUnlessRefused,
     ...PERSISTED_QUERY,
   });
 }
