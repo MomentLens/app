@@ -19,6 +19,10 @@ import { coverKey } from '../lib/keys';
 import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
 
+// At most 150 active Guests in one event. The Admin and Photographers do not count (spec §4.17,
+// D-102). join_event enforces it under the event's lock, with this number.
+export const MAX_ACTIVE_GUESTS = 150;
+
 // One event as the caller sees it, before its cover is presigned. Timestamps are already in
 // toISOString form.
 export interface EventRecord {
