@@ -85,6 +85,115 @@ afterEach(() => {
   delete process.env.EXPO_PUBLIC_API_URL;
 });
 
+describe('attendee endpoints', () => {
+  const eventId = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const target = {
+    userId,
+    fullName: 'Hamza Siddiqui',
+    role: 'guest',
+    requestedAt: '2026-10-02T13:00:00.000Z',
+    accessVersion: 'opaque-1',
+    avatar: null,
+  };
+
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+  }
+
+  it('encodes literal search text and opaque cursors without changing them', async () => {
+    signIn();
+    const fetchMock = answers(200, { attendees: [target], nextCursor: 'next' });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    await expect(
+      api.listAttendees(eventId, { search: '% &Ali_+', role: 'guest', cursor: 'a/b+=' }),
+    ).resolves.toEqual({ attendees: [target], nextCursor: 'next' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/attendees?search=%25%20%26Ali_%2B&role=guest&cursor=a%2Fb%2B%3D`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
+  });
+
+  it.each(['changeAttendeeRole', 'removeAttendee', 'blockAttendee'] as const)(
+    'sends %s with only the action body and parses the shared response',
+    async (method) => {
+      signIn();
+      const status =
+        method === 'removeAttendee' ? 'removed' : method === 'blockAttendee' ? 'blocked' : 'active';
+      const role = method === 'changeAttendeeRole' ? 'photographer' : 'guest';
+      const membership = { userId, role, status, accessVersion: 'opaque-2' };
+      const fetchMock = answers(200, { membership });
+      globalThis.fetch = fetchMock;
+      const api = loadApi(BASE_URL);
+      const body =
+        method === 'changeAttendeeRole'
+          ? { expectedVersion: 'opaque-1', role: 'photographer' as const }
+          : { expectedVersion: 'opaque-1' };
+      const result =
+        method === 'changeAttendeeRole'
+          ? await api.changeAttendeeRole(eventId, userId, { ...body, role: 'photographer' })
+          : await api[method](eventId, userId, body);
+      expect(result).toEqual({ membership });
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        `https://api.example.test/events/${eventId}/attendees/${userId}/${method === 'changeAttendeeRole' ? 'role' : method === 'removeAttendee' ? 'remove' : 'block'}`,
+      );
+      expect(fetchMock.mock.calls[0]?.[1]?.method).toBe(
+        method === 'changeAttendeeRole' ? 'PATCH' : 'POST',
+      );
+      expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual(body);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(['changeAttendeeRole', 'removeAttendee', 'blockAttendee'] as const)(
+    'does not resend %s after a 401 Auth refresh',
+    async (method) => {
+      signIn();
+      mockAuth.refreshSession.mockResolvedValue({
+        data: { session: { access_token: 'fresh' } },
+        error: null,
+      });
+      const fetchMock = answers(401, { error: { code: 'no_session', message: 'No session' } });
+      globalThis.fetch = fetchMock;
+      const api = loadApi(BASE_URL);
+      const promise =
+        method === 'changeAttendeeRole'
+          ? api.changeAttendeeRole(eventId, userId, { expectedVersion: 'opaque-1', role: 'guest' })
+          : api[method](eventId, userId, { expectedVersion: 'opaque-1' });
+      await expect(promise).rejects.toMatchObject({ status: 401, code: 'no_session' });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mockAuth.refreshSession).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('keeps membership_changed for the action layer and hides the server message', async () => {
+    signIn();
+    globalThis.fetch = answers(409, {
+      error: { code: 'membership_changed', message: 'private diagnostic' },
+    });
+    const api = loadApi(BASE_URL);
+    await expect(
+      api.removeAttendee(eventId, userId, { expectedVersion: 'old' }),
+    ).rejects.toMatchObject({ code: 'membership_changed', status: 409 });
+    await expect(
+      api.removeAttendee(eventId, userId, { expectedVersion: 'old' }),
+    ).rejects.not.toThrow('private diagnostic');
+  });
+
+  it('rejects an unrecognized success body rather than assuming a write failed', async () => {
+    signIn();
+    globalThis.fetch = answers(200, { membership: { userId } });
+    const api = loadApi(BASE_URL);
+    await expect(
+      api.blockAttendee(eventId, userId, { expectedVersion: 'old' }),
+    ).rejects.toMatchObject({ status: 200 });
+  });
+});
+
 describe('getHealth', () => {
   it('returns the body for 200 and does not double the trailing slash in the base URL', async () => {
     const fetchMock = answers(200, healthBody('ok', 'ok'));
