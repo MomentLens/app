@@ -1,5 +1,7 @@
 import {
+  BlockAttendeeResponse,
   CancelJoinRequestResponse,
+  ChangeAttendeeRoleResponse,
   CreateCoverUploadResponse,
   CreateEventResponse,
   ErrorResponse,
@@ -8,15 +10,21 @@ import {
   HealthResponse,
   JoinEventResponse,
   ListEventsResponse,
+  ListAttendeesResponse,
   ListSubEventsResponse,
   ProfileResponse,
   ResolveInviteResponse,
+  RemoveAttendeeResponse,
   SetEventCoverResponse,
   UpdateEventSettingsResponse,
   type AddSubEventRequest,
+  type BlockAttendeeRequest,
+  type ChangeAttendeeRoleRequest,
   type CreateEventRequest,
   type ErrorCode,
   type JoinEventRequest,
+  type ListAttendeesRequest,
+  type RemoveAttendeeRequest,
   type ResolveInviteRequest,
   type UpdateEventSettingsRequest,
   type UpdateSubEventRequest,
@@ -67,6 +75,7 @@ interface RequestOptions {
   // Sent as JSON. A request without one sends no body and no Content-Type.
   body?: unknown;
   signal?: AbortSignal;
+  retryAfterRefresh?: boolean;
 }
 
 async function request(
@@ -174,7 +183,9 @@ async function authenticatedRequest(path: string, options: RequestOptions = {}):
   if (first.status !== 401) {
     return first;
   }
-  return request(path, options, await refreshedAccessToken());
+  const token = await refreshedAccessToken();
+  // Attendee writes never repeat automatically, including after an Auth refresh (D-143).
+  return options.retryAfterRefresh === false ? first : request(path, options, token);
 }
 
 // A request that works with or without a session (D-115). Nobody signed in sends no header. A
@@ -340,6 +351,66 @@ export async function updateEventSettings(
     throw await errorFrom('PATCH /events/{eventId}/settings', response);
   }
   return parseBody('PATCH /events/{eventId}/settings', response, UpdateEventSettingsResponse);
+}
+
+export async function listAttendees(
+  eventId: string,
+  filters: ListAttendeesRequest = {},
+  signal?: AbortSignal,
+): Promise<ListAttendeesResponse> {
+  const query = Object.entries(filters)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join('&');
+  const path = `/events/${encodeURIComponent(eventId)}/attendees${query ? `?${query}` : ''}`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) throw await errorFrom('GET attendees', response);
+  return parseBody('GET attendees', response, ListAttendeesResponse);
+}
+
+export async function changeAttendeeRole(
+  eventId: string,
+  userId: string,
+  body: ChangeAttendeeRoleRequest,
+): Promise<ChangeAttendeeRoleResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/attendees/${encodeURIComponent(userId)}/role`;
+  const response = await authenticatedRequest(path, {
+    method: 'PATCH',
+    body,
+    retryAfterRefresh: false,
+  });
+  if (response.status !== 200) throw await errorFrom('PATCH attendee role', response);
+  return parseBody('PATCH attendee role', response, ChangeAttendeeRoleResponse);
+}
+
+export async function removeAttendee(
+  eventId: string,
+  userId: string,
+  body: RemoveAttendeeRequest,
+): Promise<RemoveAttendeeResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/attendees/${encodeURIComponent(userId)}/remove`;
+  const response = await authenticatedRequest(path, {
+    method: 'POST',
+    body,
+    retryAfterRefresh: false,
+  });
+  if (response.status !== 200) throw await errorFrom('POST attendee remove', response);
+  return parseBody('POST attendee remove', response, RemoveAttendeeResponse);
+}
+
+export async function blockAttendee(
+  eventId: string,
+  userId: string,
+  body: BlockAttendeeRequest,
+): Promise<BlockAttendeeResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/attendees/${encodeURIComponent(userId)}/block`;
+  const response = await authenticatedRequest(path, {
+    method: 'POST',
+    body,
+    retryAfterRefresh: false,
+  });
+  if (response.status !== 200) throw await errorFrom('POST attendee block', response);
+  return parseBody('POST attendee block', response, BlockAttendeeResponse);
 }
 
 // The event an invite previews, and the caller's own membership when someone is signed in
