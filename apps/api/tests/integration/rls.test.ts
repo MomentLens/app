@@ -45,6 +45,11 @@ import {
   MAX_ACTIVE_GUESTS,
   updateEventSettingsParams,
 } from '../../src/services/events';
+import {
+  accessVersion,
+  attendeeMutationParams,
+  createAttendeeStore,
+} from '../../src/services/attendees';
 import { createDatabaseCheck } from '../../src/services/health';
 import {
   createInviteStore,
@@ -2676,6 +2681,387 @@ if (project === null) {
 
         await expect(mediaRow(upload.mediaId)).resolves.toEqual(before);
         await expect(countMedia(event.id)).resolves.toBe(1);
+      });
+    });
+
+    describe('attendee management (D-143)', () => {
+      const attendees = createAttendeeStore(admin);
+      const invites = createInviteStore(admin);
+      const page = { search: '', role: null, after: null };
+      async function row(eventId: string, userId: string) {
+        const result = await admin
+          .from('membership')
+          .select('*')
+          .eq('event_id', eventId)
+          .eq('user_id', userId)
+          .single();
+        expect(result.error).toBeNull();
+        return result.data as {
+          id: string;
+          access_version: number;
+          role: string;
+          status: string;
+          requested_at: string;
+          admin_verified_at: string | null;
+          last_viewed_at: string | null;
+        };
+      }
+      async function edit(eventId: string, userId: string, fields: Record<string, unknown>) {
+        const result = await admin
+          .from('membership')
+          .update(fields)
+          .eq('event_id', eventId)
+          .eq('user_id', userId);
+        expect(result.error).toBeNull();
+      }
+      async function fixture() {
+        const a = await createNamedUser('Admin');
+        const t = await createNamedUser('Ayesha_% Studio');
+        const x = await createNamedUser('Other Member');
+        const event = await createdEvent(a.id);
+        await addMember(event.id, t.id, 'photographer', 'active');
+        const current = await row(event.id, t.id);
+        const expected = { id: current.id, version: String(current.access_version) };
+        return { a, t, x, event, expected };
+      }
+      async function call(
+        eventId: string,
+        actorId: string,
+        userId: string,
+        action: 'role' | 'remove' | 'block',
+        expected: { id: string; version: string },
+        role: 'guest' | 'photographer' | null = null,
+        cap = 150,
+      ) {
+        return attendees.mutate(eventId, actorId, userId, action, expected, role, cap);
+      }
+
+      it('rechecks every actor, event and target in all attendee RPCs without writing', async () => {
+        const { a, t, x, event, expected } = await fixture();
+        const other = await createdEvent(x.id);
+        const before = await row(event.id, t.id);
+        for (const state of [null, 'pending', 'removed', 'blocked', 'guest', 'photographer']) {
+          if (state === 'pending') await addMember(event.id, x.id, 'guest', 'pending');
+          else if (state !== null)
+            await edit(event.id, x.id, {
+              role: state === 'photographer' ? 'photographer' : 'guest',
+              status: ['guest', 'photographer'].includes(state) ? 'active' : state,
+            });
+          const outcome =
+            state === 'guest' || state === 'photographer' ? 'wrong_role' : 'not_member';
+          await expect(attendees.list(event.id, x.id, page)).resolves.toEqual({ outcome });
+          for (const action of ['role', 'remove', 'block'] as const)
+            await expect(call(event.id, x.id, t.id, action, expected, 'guest')).resolves.toEqual({
+              outcome,
+            });
+        }
+        for (const action of ['role', 'remove', 'block'] as const) {
+          await expect(call(other.id, x.id, t.id, action, expected, 'guest')).resolves.toEqual({
+            outcome: 'not_found',
+          });
+          await expect(call(event.id, a.id, a.id, action, expected, 'guest')).resolves.toEqual({
+            outcome: 'invalid_request',
+          });
+          await expect(
+            call(event.id, a.id, t.id, action, { ...expected, id: randomUUID() }, 'guest'),
+          ).resolves.toEqual({ outcome: 'membership_changed' });
+        }
+        await expect(row(event.id, t.id)).resolves.toEqual(before);
+        const deleted = await admin
+          .from('event')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', event.id);
+        expect(deleted.error).toBeNull();
+        await expect(attendees.list(event.id, a.id, page)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        for (const action of ['role', 'remove', 'block'] as const)
+          await expect(call(event.id, a.id, t.id, action, expected, 'guest')).resolves.toEqual({
+            outcome: 'not_found',
+          });
+      }, 120_000);
+
+      it('lists only active names, searches literal pattern characters, orders and paginates without private columns', async () => {
+        const { a, t, x, event } = await fixture();
+        await addMember(event.id, x.id, 'guest', 'pending');
+        const privateAvatar = await admin
+          .from('profile')
+          .update({ avatar_key: `users/${t.id}/avatar_${randomUUID()}.jpg` })
+          .eq('user_id', t.id);
+        expect(privateAvatar.error).toBeNull();
+        const dnp = await admin
+          .from('subject')
+          .update({ dnp_activated_at: iso(T0) })
+          .eq('user_id', t.id);
+        expect(dnp.error).toBeNull();
+        const listed = await attendees.list(event.id, a.id, page);
+        expect(listed).toMatchObject({ outcome: 'listed' });
+        if (listed.outcome !== 'listed') throw new Error('No list');
+        expect(listed.rows.map((r) => r.userId)).toEqual([a.id, t.id]);
+        expect(listed.rows[1]).toMatchObject({ fullName: 'Ayesha_% Studio', version: '1' });
+        expect(Object.keys(listed.rows[1]!).sort()).toEqual([
+          'fullName',
+          'id',
+          'requestedAt',
+          'role',
+          'userId',
+          'version',
+        ]);
+        await expect(
+          attendees.list(event.id, a.id, { ...page, search: '_% sTuDio' }),
+        ).resolves.toMatchObject({ rows: [{ userId: t.id }] });
+        await expect(
+          attendees.list(event.id, a.id, { ...page, search: 'absent' }),
+        ).resolves.toMatchObject({ rows: [] });
+        await expect(
+          attendees.list(event.id, a.id, { ...page, role: 'guest' }),
+        ).resolves.toMatchObject({ rows: [] });
+        await expect(
+          attendees.list(event.id, a.id, { ...page, after: { name: 'Admin', userId: a.id } }),
+        ).resolves.toMatchObject({ rows: [{ userId: t.id }] });
+        const archived = await admin
+          .from('event')
+          .update({ archived_at: new Date().toISOString() })
+          .eq('id', event.id);
+        expect(archived.error).toBeNull();
+        await expect(
+          attendees.list(event.id, a.id, { ...page, role: 'admin' }),
+        ).resolves.toMatchObject({ rows: [{ userId: a.id }] });
+      });
+
+      it('advances versions only for access changes and guards the creator identity and Admin role', async () => {
+        const { a, t, x, event, expected } = await fixture();
+        const before = await row(event.id, t.id);
+        await edit(event.id, t.id, {
+          last_viewed_at: iso(T0),
+          admin_verified_at: iso(T0),
+          access_version: 800,
+        });
+        expect((await row(event.id, t.id)).access_version).toBe(1);
+        const same = await call(event.id, a.id, t.id, 'role', expected, 'photographer');
+        expect(same).toMatchObject({
+          outcome: 'updated',
+          membership: { accessVersion: accessVersion(expected.id, '1') },
+        });
+        for (const fields of [
+          { role: 'guest' },
+          { status: 'removed' },
+          { user_id: x.id },
+          { event_id: randomUUID() },
+          { id: randomUUID() },
+        ]) {
+          const guarded = await admin
+            .from('membership')
+            .update(fields)
+            .eq('event_id', event.id)
+            .eq('user_id', a.id);
+          expect(guarded.error?.code).toBe('23514');
+        }
+        const promoted = await admin
+          .from('membership')
+          .update({ role: 'admin' })
+          .eq('id', expected.id);
+        expect(promoted.error?.code).toBe('23514');
+        const changed = await call(event.id, a.id, t.id, 'role', expected, 'guest');
+        expect(changed).toMatchObject({
+          outcome: 'updated',
+          membership: { role: 'guest', accessVersion: accessVersion(expected.id, '2') },
+        });
+        await expect(call(event.id, a.id, t.id, 'role', expected, 'guest')).resolves.toEqual({
+          outcome: 'membership_changed',
+        });
+        const after = await row(event.id, t.id);
+        expect(after).toEqual({
+          ...before,
+          role: 'guest',
+          access_version: 2,
+          last_viewed_at: after.last_viewed_at,
+          admin_verified_at: after.admin_verified_at,
+        });
+        expect(new Date(after.last_viewed_at!).toISOString()).toBe(iso(T0));
+        expect(new Date(after.admin_verified_at!).toISOString()).toBe(iso(T0));
+      });
+
+      it('retains membership fields and uploads, makes lost responses stale, and protects rejoins and recreated rows', async () => {
+        const { a, t, event, expected } = await fixture();
+        await edit(event.id, t.id, { admin_verified_at: iso(T0), last_viewed_at: iso(T0) });
+        const before = await row(event.id, t.id);
+        const mediaId = randomUUID();
+        const media = await admin
+          .from('media')
+          .insert({
+            id: mediaId,
+            event_id: event.id,
+            uploader_user_id: t.id,
+            sub_event_id: (
+              await admin.from('sub_event').select('id').eq('event_id', event.id).limit(1).single()
+            ).data!.id,
+            content_hash: 'a'.repeat(64),
+            upload_key: `${mediaId}/upload.jpg`,
+            upload_thumb_key: `${mediaId}/upload_thumb.webp`,
+            captured_at: iso(T0),
+            uploader_role_at_upload: 'photographer',
+          })
+          .select('id')
+          .single();
+        expect(media.error).toBeNull();
+        const [one, two] = await Promise.all([
+          call(event.id, a.id, t.id, 'remove', expected),
+          call(event.id, a.id, t.id, 'block', expected),
+        ]);
+        expect([one.outcome, two.outcome].sort()).toEqual(['membership_changed', 'updated']);
+        const after = await row(event.id, t.id);
+        expect(after).toEqual({ ...before, status: after.status, access_version: 2 });
+        const retained = await admin
+          .from('media')
+          .select('id, deleted_at')
+          .eq('id', mediaId)
+          .single();
+        expect(retained.error).toBeNull();
+        expect(retained.data).toEqual({ id: mediaId, deleted_at: null });
+        for (const action of ['role', 'remove', 'block'] as const)
+          await expect(
+            call(event.id, a.id, t.id, action, { id: after.id, version: '2' }, 'guest'),
+          ).resolves.toEqual({ outcome: 'membership_changed' });
+        await edit(event.id, t.id, { status: 'removed' });
+        const link = await admin
+          .from('invite')
+          .select('token')
+          .eq('event_id', event.id)
+          .eq('role', 'guest')
+          .single();
+        expect(link.error).toBeNull();
+        await expect(
+          invites.join(t.id, { token: (link.data as { token: string }).token }, 150),
+        ).resolves.toMatchObject({
+          outcome: 'rejoined',
+        });
+        await expect(call(event.id, a.id, t.id, 'block', expected)).resolves.toEqual({
+          outcome: 'membership_changed',
+        });
+        const rejoined = await row(event.id, t.id);
+        const gone = await admin.from('membership').delete().eq('id', rejoined.id);
+        expect(gone.error).toBeNull();
+        await addMember(event.id, t.id, 'guest', 'active');
+        await expect(
+          call(event.id, a.id, t.id, 'remove', {
+            id: rejoined.id,
+            version: String(rejoined.access_version),
+          }),
+        ).resolves.toEqual({ outcome: 'membership_changed' });
+      });
+
+      it('shares the guest cap lock with conversions, joins and automatic admission', async () => {
+        const { a, t, x, event, expected } = await fixture();
+        await addMember(event.id, x.id, 'guest', 'active');
+        const fullBefore = await row(event.id, t.id);
+        await expect(call(event.id, a.id, t.id, 'role', expected, 'guest', 1)).resolves.toEqual({
+          outcome: 'event_full',
+        });
+        await expect(row(event.id, t.id)).resolves.toEqual(fullBefore);
+        const j = await createNamedUser();
+        const invite = await admin
+          .from('invite')
+          .select('token')
+          .eq('event_id', event.id)
+          .eq('role', 'guest')
+          .single();
+        expect(invite.error).toBeNull();
+        const [conversion, joined] = await Promise.all([
+          call(event.id, a.id, t.id, 'role', expected, 'guest', 2),
+          invites.join(j.id, { token: (invite.data as { token: string }).token }, 2),
+        ]);
+        expect([conversion.outcome, joined.outcome].sort()).toEqual(
+          conversion.outcome === 'updated' ? ['full', 'updated'] : ['created', 'event_full'],
+        );
+        const count = await admin
+          .from('membership')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', event.id)
+          .eq('role', 'guest')
+          .eq('status', 'active');
+        expect(count.error).toBeNull();
+        expect(count.count).toBe(2);
+
+        const manual = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addMember(manual.id, t.id, 'photographer', 'active');
+        await addMember(manual.id, x.id, 'guest', 'pending');
+        const target = await row(manual.id, t.id);
+        const [converted, switched] = await Promise.all([
+          call(
+            manual.id,
+            a.id,
+            t.id,
+            'role',
+            { id: target.id, version: String(target.access_version) },
+            'guest',
+            1,
+          ),
+          store.updateSettings(manual.id, { approvalMode: 'auto' }, 1),
+        ]);
+        expect(converted.outcome).toBe(
+          switched.outcome === 'updated' && switched.admitted === 1 ? 'event_full' : 'updated',
+        );
+        const manualCount = await admin
+          .from('membership')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', manual.id)
+          .eq('role', 'guest')
+          .eq('status', 'active');
+        expect(manualCount.count).toBe(1);
+      });
+
+      it('permits archived actions and denies direct RPC and table access to anon and authenticated Admins', async () => {
+        const { a, t, event, expected } = await fixture();
+        const archived = await admin
+          .from('event')
+          .update({ archived_at: new Date().toISOString() })
+          .eq('id', event.id);
+        expect(archived.error).toBeNull();
+        const params = attendeeMutationParams(event.id, a.id, t.id, expected);
+        for (const client of [
+          createServerClient(project.url, project.publishableKey),
+          await signedInClient(a),
+        ]) {
+          for (const [name, args] of [
+            [
+              'list_attendees',
+              {
+                p_event_id: event.id,
+                p_actor_id: a.id,
+                p_search: '',
+                p_role: null,
+                p_after_name: null,
+                p_after_user_id: null,
+              },
+            ],
+            ['change_attendee_role', { ...params, p_role: 'guest', p_max_guests: 150 }],
+            ['remove_attendee', params],
+            ['block_attendee', params],
+            [
+              'mutate_attendee',
+              { ...params, p_action: 'remove', p_role: null, p_max_guests: null },
+            ],
+          ] as const) {
+            const result = await client.rpc(name, args);
+            expect(result.error).not.toBeNull();
+            expect(result.data).toBeNull();
+          }
+          const hidden = await client
+            .from('membership')
+            .select('access_version')
+            .eq('event_id', event.id);
+          expect(hidden.error).toBeNull();
+          expect(hidden.data).toEqual([]);
+          const denied = await client
+            .from('membership')
+            .update({ role: 'guest' })
+            .eq('id', expected.id);
+          expect(denied.error).not.toBeNull();
+        }
+        await expect(call(event.id, a.id, t.id, 'role', expected, 'guest')).resolves.toMatchObject({
+          outcome: 'updated',
+        });
       });
     });
 
