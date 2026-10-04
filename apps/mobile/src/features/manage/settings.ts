@@ -83,22 +83,40 @@ function requests(count: number): string {
 }
 
 // The line under the Approval Mode switch. `saved` is the event's mode and `shown` the switch's,
-// which differ until Save. A request can wait on an auto event too: one the guest cap left pending
-// when the event was switched (D-142).
-export function approvalNote(saved: ApprovalMode, shown: ApprovalMode, pendingCount: number) {
+// which differ until Save. `photographers` counts the pending Photographers among `pendingCount`.
+// A request can wait on an auto event too, when the guest cap left it pending at the switch
+// (D-142).
+export function approvalNote(
+  saved: ApprovalMode,
+  shown: ApprovalMode,
+  pendingCount: number,
+  photographers: number,
+) {
   if (shown === 'manual') {
     const base = 'You approve each person before they join.';
     return pendingCount > 0 ? `${base} ${requests(pendingCount)} waiting.` : base;
   }
   const base = 'Anyone with an invite joins straight away.';
   if (saved === 'manual') {
-    if (pendingCount === 0) return base;
-    return pendingCount === 1
-      ? `${base} Saving lets in the request waiting now, unless the event is full.`
-      : `${base} Saving lets in the ${pendingCount} requests waiting now, until the event is full.`;
+    return pendingCount === 0 ? base : `${base} ${switchNote(pendingCount, photographers)}`;
   }
   if (pendingCount === 0) return `${base} Turn it on to approve each person first.`;
   return `${base} ${requests(pendingCount)} still waiting for you to approve ${pendingCount === 1 ? 'it' : 'them'}.`;
+}
+
+// What saving a switch to auto does to the requests waiting now. The guest cap never holds back a
+// Photographer, so only Guests wait on the event being full (spec §4.17, D-142).
+function switchNote(pendingCount: number, photographers: number): string {
+  const guests = pendingCount - photographers;
+  const photographersIn =
+    photographers === 1 ? 'the Photographer' : `the ${photographers} Photographers`;
+  const guestsIn =
+    guests === 1
+      ? 'the Guest waiting now, unless the event is full'
+      : `the ${guests} Guests waiting now, until the event is full`;
+  if (guests === 0) return `Saving lets in ${photographersIn} waiting now.`;
+  if (photographers === 0) return `Saving lets in ${guestsIn}.`;
+  return `Saving lets in ${photographersIn}, and ${guestsIn}.`;
 }
 
 // What the confirm before a switch to auto says, or null when nobody is waiting and the switch

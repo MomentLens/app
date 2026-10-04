@@ -154,47 +154,65 @@ describe('listNames', () => {
 
 describe('approvalNote', () => {
   it('describes manual with nobody waiting', () => {
-    expect(approvalNote('manual', 'manual', 0)).toBe('You approve each person before they join.');
+    expect(approvalNote('manual', 'manual', 0, 0)).toBe(
+      'You approve each person before they join.',
+    );
   });
 
   it('counts the requests waiting on a manual event', () => {
-    expect(approvalNote('manual', 'manual', 1)).toBe(
+    expect(approvalNote('manual', 'manual', 1, 0)).toBe(
       'You approve each person before they join. 1 request is waiting.',
     );
-    expect(approvalNote('manual', 'manual', 4)).toBe(
+    expect(approvalNote('manual', 'manual', 4, 1)).toBe(
       'You approve each person before they join. 4 requests are waiting.',
     );
   });
 
   it('describes auto with nobody waiting', () => {
-    expect(approvalNote('auto', 'auto', 0)).toBe(
+    expect(approvalNote('auto', 'auto', 0, 0)).toBe(
       'Anyone with an invite joins straight away. Turn it on to approve each person first.',
     );
   });
 
   // Guests the cap left pending at an earlier switch (D-142).
   it('counts the requests still waiting on an auto event', () => {
-    expect(approvalNote('auto', 'auto', 3)).toBe(
+    expect(approvalNote('auto', 'auto', 3, 0)).toBe(
       'Anyone with an invite joins straight away. 3 requests are still waiting for you to approve them.',
     );
-    expect(approvalNote('auto', 'auto', 1)).toBe(
+    expect(approvalNote('auto', 'auto', 1, 0)).toBe(
       'Anyone with an invite joins straight away. 1 request is still waiting for you to approve it.',
     );
   });
 
-  it('says what saving a switch to auto will do', () => {
-    expect(approvalNote('manual', 'auto', 0)).toBe('Anyone with an invite joins straight away.');
-    expect(approvalNote('manual', 'auto', 5)).toBe(
-      'Anyone with an invite joins straight away. Saving lets in the 5 requests waiting now, until the event is full.',
+  it('says what saving a switch to auto will do for Guests, whom the cap can hold back', () => {
+    expect(approvalNote('manual', 'auto', 0, 0)).toBe('Anyone with an invite joins straight away.');
+    expect(approvalNote('manual', 'auto', 5, 0)).toBe(
+      'Anyone with an invite joins straight away. Saving lets in the 5 Guests waiting now, until the event is full.',
     );
-    expect(approvalNote('manual', 'auto', 1)).toBe(
-      'Anyone with an invite joins straight away. Saving lets in the request waiting now, unless the event is full.',
+    expect(approvalNote('manual', 'auto', 1, 0)).toBe(
+      'Anyone with an invite joins straight away. Saving lets in the Guest waiting now, unless the event is full.',
+    );
+  });
+
+  // spec §4.17: the cap counts Guests only, so a full event still lets a Photographer in.
+  it('never says a full event holds back a Photographer', () => {
+    expect(approvalNote('manual', 'auto', 1, 1)).toBe(
+      'Anyone with an invite joins straight away. Saving lets in the Photographer waiting now.',
+    );
+    expect(approvalNote('manual', 'auto', 2, 2)).toBe(
+      'Anyone with an invite joins straight away. Saving lets in the 2 Photographers waiting now.',
+    );
+    expect(approvalNote('manual', 'auto', 2, 1)).toBe(
+      'Anyone with an invite joins straight away. Saving lets in the Photographer, and the Guest waiting now, unless the event is full.',
+    );
+    expect(approvalNote('manual', 'auto', 6, 2)).toBe(
+      'Anyone with an invite joins straight away. Saving lets in the 2 Photographers, and the 4 Guests waiting now, until the event is full.',
     );
   });
 
   // Switching back changes no membership (D-142).
   it('counts the requests still waiting when switching an auto event back to manual', () => {
-    expect(approvalNote('auto', 'manual', 2)).toBe(
+    expect(approvalNote('auto', 'manual', 2, 0)).toBe(
       'You approve each person before they join. 2 requests are waiting.',
     );
   });
