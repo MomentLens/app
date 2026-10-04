@@ -6,6 +6,7 @@ import {
   type UpdateEventSettingsRequest,
 } from '@momentlens/shared-types';
 
+import type { CoverUploadFailure } from '@/features/events/cover-error';
 import { nameProblem } from '@/features/events/validation';
 
 // The Event Settings form's logic, kept free of React so it can be tested (spec §2.5.7, D-142).
@@ -150,11 +151,12 @@ export type SavePart = 'check' | 'details' | 'cover';
 
 // What went wrong, as use-event-settings.ts reads it from the error. `status` is undefined when no
 // answer came. `timedOut` says the request went out and its answer never came, so a write may
-// have landed.
+// have landed. `cover` is set when the cover's PUT to R2 failed, which never reaches the API.
 export interface SaveFailure {
   status?: number;
   code?: ErrorCode;
   timedOut?: boolean;
+  cover?: CoverUploadFailure;
 }
 
 // What the Admin reads when part of a Save fails. An Admin's write is never queued (D-142, D-121),
@@ -165,6 +167,16 @@ export function saveProblem(error: SaveFailure, part: SavePart, detailsSaved = f
 }
 
 function reason(error: SaveFailure, part: SavePart): string {
+  switch (error.cover) {
+    case 'file_missing':
+      return 'The photo you picked is no longer on this phone. Pick it again.';
+    case 'refused':
+      return 'The cover did not upload. Try again.';
+    case 'unreachable':
+      return 'The cover did not upload. Check the connection and try again.';
+    case undefined:
+      break;
+  }
   if (error.status === undefined) {
     // A write that timed out may have landed. The form refetches after any failure, so Save goes
     // off once the refetch shows the change saved.

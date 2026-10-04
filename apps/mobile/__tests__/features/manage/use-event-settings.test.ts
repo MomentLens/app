@@ -9,6 +9,7 @@ import type {
 
 import { eventQueryKey } from '@/features/event-shell/use-event';
 import { uploadCover } from '@/features/events/cover';
+import { CoverUploadError } from '@/features/events/cover-error';
 import { EVENTS_QUERY_KEY } from '@/features/events/use-events';
 import {
   eventSettingsQueryKey,
@@ -196,10 +197,10 @@ describe('saveCover', () => {
     expect(listed?.cover).toEqual(NEW_COVER);
   });
 
-  // The PUT to R2 throws a plain Error, never an ApiError (features/events/cover.ts).
+  // The PUT to R2 throws CoverUploadError, never an ApiError (features/events/cover.ts).
   it('keeps the old cover when the upload fails, and says the details went through', async () => {
     seed();
-    mockUpload.mockRejectedValue(new Error('R2 refused the cover upload with HTTP 403.'));
+    mockUpload.mockRejectedValue(new CoverUploadError('unreachable', 'offline'));
 
     const result = await saveCover(EVENT_ID, PICKED, true);
 
@@ -212,6 +213,27 @@ describe('saveCover', () => {
     expect(settings?.cover).toEqual(OLD_COVER);
     expect(event?.cover).toEqual(OLD_COVER);
     expect(listed?.cover).toEqual(OLD_COVER);
+  });
+
+  it('asks for the photo again when the prepared file is gone', async () => {
+    seed();
+    mockUpload.mockRejectedValue(new CoverUploadError('file_missing', 'gone'));
+
+    expect(await saveCover(EVENT_ID, PICKED, false)).toEqual({
+      ok: false,
+      problem: 'The photo you picked is no longer on this phone. Pick it again.',
+    });
+  });
+
+  // Not the API and not R2: a bug in the app, which no connection check would fix.
+  it('reads any other error as a failure on our side', async () => {
+    seed();
+    mockUpload.mockRejectedValue(new TypeError('undefined is not a function'));
+
+    expect(await saveCover(EVENT_ID, PICKED, false)).toEqual({
+      ok: false,
+      problem: 'Something went wrong on our side. Try again in a moment.',
+    });
   });
 
   it('says the cover did not finish uploading when the API cannot find it in R2', async () => {
