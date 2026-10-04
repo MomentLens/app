@@ -33,7 +33,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | Data | Rule |
 |---|---|
 | `media` | Active members of the event, once `processed_at` is set or if they uploaded it. A Photographer sees only their own uploads (§4.10, D-55). Update by the uploader and the event's Admin, and delete by them alone, permanently (D-130). **Also an RLS policy.** Soft-deleted rows stay visible to it so Realtime delivers the deletion; the API's queries exclude them and the app drops a row when an update sets `deleted_at`. A row without `uploaded_at` is shown to nobody (D-82) |
-| `event` | Active members. **Also an RLS policy**, so opening and closing the album reaches every phone live |
+| `event` | Active members. **S-31 adds an RLS policy**, so opening and closing the album reaches every phone live |
 | Invite preview | Anyone holding a live token or shortcode, with or without a session: the role, the event's name, span, venue names and cover. No member, no venue position and no `qr_secret`. A signed-in caller also gets their own membership in that event (D-115) |
 | `invite` | The event's Admin, through S-05's share screen. A lookup returns the preview above, never the row (D-115) |
 | `membership` | A user sees their own rows, with the event's name on a pending one (D-115); the Admin sees every row for their events (Handbook §5) |

@@ -867,6 +867,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-115).** `GET /events` also returns the caller's pending join requests. A Do Not Publish face in a cover now reaches anyone holding a live invite, not only members.
 **Amended (see D-118).** S-08 builds `GET /events/{eventId}`, and creating an event lands on the Admin's Home tab.
 **Amended (see D-128).** Start and end times use `@expo/ui`'s `DatePicker` on each platform, and `@quidone/react-native-wheel-picker` leaves `apps/mobile`. The map providers stand.
+**Amended (see D-142).** The app sends the `uploadId` to `PUT /events/{eventId}/cover`, never a key, and the API builds the key. S-07a reads and changes the event's name, description and Approval Mode through `GET` and `PATCH /events/{eventId}/settings`.
 
 ### D-111: Each sub-event has its own radius, and the wizard has three steps
 **Decision.** Amends D-110. Ukasha ruled on each of these on 2026-09-25, after S-02's API build, from the Figma draft of the wizard.
@@ -1322,6 +1323,19 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** One reference set for the account, spec v11's design. An account set with extra photos per event, which brings back the stale look. The profile photo as a reference.
 **Cost.** People add references in each event, and Find My Photos and Do Not Publish do nothing for them in an event until they do. More reference photos stored per person. The `face_reference` migration, still unwritten, takes the new columns; S-20 writes it.
 **Reopen if.** S-26's measurements show one set of references matching as well across events as per-event ones.
+
+### D-142: Event Settings has its own endpoints, and switching to auto admits the pending requests
+**Decision.** Amends D-110 and spec §2.5.7. Ukasha ruled on 2026-10-04, at S-07a's read-back.
+- `GET` and `PATCH /events/{eventId}/settings` read and change the event's name, description and Approval Mode, for the event's Admin only. `GET /events/{eventId}` carries neither the description nor Approval Mode, for any role. The type is set at create and never changes.
+- The cover keeps S-02's two endpoints. The app sends the `uploadId` to `PUT /events/{eventId}/cover`, and the API builds the key in its one key function (root invariant 12). A cover is replaced, never removed, and the old object stays in R2 (D-114).
+- Switching Approval Mode from manual to auto admits pending requests in the same transaction: every pending Photographer, then pending Guests oldest `requested_at` first until the event holds 150 active Guests (spec §4.17). The rest stay pending for Pending Approvals. One SQL function, `update_event_settings`, called with `rpc`, makes the whole change and takes the event row's lock before it counts, as `join_event` does (D-95, arch:membership).
+- When anyone is pending, the switch asks first. The confirm gives the number pending and names each pending Photographer, as Approve All does (D-139), and the settings GET returns both. Switching from auto to manual changes no membership.
+- The Admin's settings writes follow D-121 and D-100. They need a connection and are never queued, two of the Admin's phones resolve as last write wins, an archived event can be edited, and other phones see an edit the next time they fetch the event.
+- Until S-05, S-06, S-07 and S-24 ship, the Manage hub shows their rows disabled, and each of those slices enables its own row. The live status card has no placeholder and arrives with S-31.
+**Why.** Only the settings form shows the description and Approval Mode, so a Guest's or a Photographer's event response has no use for them. Once the mode is auto, a request left pending waits behind a setting that no longer asks for approval, and before S-07 ships nothing could let it in. The guest cap still applies at approval, as arch:membership already says for a manual event. A Photographer uploads with no check-in (spec §4.10), so the switch names each one before admitting them, as Pending Approvals does.
+**Rejected.** Adding the description and Approval Mode to `GET /events/{eventId}` for every role. Leaving pending requests pending on the switch. Refusing the switch when the pending Guests do not fit. Admitting pending Guests only. A version check on the PATCH. A placeholder status card.
+**Cost.** A migration in S-07a for `update_event_settings`. The switch is a third way a person becomes active, beside `join_event` and Pending Approvals' approve, so S-25 enqueues `reprocess` from it too (D-84), and S-27 sends Approval Alerts for each request it admits (spec §4.16). A request that arrives between the settings GET and the PATCH is admitted without being named in the confirm. The hub shows disabled rows until Phase 2 ends.
+**Reopen if.** An Admin switches to auto and is surprised by who got in.
 
 ## Open items that are not decisions yet
 
