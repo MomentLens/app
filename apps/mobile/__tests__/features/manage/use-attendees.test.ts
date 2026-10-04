@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import type { Attendee, ListAttendeesResponse } from '@momentlens/shared-types';
-import { onlineManager, type InfiniteData } from '@tanstack/react-query';
+import { InfiniteQueryObserver, onlineManager, type InfiniteData } from '@tanstack/react-query';
 
 import { eventQueryKey } from '@/features/event-shell/use-event';
 import {
   attendeeInitials,
   attendeeListItems,
   attendeeQueryOptions,
+  attendeeSheetExit,
   attendeesQueryKey,
   loadedAttendee,
   saveAttendeeAction,
@@ -78,14 +79,23 @@ describe('attendee presentation', () => {
   });
 });
 
+let unwatch: (() => void) | undefined;
+
+// The Attendees screen and the sheet observe the default filters, so that query is active, as it
+// is on the phone. Other filters stay inactive unless a test fetches them.
 async function seed() {
   queryClient.setQueryData(eventQueryKey(EVENT), { event: { role: 'admin' } });
   get.mockResolvedValue({ attendees: [TARGET], nextCursor: null });
+  unwatch = new InfiniteQueryObserver(queryClient, attendeeQueryOptions(EVENT, filters)).subscribe(
+    () => undefined,
+  );
   await queryClient.fetchInfiniteQuery(attendeeQueryOptions(EVENT, filters));
   get.mockClear();
 }
 
 afterEach(() => {
+  unwatch?.();
+  unwatch = undefined;
   queryClient.clear();
   onlineManager.setOnline(true);
   jest.resetAllMocks();
@@ -153,6 +163,31 @@ describe('attendee reads', () => {
   });
 });
 
+describe('attendee sheet exit', () => {
+  it('returns to the list when the loaded target is gone', () => {
+    expect(attendeeSheetExit(false, 'admin', null)).toBe('list');
+  });
+
+  it('leaves for the Event shell after a role change or lost access', () => {
+    expect(attendeeSheetExit(true, 'guest', null)).toBe('event');
+    expect(attendeeSheetExit(true, 'admin', new ApiError('removed', 403, 'not_member'))).toBe(
+      'event',
+    );
+    expect(attendeeSheetExit(true, 'admin', new ApiError('deleted', 404, 'not_found'))).toBe(
+      'event',
+    );
+  });
+
+  it.each([
+    new ApiError('offline'),
+    new ApiError('timeout', undefined, undefined, true),
+    new ApiError('server failed', 500, 'internal_error'),
+    new Error('unexpected'),
+  ])('stays open on a transient event error', (error) => {
+    expect(attendeeSheetExit(true, 'admin', error)).toBeNull();
+  });
+});
+
 describe('attendee actions', () => {
   it('refuses another action while the loaded query awaits a refresh', async () => {
     await seed();
@@ -202,9 +237,10 @@ describe('attendee actions', () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  it('sends the loaded version once and refreshes every loaded filter on success', async () => {
+  it('sends the loaded version once, refetches the list on screen and invalidates other filters', async () => {
     await seed();
     await queryClient.fetchInfiniteQuery(attendeeQueryOptions(EVENT, { role: 'guest' }));
+    get.mockClear();
     get.mockResolvedValue({ attendees: [], nextCursor: null });
     remove.mockResolvedValue({
       membership: {
@@ -220,7 +256,14 @@ describe('attendee actions', () => {
     expect(remove).toHaveBeenCalledTimes(1);
     expect(remove).toHaveBeenCalledWith(EVENT, TARGET.userId, { expectedVersion: 'opaque-1' });
     expect(loadedAttendee(EVENT, filters, TARGET.userId)).toBeUndefined();
-    expect(loadedAttendee(EVENT, { role: 'guest' }, TARGET.userId)).toBeUndefined();
+    expect(get).toHaveBeenCalledTimes(1);
+    const other = queryClient.getQueryState(attendeesQueryKey(EVENT, { role: 'guest' }));
+    expect(other?.isInvalidated).toBe(true);
+    // The other filter's old rows still draw until it is opened, but cannot be acted on.
+    await expect(
+      saveAttendeeAction(EVENT, { role: 'guest' }, TARGET, { kind: 'block' }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(block).not.toHaveBeenCalled();
   });
 
   it.each([

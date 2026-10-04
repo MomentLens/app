@@ -1,6 +1,7 @@
 import type { InviteRole } from '@momentlens/shared-types';
+import { onlineManager } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ActionSheetIOS,
   ActivityIndicator,
@@ -22,6 +23,8 @@ import { useEvent } from '@/features/event-shell/use-event';
 import {
   attendeeActionsReady,
   attendeeInitials,
+  attendeeSheetExit,
+  findAttendee,
   loadedAttendee,
   saveAttendeeAction,
   useAttendees,
@@ -64,10 +67,10 @@ export function AttendeeSheet({
   const [hadTarget] = useState(() => loadedAttendee(eventId, filters, userId) !== undefined);
   const query = useAttendees(eventId, filters, hadTarget);
   const event = useEvent(eventId);
-  const target = query.data?.pages
-    .flatMap((page) => page.attendees)
-    .reverse()
-    .find((person) => person.userId === userId);
+  const target = findAttendee(query.data, userId);
+  // attendeeActionsReady reads the connection when it runs. Subscribing redraws the sheet when it
+  // changes, so the rows disable as soon as the phone goes offline.
+  const online = useSyncExternalStore(onlineManager.subscribe, () => onlineManager.isOnline());
   const [busy, setBusy] = useState(false);
   const busyNow = useRef(false);
   const mounted = useRef(true);
@@ -75,7 +78,7 @@ export function AttendeeSheet({
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
   const roleField = useRef<View>(null);
   const eventRole = event.data?.event.role;
-  const ready = !busy && attendeeActionsReady(eventId, filters);
+  const ready = online && !busy && attendeeActionsReady(eventId, filters);
 
   useEffect(() => {
     mounted.current = true;
@@ -84,19 +87,16 @@ export function AttendeeSheet({
     };
   }, []);
 
-  function returnToList() {
+  const returnToList = useCallback(() => {
     router.dismissTo({ pathname: '/event/[id]/manage/attendees', params: { id: eventId } });
-  }
+  }, [router, eventId]);
 
+  const found = hadTarget && target !== undefined;
   useEffect(() => {
-    if (!hadTarget || !target) {
-      router.dismissTo({ pathname: '/event/[id]/manage/attendees', params: { id: eventId } });
-    } else if (eventRole && eventRole !== 'admin') {
-      router.dismissTo(eventHref(eventId, eventRole));
-    } else if (event.error) {
-      router.dismissTo(eventHref(eventId, eventRole ?? 'admin'));
-    }
-  }, [hadTarget, target, eventRole, event.error, router, eventId]);
+    const exit = attendeeSheetExit(found, eventRole, event.error);
+    if (exit === 'list') returnToList();
+    else if (exit === 'event') router.dismissTo(eventHref(eventId, eventRole ?? 'admin'));
+  }, [found, eventRole, event.error, returnToList, router, eventId]);
 
   async function act(action: AttendeeAction) {
     if (!mounted.current || busyNow.current || !target) return;
