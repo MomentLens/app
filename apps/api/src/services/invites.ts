@@ -11,11 +11,7 @@ import type {
 import type { Supabase } from '../db/supabase';
 import type { PresignGet } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
-import { isMissingAccount, presignCover, toTimestamp } from './events';
-
-// At most 150 active Guests in one event. The Admin and Photographers do not count (spec §4.17,
-// D-102). join_event enforces it under the event's lock, with this number.
-export const MAX_ACTIVE_GUESTS = 150;
+import { isMissingAccount, MAX_ACTIVE_GUESTS, presignCover, toTimestamp } from './events';
 
 // A live invite's preview before its cover is presigned (D-115). Timestamps are already in
 // toISOString form.
