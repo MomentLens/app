@@ -69,6 +69,10 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
       list: () => Promise.reject(new Error('no attendee store in this test')),
       mutate: () => Promise.reject(new Error('no attendee store in this test')),
     },
+    joinRequests: {
+      list: () => Promise.reject(new Error('no join request store in this test')),
+      act: () => Promise.reject(new Error('no join request store in this test')),
+    },
     invites: noInvites,
     subEvents: noSubEvents,
     media: noMedia,
