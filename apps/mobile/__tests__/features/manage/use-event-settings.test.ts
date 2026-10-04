@@ -12,10 +12,11 @@ import { uploadCover } from '@/features/events/cover';
 import { EVENTS_QUERY_KEY } from '@/features/events/use-events';
 import {
   eventSettingsQueryKey,
+  freshSettings,
   saveCover,
   saveDetails,
 } from '@/features/manage/use-event-settings';
-import { ApiError, updateEventSettings } from '@/lib/api';
+import { ApiError, getEventSettings, updateEventSettings } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 
 // lib/query-client keeps its saved cache in MMKV, which needs native code Jest does not have.
@@ -31,6 +32,7 @@ jest.mock('@/lib/api', () => ({
 }));
 jest.mock('@/features/events/cover', () => ({ uploadCover: jest.fn() }));
 
+const mockGet = jest.mocked(getEventSettings);
 const mockUpdate = jest.mocked(updateEventSettings);
 const mockUpload = jest.mocked(uploadCover);
 
@@ -136,6 +138,44 @@ describe('saveDetails', () => {
         'MomentLens could not be reached, so nothing was saved. Check the connection and try again.',
     });
     expect(queryClient.getQueryState(eventQueryKey(EVENT_ID))?.isInvalidated).toBe(false);
+  });
+
+  // The PATCH went out and no answer came, so a switch to auto may have let people in.
+  it('never says nothing was saved when the PATCH timed out', async () => {
+    seed();
+    mockUpdate.mockRejectedValue(new ApiError('slow', undefined, undefined, true));
+
+    const result = await saveDetails(EVENT_ID, { approvalMode: 'auto' });
+
+    expect(result).toEqual({
+      ok: false,
+      problem:
+        'MomentLens did not answer in time, so the changes may or may not have saved. If Save is still on once the form refreshes, try again.',
+    });
+    expect(queryClient.getQueryState(eventSettingsQueryKey(EVENT_ID))?.isInvalidated).toBe(true);
+  });
+});
+
+describe('freshSettings', () => {
+  it('answers the settings as the API has them now, and caches them', async () => {
+    seed();
+    const now = { ...SETTINGS, pendingCount: 5, pendingPhotographers: ['Sara Ahmed', 'Ali Khan'] };
+    mockGet.mockResolvedValue({ settings: now });
+
+    await expect(freshSettings(EVENT_ID)).resolves.toEqual({ ok: true, value: now });
+    expect(cached().settings).toEqual(now);
+  });
+
+  // The read writes nothing, so even a timeout saved nothing.
+  it('says nothing was saved when the read before a switch times out', async () => {
+    seed();
+    mockGet.mockRejectedValue(new ApiError('slow', undefined, undefined, true));
+
+    await expect(freshSettings(EVENT_ID)).resolves.toEqual({
+      ok: false,
+      problem:
+        'MomentLens could not be reached, so nothing was saved. Check the connection and try again.',
+    });
   });
 });
 
