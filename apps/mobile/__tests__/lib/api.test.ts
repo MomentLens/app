@@ -922,3 +922,93 @@ describe('sub-event endpoints', () => {
     expect(error.code).toBe('last_sub_event');
   });
 });
+
+describe('event settings endpoints', () => {
+  const EVENT_ID = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const settings = {
+    name: 'Him & Her',
+    description: null,
+    approvalMode: 'manual',
+    cover: null,
+    pendingCount: 3,
+    pendingPhotographers: ['Sara Ahmed'],
+  };
+
+  function signedIn(accessToken: string): SessionResult {
+    return { data: { session: { access_token: accessToken } }, error: null };
+  }
+
+  function initOf(fetchMock: ReturnType<typeof answers>, call: number) {
+    return fetchMock.mock.calls[call]?.[1] ?? {};
+  }
+
+  function errorBody(code: string) {
+    return { error: { code, message: 'refused' } };
+  }
+
+  async function failure(promise: Promise<unknown>) {
+    return (await promise.catch((e: unknown) => e)) as InstanceType<Api['ApiError']>;
+  }
+
+  it('GETs the settings on the event path and returns them parsed', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const fetchMock = answers(200, { settings });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.getEventSettings(EVENT_ID)).resolves.toEqual({ settings });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${EVENT_ID}/settings`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('GET');
+  });
+
+  // EventSettings refuses more pending Photographers than pending requests.
+  it('refuses settings that name more Photographers than are pending', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answers(200, { settings: { ...settings, pendingCount: 0 } });
+    const api = loadApi(BASE_URL);
+
+    await expect(api.getEventSettings(EVENT_ID)).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('throws wrong_role for a Guest or a Photographer, so the app refetches the role', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answers(403, errorBody('wrong_role'));
+    const api = loadApi(BASE_URL);
+
+    const error = await failure(api.getEventSettings(EVENT_ID));
+    expect(error.status).toBe(403);
+    expect(error.code).toBe('wrong_role');
+  });
+
+  it('PATCHes only the fields given and returns the settings and how many were let in', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    const answer = {
+      settings: { ...settings, approvalMode: 'auto', pendingCount: 0, pendingPhotographers: [] },
+      admitted: 3,
+    };
+    const fetchMock = answers(200, answer);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+
+    await expect(api.updateEventSettings(EVENT_ID, { approvalMode: 'auto' })).resolves.toEqual(
+      answer,
+    );
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${EVENT_ID}/settings`,
+    );
+    expect(initOf(fetchMock, 0).method).toBe('PATCH');
+    expect(JSON.parse(initOf(fetchMock, 0).body as string)).toEqual({ approvalMode: 'auto' });
+  });
+
+  it('throws not_found for a deleted event, never reading settings out of it', async () => {
+    mockAuth.getSession.mockResolvedValue(signedIn('token-1'));
+    globalThis.fetch = answers(404, errorBody('not_found'));
+    const api = loadApi(BASE_URL);
+
+    const error = await failure(api.updateEventSettings(EVENT_ID, { name: 'Ayesha' }));
+    expect(error.status).toBe(404);
+    expect(error.code).toBe('not_found');
+  });
+});
