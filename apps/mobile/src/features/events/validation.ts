@@ -12,7 +12,7 @@ import type { DraftVenue } from '@/features/events/draft';
 // What the wizard says before it lets the user go on. Each rule is the shared schema's, so the
 // app and the API agree on what counts as too long (D-110). These messages reach the user.
 
-function nameProblem(name: string, what: string): string | undefined {
+export function nameProblem(name: string, what: string): string | undefined {
   if (name.trim() === '') {
     return `Enter a name for the ${what}.`;
   }
