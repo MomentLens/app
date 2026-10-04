@@ -5,8 +5,10 @@
 // get_my_event through the same store (D-118), resolve_invite, join_event, the cancel and the join
 // request list through the API's stores (D-115), sub_event_schedule, add_sub_event,
 // update_sub_event and delete_sub_event through the API's sub-event store (D-121), media,
-// start_upload and complete_upload through the API's media store (D-95, D-122), and
-// event_settings and update_event_settings through the API's event store (D-142). It needs a
+// start_upload and complete_upload through the API's media store (D-95, D-122),
+// event_settings and update_event_settings through the API's event store (D-142), the attendee
+// functions through the API's attendee store (D-143), and the Pending Approvals functions through
+// the API's join request store (D-144). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
 // dev project from the environment. Each test makes its own accounts under @momentlens.me and
 // deletes them after, and deletes the events it made. No email is sent, because the accounts are
@@ -51,6 +53,8 @@ import {
   createAttendeeStore,
 } from '../../src/services/attendees';
 import { createDatabaseCheck } from '../../src/services/health';
+import { createJoinRequestStore, requestTargetsParam } from '../../src/services/join-requests';
+import type { RequestTarget } from '../../src/services/join-requests';
 import {
   createInviteStore,
   joinEventParams,
@@ -3427,6 +3431,519 @@ if (project === null) {
           approval_mode: 'manual',
         });
         await expect(statuses(event.id, [x])).resolves.toEqual(['pending']);
+      });
+    });
+
+    describe('pending approvals (D-144)', () => {
+      const joinRequests = createJoinRequestStore(admin);
+      const invites = createInviteStore(admin);
+      // A small cap, as the join_event tests pass, so the last place costs a few accounts.
+      const CAP = 3;
+
+      interface Row {
+        id: string;
+        user_id: string;
+        role: string;
+        status: string;
+        access_version: number;
+        requested_at: string;
+        admin_verified_at: string | null;
+        last_viewed_at: string | null;
+      }
+      async function row(eventId: string, userId: string): Promise<Row | null> {
+        const result = await admin
+          .from('membership')
+          .select(
+            'id, user_id, role, status, access_version, requested_at, admin_verified_at, last_viewed_at',
+          )
+          .eq('event_id', eventId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        expect(result.error).toBeNull();
+        return result.data;
+      }
+      // Every membership of the event, so a refusal can be checked to have written nothing.
+      async function snapshot(eventId: string) {
+        const result = await admin
+          .from('membership')
+          .select('id, user_id, role, status, access_version, requested_at')
+          .eq('event_id', eventId)
+          .order('user_id');
+        expect(result.error).toBeNull();
+        return result.data;
+      }
+      async function addRequest(
+        eventId: string,
+        userId: string,
+        role: string,
+        requestedAt = new Date().toISOString(),
+        status = 'pending',
+      ) {
+        const result = await admin
+          .from('membership')
+          .insert({ event_id: eventId, user_id: userId, role, status, requested_at: requestedAt });
+        expect(result.error).toBeNull();
+      }
+      // The person with the row id and counter the list would have handed the app.
+      async function target(eventId: string, userId: string) {
+        const current = await row(eventId, userId);
+        if (current === null) throw new Error('No membership to target');
+        return { userId, expected: { id: current.id, version: String(current.access_version) } };
+      }
+      async function token(eventId: string, role: 'guest' | 'photographer') {
+        const link = await admin
+          .from('invite')
+          .select('token')
+          .eq('event_id', eventId)
+          .eq('role', role)
+          .is('revoked_at', null)
+          .single();
+        expect(link.error).toBeNull();
+        return (link.data as { token: string }).token;
+      }
+      async function activeGuests(eventId: string) {
+        const count = await admin
+          .from('membership')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId)
+          .eq('role', 'guest')
+          .eq('status', 'active');
+        expect(count.error).toBeNull();
+        return count.count;
+      }
+      const approve = (eventId: string, actorId: string, targets: RequestTarget[], cap = CAP) =>
+        joinRequests.act(eventId, actorId, 'approve', targets, cap);
+      const reject = (eventId: string, actorId: string, targets: RequestTarget[]) =>
+        joinRequests.act(eventId, actorId, 'reject', targets, CAP);
+      const block = (eventId: string, actorId: string, one: RequestTarget) =>
+        joinRequests.act(eventId, actorId, 'block', [one], CAP);
+
+      it('lists pending requests oldest first to the microsecond, with no avatar or private column', async () => {
+        const [a, g1, g2, p, x, r] = [
+          await createNamedUser('Admin'),
+          await createNamedUser('Guest One'),
+          await createNamedUser('Guest Two'),
+          await createNamedUser('Photographer'),
+          await createNamedUser('Active Guest'),
+          await createNamedUser('Removed Guest'),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        // Two requests in one microsecond, and one a microsecond later.
+        await addRequest(event.id, g1.id, 'guest', '2026-10-04T10:00:00.000001Z');
+        await addRequest(event.id, g2.id, 'guest', '2026-10-04T10:00:00.000001Z');
+        await addRequest(event.id, p.id, 'photographer', '2026-10-04T10:00:00.000002Z');
+        await addMember(event.id, x.id, 'guest', 'active');
+        await addMember(event.id, r.id, 'guest', 'removed');
+        // A Do Not Publish subject with an avatar: the list must not read it (D-143, D-144).
+        const avatar = await admin
+          .from('profile')
+          .update({ avatar_key: `users/${g1.id}/avatar_${randomUUID()}.jpg` })
+          .eq('user_id', g1.id);
+        expect(avatar.error).toBeNull();
+        const dnp = await admin
+          .from('subject')
+          .update({ dnp_activated_at: iso(T0) })
+          .eq('user_id', g1.id);
+        expect(dnp.error).toBeNull();
+
+        const listed = await joinRequests.list(event.id, a.id, null);
+        if (listed.outcome !== 'listed') throw new Error(`expected listed, got ${listed.outcome}`);
+        const tied = [g1.id, g2.id].sort();
+        expect(listed.rows.map((one) => one.userId)).toEqual([...tied, p.id]);
+        expect(listed.rows.map((one) => one.requestedAt)).toEqual([
+          '2026-10-04T10:00:00.000001Z',
+          '2026-10-04T10:00:00.000001Z',
+          '2026-10-04T10:00:00.000002Z',
+        ]);
+        expect(listed.activeGuests).toBe(1);
+        expect(listed.rows[2]).toMatchObject({
+          role: 'photographer',
+          fullName: 'Photographer',
+          version: '1',
+        });
+        expect(Object.keys(listed.rows[0]!).sort()).toEqual([
+          'fullName',
+          'id',
+          'requestedAt',
+          'role',
+          'userId',
+          'version',
+        ]);
+        await expect(
+          joinRequests.list(event.id, a.id, {
+            requestedAt: listed.rows[0]!.requestedAt,
+            userId: tied[0]!,
+          }),
+        ).resolves.toMatchObject({ rows: [{ userId: tied[1] }, { userId: p.id }] });
+
+        // A pending Guest who opens the Photographer link keeps their request as it was.
+        await expect(
+          invites.join(g1.id, { token: await token(event.id, 'photographer') }, CAP),
+        ).resolves.toMatchObject({
+          outcome: 'member',
+          membership: { role: 'guest', status: 'pending' },
+        });
+
+        const archived = await admin
+          .from('event')
+          .update({ archived_at: new Date().toISOString() })
+          .eq('id', event.id);
+        expect(archived.error).toBeNull();
+        await expect(joinRequests.list(event.id, a.id, null)).resolves.toMatchObject({
+          outcome: 'listed',
+        });
+      });
+
+      it('rechecks the event and the actor in every function and writes nothing', async () => {
+        const [a, t, x] = [
+          await createNamedUser('Admin'),
+          await createNamedUser('Requester'),
+          await createNamedUser('Actor'),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        const other = await createdEvent(x.id);
+        await addRequest(event.id, t.id, 'guest');
+        const one = await target(event.id, t.id);
+        const everything = (eventId: string, actorId: string) =>
+          Promise.all([
+            joinRequests.list(eventId, actorId, null),
+            approve(eventId, actorId, [one]),
+            reject(eventId, actorId, [one]),
+            block(eventId, actorId, one),
+          ]);
+        // x is the Admin of `other`, and holds each state in this event in turn.
+        for (const state of [null, 'pending', 'removed', 'blocked', 'guest', 'photographer']) {
+          if (state === 'pending') await addRequest(event.id, x.id, 'guest');
+          else if (state !== null) {
+            const edited = await admin
+              .from('membership')
+              .update({
+                role: state === 'photographer' ? 'photographer' : 'guest',
+                status: ['guest', 'photographer'].includes(state) ? 'active' : state,
+              })
+              .eq('event_id', event.id)
+              .eq('user_id', x.id);
+            expect(edited.error).toBeNull();
+          }
+          const outcome =
+            state === 'guest' || state === 'photographer' ? 'wrong_role' : 'not_member';
+          for (const result of await everything(event.id, x.id))
+            expect(result).toEqual({ outcome });
+        }
+        for (const result of await everything(other.id, a.id))
+          expect(result).toEqual({ outcome: 'not_member' });
+        for (const result of await everything(randomUUID(), a.id))
+          expect(result).toEqual({ outcome: 'not_found' });
+        await expect(row(event.id, t.id)).resolves.toMatchObject({
+          status: 'pending',
+          access_version: 1,
+        });
+        await expect(row(event.id, a.id)).resolves.toMatchObject({
+          role: 'admin',
+          status: 'active',
+          access_version: 1,
+        });
+
+        const deleted = await admin
+          .from('event')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', event.id);
+        expect(deleted.error).toBeNull();
+        for (const result of await everything(event.id, a.id))
+          expect(result).toEqual({ outcome: 'not_found' });
+        await expect(row(event.id, t.id)).resolves.toMatchObject({
+          status: 'pending',
+          access_version: 1,
+        });
+      }, 120_000);
+
+      it('refuses a whole batch for one target that is not a live request, and writes nothing', async () => {
+        const [a, t, gone, elsewhere, active, stale, remade] = [
+          await createNamedUser('Admin'),
+          await createNamedUser('Requester'),
+          await createNamedUser('No Row'),
+          await createNamedUser('Elsewhere'),
+          await createNamedUser('Active'),
+          await createNamedUser('Stale'),
+          await createNamedUser('Remade'),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        const other = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(event.id, t.id, 'guest');
+        await addRequest(other.id, elsewhere.id, 'guest');
+        await addMember(event.id, active.id, 'guest', 'active');
+        await addRequest(event.id, stale.id, 'guest');
+        await addRequest(event.id, remade.id, 'photographer');
+        const good = await target(event.id, t.id);
+        const staleToken = await target(event.id, stale.id);
+        // A rejoin or a role change advances the counter, so the loaded token is stale.
+        const bumped = await admin
+          .from('membership')
+          .update({ requested_at: new Date().toISOString() })
+          .eq('event_id', event.id)
+          .eq('user_id', stale.id);
+        expect(bumped.error).toBeNull();
+        // A request cancelled and made again through the other link is a new row (D-143).
+        const remadeToken = await target(event.id, remade.id);
+        const cancelled = await invites.cancelJoinRequest(event.id, remade.id);
+        expect(cancelled).toBeNull();
+        await addRequest(event.id, remade.id, 'guest');
+        await expect(row(event.id, remade.id)).resolves.toMatchObject({ access_version: 1 });
+
+        const elsewhereRow = await row(other.id, elsewhere.id);
+        const adminRow = await row(event.id, a.id);
+        const bad = [
+          { userId: gone.id, expected: { id: randomUUID(), version: '1' } },
+          { userId: elsewhere.id, expected: { id: elsewhereRow!.id, version: '1' } },
+          {
+            userId: a.id,
+            expected: { id: adminRow!.id, version: String(adminRow!.access_version) },
+          },
+          await target(event.id, active.id),
+          staleToken,
+          remadeToken,
+        ];
+        const before = await snapshot(event.id);
+        const otherBefore = await snapshot(other.id);
+        for (const wrong of bad) {
+          await expect(approve(event.id, a.id, [good, wrong], 150)).resolves.toEqual({
+            outcome: 'membership_changed',
+          });
+          await expect(reject(event.id, a.id, [wrong, good])).resolves.toEqual({
+            outcome: 'membership_changed',
+          });
+          await expect(block(event.id, a.id, wrong)).resolves.toEqual({
+            outcome: 'membership_changed',
+          });
+        }
+        await expect(snapshot(event.id)).resolves.toEqual(before);
+        await expect(snapshot(other.id)).resolves.toEqual(otherBefore);
+        // The same good target alone still goes through.
+        await expect(approve(event.id, a.id, [good], 150)).resolves.toMatchObject({
+          outcome: 'updated',
+          memberships: [{ userId: t.id, status: 'active' }],
+        });
+      }, 120_000);
+
+      it('admits Guests only within the cap and never part of a batch, and Photographers at it', async () => {
+        const [a, x, y, g1, g2, p] = [
+          await createNamedUser('Admin'),
+          await createNamedUser('Active One'),
+          await createNamedUser('Active Two'),
+          await createNamedUser('Guest One'),
+          await createNamedUser('Guest Two'),
+          await createNamedUser('Photographer'),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        // CAP - 1 active Guests, then two pending Guests: the 149-plus-2 case at a cap of 3.
+        await addMember(event.id, x.id, 'guest', 'active');
+        await addMember(event.id, y.id, 'guest', 'active');
+        await addRequest(event.id, g1.id, 'guest');
+        await addRequest(event.id, g2.id, 'guest');
+        await addRequest(event.id, p.id, 'photographer');
+        const [t1, t2, tp] = [
+          await target(event.id, g1.id),
+          await target(event.id, g2.id),
+          await target(event.id, p.id),
+        ];
+        const before = await snapshot(event.id);
+        await expect(approve(event.id, a.id, [t1, t2, tp])).resolves.toEqual({
+          outcome: 'event_full',
+        });
+        await expect(snapshot(event.id)).resolves.toEqual(before);
+
+        const one = await approve(event.id, a.id, [t1]);
+        expect(one).toEqual({
+          outcome: 'updated',
+          memberships: [
+            {
+              userId: g1.id,
+              role: 'guest',
+              status: 'active',
+              accessVersion: accessVersion(t1.expected.id, '2'),
+            },
+          ],
+        });
+        await expect(activeGuests(event.id)).resolves.toBe(CAP);
+        await expect(approve(event.id, a.id, [t2])).resolves.toEqual({ outcome: 'event_full' });
+        await expect(approve(event.id, a.id, [tp])).resolves.toMatchObject({
+          outcome: 'updated',
+          memberships: [{ userId: p.id, role: 'photographer', status: 'active' }],
+        });
+        await expect(row(event.id, g2.id)).resolves.toMatchObject({
+          status: 'pending',
+          access_version: 1,
+        });
+        await expect(activeGuests(event.id)).resolves.toBe(CAP);
+      }, 120_000);
+
+      it('rejects into a removed row that may ask again, and blocks so join_event answers blocked', async () => {
+        const [a, r, b] = [
+          await createNamedUser('Admin'),
+          await createNamedUser('Rejected'),
+          await createNamedUser('Blocked'),
+        ];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(event.id, r.id, 'photographer');
+        await addRequest(event.id, b.id, 'guest');
+        const viewed = await admin
+          .from('membership')
+          .update({ last_viewed_at: iso(T0) })
+          .eq('event_id', event.id)
+          .in('user_id', [r.id, b.id]);
+        expect(viewed.error).toBeNull();
+        const [beforeR, beforeB] = [await row(event.id, r.id), await row(event.id, b.id)];
+
+        await expect(reject(event.id, a.id, [await target(event.id, r.id)])).resolves.toMatchObject(
+          {
+            outcome: 'updated',
+            memberships: [{ userId: r.id, role: 'photographer', status: 'removed' }],
+          },
+        );
+        await expect(row(event.id, r.id)).resolves.toEqual({
+          ...beforeR,
+          status: 'removed',
+          access_version: 2,
+        });
+        await expect(
+          invites.join(r.id, { token: await token(event.id, 'guest') }, CAP),
+        ).resolves.toMatchObject({
+          outcome: 'rejoined',
+          membership: { role: 'guest', status: 'pending' },
+        });
+        await expect(row(event.id, r.id)).resolves.toMatchObject({
+          id: beforeR!.id,
+          access_version: 3,
+        });
+
+        await expect(block(event.id, a.id, await target(event.id, b.id))).resolves.toMatchObject({
+          outcome: 'updated',
+          memberships: [{ userId: b.id, status: 'blocked' }],
+        });
+        await expect(row(event.id, b.id)).resolves.toEqual({
+          ...beforeB,
+          status: 'blocked',
+          access_version: 2,
+        });
+        for (const role of ['guest', 'photographer'] as const)
+          await expect(
+            invites.join(b.id, { token: await token(event.id, role) }, CAP),
+          ).resolves.toEqual({ outcome: 'blocked' });
+      }, 120_000);
+
+      it('lets one of two racing approvals, joins, cancels or switches win, never both', async () => {
+        const [a, x, p, j] = [
+          await createNamedUser('Admin'),
+          await createNamedUser('Active'),
+          await createNamedUser('Pending'),
+          await createNamedUser('Joiner'),
+        ];
+
+        // Approve against a join for the last place, on an auto event the cap left a request on
+        // (D-142).
+        const auto = await createdEvent(a.id);
+        await addMember(auto.id, x.id, 'guest', 'active');
+        await addRequest(auto.id, p.id, 'guest');
+        const [approved, joined] = await Promise.all([
+          approve(auto.id, a.id, [await target(auto.id, p.id)], 2),
+          invites.join(j.id, { token: await token(auto.id, 'guest') }, 2),
+        ]);
+        expect([approved.outcome, joined.outcome].sort()).toEqual(
+          approved.outcome === 'updated' ? ['full', 'updated'] : ['created', 'event_full'],
+        );
+        await expect(activeGuests(auto.id)).resolves.toBe(2);
+
+        // Two approvals of one request.
+        const twice = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(twice.id, p.id, 'guest');
+        const same = await target(twice.id, p.id);
+        const both = await Promise.all([
+          approve(twice.id, a.id, [same]),
+          approve(twice.id, a.id, [same]),
+        ]);
+        expect(both.map((one) => one.outcome).sort()).toEqual(['membership_changed', 'updated']);
+        await expect(row(twice.id, p.id)).resolves.toMatchObject({
+          status: 'active',
+          access_version: 2,
+        });
+
+        // Approve against Cancel Request.
+        const cancel = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(cancel.id, p.id, 'guest');
+        const [kept, left] = await Promise.all([
+          approve(cancel.id, a.id, [await target(cancel.id, p.id)]),
+          invites.cancelJoinRequest(cancel.id, p.id),
+        ]);
+        if (kept.outcome === 'updated') {
+          expect(left).toEqual({ role: 'guest', status: 'active' });
+          await expect(row(cancel.id, p.id)).resolves.toMatchObject({ status: 'active' });
+        } else {
+          expect(kept).toEqual({ outcome: 'membership_changed' });
+          expect(left).toBeNull();
+          await expect(row(cancel.id, p.id)).resolves.toBeNull();
+        }
+
+        // Approve against a switch to auto, which admits the oldest pending Guest first.
+        const manual = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addMember(manual.id, x.id, 'guest', 'active');
+        await addRequest(manual.id, j.id, 'guest', iso(T0));
+        await addRequest(manual.id, p.id, 'guest', iso(T0 + HOUR));
+        const [byHand, switched] = await Promise.all([
+          approve(manual.id, a.id, [await target(manual.id, p.id)], 2),
+          store.updateSettings(manual.id, { approvalMode: 'auto' }, 2),
+        ]);
+        expect(switched).toMatchObject({
+          outcome: 'updated',
+          admitted: byHand.outcome === 'updated' ? 0 : 1,
+        });
+        expect(byHand.outcome).toBe(
+          switched.outcome === 'updated' && switched.admitted === 1 ? 'event_full' : 'updated',
+        );
+        await expect(activeGuests(manual.id)).resolves.toBe(2);
+      }, 120_000);
+
+      it('lets neither the publishable key nor a signed-in Admin call any of the functions', async () => {
+        const [a, t] = [await createNamedUser('Admin'), await createNamedUser('Requester')];
+        const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
+        await addRequest(event.id, t.id, 'guest');
+        const one = await target(event.id, t.id);
+        const targets = requestTargetsParam([one]);
+        const actor = { p_event_id: event.id, p_actor_id: a.id };
+        for (const client of [
+          createServerClient(project.url, project.publishableKey),
+          // The event's own Admin, who still reads and writes nothing directly (root invariant 14).
+          await signedInClient(a),
+        ]) {
+          for (const [name, args] of [
+            [
+              'list_pending_requests',
+              { ...actor, p_after_requested_at: null, p_after_user_id: null },
+            ],
+            ['approve_requests', { ...actor, p_targets: targets, p_max_guests: 150 }],
+            ['reject_requests', { ...actor, p_targets: targets }],
+            [
+              'block_request',
+              {
+                ...actor,
+                p_user_id: t.id,
+                p_expected_id: one.expected.id,
+                p_expected_version: one.expected.version,
+              },
+            ],
+            [
+              'act_on_join_requests',
+              { ...actor, p_targets: targets, p_action: 'approve', p_max_guests: 150 },
+            ],
+          ] as const) {
+            const result = await client.rpc(name, args);
+            expect(result.error).not.toBeNull();
+            expect(result.data).toBeNull();
+          }
+        }
+        await expect(row(event.id, t.id)).resolves.toMatchObject({
+          status: 'pending',
+          access_version: 1,
+        });
       });
     });
   });
