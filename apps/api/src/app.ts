@@ -8,8 +8,10 @@ import {
   createCoverUploadController,
   createEventController,
   getEventController,
+  getEventSettingsController,
   listEventsController,
   setEventCoverController,
+  updateEventSettingsController,
 } from './controllers/events';
 import { healthController } from './controllers/health';
 import {
@@ -76,6 +78,8 @@ export function createApp(deps: AppDeps): Express {
       get: getEventController(deps.events, deps.presignGet),
       createCoverUpload: createCoverUploadController(deps.events, deps.presignPut),
       setCover: setEventCoverController(deps.events, deps.objectExists, deps.presignGet),
+      getSettings: getEventSettingsController(deps.events, deps.presignGet),
+      updateSettings: updateEventSettingsController(deps.events, deps.presignGet),
       cancelJoinRequest: cancelJoinRequestController(deps.invites),
     }),
   );

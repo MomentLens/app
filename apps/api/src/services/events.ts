@@ -2,16 +2,26 @@ import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 
-import { EventType, InviteRole, MembershipRole, MembershipStatus } from '@momentlens/shared-types';
+import {
+  ApprovalMode,
+  EventType,
+  InviteRole,
+  MembershipRole,
+  MembershipStatus,
+} from '@momentlens/shared-types';
 import type {
   CreateCoverUploadResponse,
   CreateEventRequest,
+  EventSettings,
   EventSummary,
   GetEventResponse,
+  GetEventSettingsResponse,
   JoinRequest,
   ListEventsResponse,
   PresignedImage,
   SetEventCoverResponse,
+  UpdateEventSettingsRequest,
+  UpdateEventSettingsResponse,
 } from '@momentlens/shared-types';
 
 import type { Supabase } from '../db/supabase';
@@ -20,7 +30,7 @@ import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
 
 // At most 150 active Guests in one event. The Admin and Photographers do not count (spec §4.17,
-// D-102). join_event enforces it under the event's lock, with this number.
+// D-102). join_event and update_event_settings enforce it under the event's lock, with this number.
 export const MAX_ACTIVE_GUESTS = 150;
 
 // One event as the caller sees it, before its cover is presigned. Timestamps are already in
@@ -59,8 +69,23 @@ export interface CallerEvent extends EventAccess {
   event: EventRecord | null;
 }
 
-// Every read and write of event, venue, sub_event and membership that S-02 makes, and S-03's list
-// of join requests. It checks nothing about who asks; the functions below do.
+// The Event Settings form as event_settings reads it, before its cover is presigned (D-142).
+export interface SettingsRecord {
+  name: string;
+  description: string | null;
+  approvalMode: ApprovalMode;
+  coverKey: string | null;
+  pendingCount: number;
+  pendingPhotographers: string[];
+}
+
+// What update_event_settings did (supabase/migrations/..._update_event_settings.sql). not_found is
+// an event soft-deleted after the service's check, and then nothing was written.
+export type UpdateSettingsResult =
+  { outcome: 'updated'; admitted: number; settings: SettingsRecord } | { outcome: 'not_found' };
+
+// Every read and write of event, venue, sub_event and membership that S-02 makes, S-03's list of
+// join requests, and S-07a's settings. It checks nothing about who asks; the functions below do.
 export interface EventStore {
   create(userId: string, request: CreateEventRequest): Promise<CreateEventResult>;
   // Every event where the user's membership is active, soft-deleted events left out (D-110).
@@ -73,6 +98,14 @@ export interface EventStore {
   findAccess(eventId: string, userId: string): Promise<MemberAccess | null>;
   // False when the event does not exist or is soft-deleted, and then nothing was written.
   setCover(eventId: string, key: string): Promise<boolean>;
+  // Null when the event does not exist or is soft-deleted.
+  settings(eventId: string): Promise<SettingsRecord | null>;
+  // One update_event_settings call. A switch to auto admits Guests until maxGuests are active.
+  updateSettings(
+    eventId: string,
+    request: UpdateEventSettingsRequest,
+    maxGuests: number,
+  ): Promise<UpdateSettingsResult>;
 }
 
 // Postgres prints a timestamptz with microseconds and +00:00. The contract wants toISOString's
@@ -132,6 +165,34 @@ const CallerRow = z.object({
   status: MembershipStatus.nullable(),
 });
 
+// event_settings' object. Parsed rather than cast, so a renamed key fails here. So does a null in
+// pending_photographers, a Photographer with no profile, rather than drop them from the confirm.
+const SettingsRow = z
+  .object({
+    name: z.string(),
+    description: z.string().nullable(),
+    approval_mode: ApprovalMode,
+    cover_key: z.string().nullable(),
+    pending_count: z.int().min(0),
+    pending_photographers: z.array(z.string()),
+  })
+  .transform((row): SettingsRecord => ({
+    name: row.name,
+    description: row.description,
+    approvalMode: row.approval_mode,
+    coverKey: row.cover_key,
+    pendingCount: row.pending_count,
+    pendingPhotographers: row.pending_photographers,
+  }));
+
+// update_event_settings' one row. An outcome not named here fails the parse.
+const UpdateSettingsRow = z.union([
+  z.object({ outcome: z.literal('updated'), admitted: z.int().min(0), settings: SettingsRow }),
+  z
+    .object({ outcome: z.literal('not_found'), admitted: z.literal(0), settings: z.null() })
+    .transform(() => ({ outcome: 'not_found' as const })),
+]);
+
 const AccessRows = {
   event: z.object({ deleted_at: z.string().nullable(), album_open: z.boolean() }),
   membership: z.object({ role: MembershipRole, status: MembershipStatus }),
@@ -160,6 +221,23 @@ export function createEventParams(userId: string, request: CreateEventRequest) {
       venue_index: subEvent.venueIndex,
       verification_radius_m: subEvent.verificationRadiusM,
     })),
+  };
+}
+
+// update_event_settings' arguments for a parsed request. A field the request leaves out is null,
+// which the function leaves as it is. An empty description is sent as it is, and the function
+// clears the description for it. Exported so the dev-project test can call the function directly.
+export function updateEventSettingsParams(
+  eventId: string,
+  request: UpdateEventSettingsRequest,
+  maxGuests: number,
+) {
+  return {
+    p_event_id: eventId,
+    p_name: request.name ?? null,
+    p_description: request.description ?? null,
+    p_approval_mode: request.approvalMode ?? null,
+    p_max_guests: maxGuests,
   };
 }
 
@@ -303,6 +381,35 @@ export function createEventStore(supabase: Supabase): EventStore {
         throw error;
       }
       return z.array(z.object({ id: z.uuid() })).parse(data).length === 1;
+    },
+
+    async settings(eventId) {
+      // An rpc so the pending count and the names come from one snapshot, and so GET and the
+      // write read the settings in one place.
+      const result = await supabase.rpc('event_settings', { p_event_id: eventId });
+      if (result.error) {
+        throw result.error;
+      }
+      return SettingsRow.nullable().parse(result.data as unknown);
+    },
+
+    async updateSettings(eventId, request, maxGuests) {
+      // One rpc, one transaction, under the event's lock: the fields, the switch and every
+      // request it admits commit together or not at all (D-95, D-142).
+      const result = await supabase.rpc(
+        'update_event_settings',
+        updateEventSettingsParams(eventId, request, maxGuests),
+      );
+      if (result.error) {
+        throw result.error;
+      }
+      const [row, ...rest] = z.array(UpdateSettingsRow).parse(result.data as unknown);
+      if (row === undefined || rest.length > 0) {
+        throw new Error(
+          `update_event_settings returned ${rest.length + (row ? 1 : 0)} rows, expected 1`,
+        );
+      }
+      return row;
     },
   };
 }
@@ -477,4 +584,55 @@ export async function setEventCover(
     throw new ApiError('not_found', 'No such event');
   }
   return { cover: await presignCover(key, presignGet) };
+}
+
+const SETTINGS_REFUSAL = "Only the event's Admin reads or changes its settings";
+
+async function toSettings(record: SettingsRecord, presignGet: PresignGet): Promise<EventSettings> {
+  return {
+    name: record.name,
+    description: record.description,
+    approvalMode: record.approvalMode,
+    cover: record.coverKey === null ? null : await presignCover(record.coverKey, presignGet),
+    pendingCount: record.pendingCount,
+    pendingPhotographers: record.pendingPhotographers,
+  };
+}
+
+// GET /events/{eventId}/settings, for the event's Admin only (D-142). The check runs before the
+// read, so a refused caller gets no field, no pending name and no cover URL (root invariant 3).
+export async function getEventSettings(
+  store: EventStore,
+  presignGet: PresignGet,
+  userId: string,
+  eventId: string,
+): Promise<GetEventSettingsResponse> {
+  await requireAdmin(store, eventId, userId, SETTINGS_REFUSAL);
+  const settings = await store.settings(eventId);
+  if (settings === null) {
+    // Soft-deleted after the check.
+    throw new ApiError('not_found', 'No such event');
+  }
+  return { settings: await toSettings(settings, presignGet) };
+}
+
+// PATCH /events/{eventId}/settings, for the event's Admin only (D-142). The store is called only
+// after the check, so a refused caller writes nothing and admits nobody. The cap is the server's,
+// never the request's.
+export async function updateEventSettings(
+  store: EventStore,
+  presignGet: PresignGet,
+  userId: string,
+  eventId: string,
+  request: UpdateEventSettingsRequest,
+): Promise<UpdateEventSettingsResponse> {
+  await requireAdmin(store, eventId, userId, SETTINGS_REFUSAL);
+  const result = await store.updateSettings(eventId, request, MAX_ACTIVE_GUESTS);
+  if (result.outcome === 'not_found') {
+    throw new ApiError('not_found', 'No such event');
+  }
+  return {
+    settings: await toSettings(result.settings, presignGet),
+    admitted: result.admitted,
+  };
 }

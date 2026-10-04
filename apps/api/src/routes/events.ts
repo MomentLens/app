@@ -9,6 +9,8 @@ export interface EventHandlers {
   get: RequestHandler;
   createCoverUpload: RequestHandler;
   setCover: RequestHandler;
+  getSettings: RequestHandler;
+  updateSettings: RequestHandler;
   cancelJoinRequest: RequestHandler;
 }
 
@@ -21,6 +23,8 @@ export function eventsRouter(auth: RequestHandler, handlers: EventHandlers): Rou
   router.get('/events/:eventId', auth, handlers.get);
   router.post('/events/:eventId/cover-upload', auth, handlers.createCoverUpload);
   router.put('/events/:eventId/cover', auth, jsonBody, handlers.setCover);
+  router.get('/events/:eventId/settings', auth, handlers.getSettings);
+  router.patch('/events/:eventId/settings', auth, jsonBody, handlers.updateSettings);
   router.delete('/events/:eventId/join-request', auth, handlers.cancelJoinRequest);
   return router;
 }
