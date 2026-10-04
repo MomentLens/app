@@ -11,6 +11,7 @@ export * from './event-settings';
 export * from './health';
 export * from './image';
 export * from './invite';
+export * from './join-request';
 export * from './media';
 export * from './profile';
 export * from './sub-event';
