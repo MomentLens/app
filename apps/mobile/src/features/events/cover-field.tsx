@@ -1,4 +1,5 @@
-import { Image } from 'expo-image';
+import type { PresignedImage } from '@momentlens/shared-types';
+import { Image, type ImageSource } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
@@ -9,10 +10,17 @@ import type { DraftCover } from '@/features/events/draft';
 import { FieldError } from '@/features/events/wizard-frame';
 import { useTokenColor } from '@/hooks/use-token-color';
 import { byPlatform } from '@/lib/copy';
+import { presignedSource } from '@/lib/images';
 
 interface CoverFieldProps {
+  // A photo picked on this phone and prepared, not yet uploaded.
   cover: DraftCover | null;
   onChange: (cover: DraftCover | null) => void;
+  // Event Settings: the cover the event already has, shown until another photo is picked. A cover
+  // is replaced, never removed, so the field then offers Change and no Remove (D-114). The wizard
+  // leaves it out.
+  saved?: PresignedImage | null;
+  disabled?: boolean;
 }
 
 // A small pill over the photo, on a dark shade so it reads on any cover.
@@ -40,11 +48,19 @@ function PhotoPill({
 
 // Step 1's optional cover (spec §2.1.2), as a well at the top of the form: the photo the width of
 // the page once picked, with Change and Remove over it (D-124). The photo is only prepared here; it
-// uploads once the event exists, because its key carries the event's id (arch §3).
-export function CoverField({ cover, onChange }: CoverFieldProps) {
+// uploads once the event exists, because its key carries the event's id (arch §3). Event Settings
+// shows the saved cover in the same well and uploads a picked one on Save (D-142).
+export function CoverField({ cover, onChange, saved, disabled = false }: CoverFieldProps) {
   const [preparing, setPreparing] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
   const ripple = useTokenColor('textPrimary', 0.08);
+  const removable = saved === undefined;
+  // The saved cover is cached under the key the API returned, never its URL (root invariant 2).
+  const source: ImageSource | null = cover
+    ? { uri: cover.uri }
+    : saved
+      ? presignedSource(saved)
+      : null;
 
   async function pick() {
     setProblem(undefined);
@@ -70,26 +86,37 @@ export function CoverField({ cover, onChange }: CoverFieldProps) {
 
   return (
     <View className="gap-1.5 ios:mx-5 android:mx-4">
-      {cover ? (
+      {source ? (
         <View className="h-44 overflow-hidden bg-surfaceMuted ios:rounded-[26px] android:rounded-3xl">
           <Image
-            source={{ uri: cover.uri }}
+            source={source}
             style={{ width: '100%', height: '100%' }}
             contentFit="cover"
             accessibilityIgnoresInvertColors
           />
           <View className="absolute right-3 top-3 flex-row gap-2">
-            <PhotoPill label="Remove" onPress={() => onChange(null)} />
-            <PhotoPill label="Change" onPress={() => void pick()} disabled={preparing} />
+            {removable ? (
+              <PhotoPill label="Remove" onPress={() => onChange(null)} disabled={disabled} />
+            ) : null}
+            <PhotoPill
+              label="Change"
+              onPress={() => void pick()}
+              disabled={preparing || disabled}
+            />
           </View>
+          {preparing ? (
+            <View className="absolute inset-0 items-center justify-center bg-scrim/45">
+              <ActivityIndicator className="text-onPhoto" />
+            </View>
+          ) : null}
         </View>
       ) : (
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Add a cover photo"
           accessibilityHint="Optional. Guests see it on the invite."
-          accessibilityState={{ busy: preparing }}
-          disabled={preparing}
+          accessibilityState={{ busy: preparing, disabled }}
+          disabled={preparing || disabled}
           onPress={() => void pick()}
           android_ripple={{ color: ripple }}
           className="h-44 items-center justify-center gap-2 overflow-hidden bg-surface ios:rounded-[26px] ios:active:bg-surfaceMuted android:rounded-3xl">
