@@ -63,6 +63,8 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
   const settings = query.data;
   const [edits, setEdits] = useState<SettingsEdits>({});
   const [cover, setCover] = useState<DraftCover | null>(null);
+  // A picked photo still being re-encoded. Save waits for it, or the save would go without it.
+  const [preparingCover, setPreparingCover] = useState(false);
   const [saving, setSaving] = useState(false);
   const [closing, setClosing] = useState(false);
   const [showProblems, setShowProblems] = useState(false);
@@ -73,9 +75,10 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
     settings !== undefined && (settingsPatch(settings, edits) !== null || cover !== null);
   const problems = shown && showProblems ? settingsProblems(shown) : {};
 
-  // Leaving with changes asks first, and nothing leaves while a save is running, so the save's own
-  // way back never pops the hub instead. Once a save has finished the screen closes itself.
-  usePreventRemove(!closing && (saving || dirty), ({ data }) => {
+  // Leaving with changes asks first, a photo still being prepared counting as one, and nothing
+  // leaves while a save is running, so the save's own way back never pops the hub instead. Once a
+  // save has finished the screen closes itself.
+  usePreventRemove(!closing && (saving || dirty || preparingCover), ({ data }) => {
     if (saving) return;
     Alert.alert(
       byPlatform('Discard Changes?', 'Discard changes?'),
@@ -100,7 +103,7 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
   }
 
   async function save() {
-    if (saving || !settings || !shown) return;
+    if (saving || preparingCover || !settings || !shown) return;
     setShowProblems(true);
     if (Object.keys(settingsProblems(shown)).length > 0) return;
     setSaving(true);
@@ -216,7 +219,13 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
             <FormMessage message="The settings could not be refreshed. They show what was loaded before." />
           </View>
         ) : null}
-        <CoverField cover={cover} saved={settings.cover} onChange={setCover} disabled={saving} />
+        <CoverField
+          cover={cover}
+          saved={settings.cover}
+          onChange={setCover}
+          onPreparingChange={setPreparingCover}
+          disabled={saving}
+        />
         <FieldGroup>
           <TextField
             label="Event name"
@@ -269,7 +278,12 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
   return (
     <SettingsFrame
       title={byPlatform('Event Settings', 'Event settings')}
-      save={{ label: 'Save', onPress: () => void save(), disabled: !dirty, busy: saving }}
+      save={{
+        label: 'Save',
+        onPress: () => void save(),
+        disabled: !dirty || preparingCover,
+        busy: saving,
+      }}
       onBack={() => router.back()}>
       {body}
     </SettingsFrame>
