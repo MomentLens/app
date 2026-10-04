@@ -143,6 +143,9 @@ describe('attendee reads', () => {
     expect(loadedAttendee(EVENT, filters, TARGET.userId)).toEqual(TARGET);
     expect(loadedAttendee('other-event', filters, TARGET.userId)).toBeUndefined();
     expect(loadedAttendee(EVENT, { search: 'other' }, TARGET.userId)).toBeUndefined();
+    // Detach before clearing. An observer on a removed query schedules an orphaned GC timer.
+    unwatch?.();
+    unwatch = undefined;
     queryClient.clear();
     expect(loadedAttendee(EVENT, filters, TARGET.userId)).toBeUndefined();
   });
