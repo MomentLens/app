@@ -25,7 +25,7 @@ import type {
 
 import type { AppDeps } from '../../src/app';
 import type { VerifyToken } from '../../src/middleware/auth';
-import { MAX_ACTIVE_GUESTS } from '../../src/services/invites';
+import { MAX_ACTIVE_GUESTS } from '../../src/services/events';
 import type { InvitePreviewRecord, InviteStore, JoinResult } from '../../src/services/invites';
 import { startApp, TEST_R2, testDeps } from '../support/app';
 import type { RunningApp } from '../support/app';

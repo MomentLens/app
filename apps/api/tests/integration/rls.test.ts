@@ -38,12 +38,11 @@ import type {
 import { createServerClient } from '../../src/db/supabase';
 import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
-import { createEventParams, createEventStore } from '../../src/services/events';
+import { createEventParams, createEventStore, MAX_ACTIVE_GUESTS } from '../../src/services/events';
 import { createDatabaseCheck } from '../../src/services/health';
 import {
   createInviteStore,
   joinEventParams,
-  MAX_ACTIVE_GUESTS,
   resolveInviteParams,
 } from '../../src/services/invites';
 import {
