@@ -92,7 +92,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17, arch:event, arch §3, D-110, D-114, D-142 | B | S-02, S-04, S-08 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03, S-07a |
 | S-06 | Attendees: search, filter by role, role change, block, remove | §4.4, §2.5.7 Manage, spec §4.17, arch:membership, hb §5.3, D-35, D-102, D-114, D-143 | B | S-07a |
-| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership, D-142, D-143 | B | S-06 |
+| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership, hb §5.3, D-139, D-142, D-143, D-144 | B | S-06 |
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
@@ -191,7 +191,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
-| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143 | B | S-01, S-06, S-20, S-25 |
+| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143, D-144 | B | S-01, S-06, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent | B | S-08, S-13, S-12, S-07a |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
@@ -205,7 +205,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens that event's Event Preferences, whose account row opens Account Settings (spec §2.5.11, D-132).
 
-**S-29 upgrades the shared avatar presigner and Attendees mapping** to read the event's membership flag. S-06 returns initials until that upgrade rather than use the old account-wide flag (D-143).
+**S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request return a row whose flag is set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144).
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 

@@ -122,8 +122,8 @@ There is no Videographer role, because there is no video. There is no Moderator 
    its QR; a scan verifies whichever of them is In Progress at the time.
 
 10. If Approval Mode = "Approve New Users": pending requests queue
-    (name, photo, join time) → Approve / Reject / Block, individually or in
-    bulk.
+    (name, photo, join time) → Approve or Reject, individually or in bulk,
+    and Block one at a time (D-144).
 
 11. Manage attendees: searchable list, check-in status, manual role change
     as a fallback, Force Verify ("Check In Manually", D-133), remove from
@@ -208,8 +208,8 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
    └── Approve New Users → Pending Approval screen ("Waiting for the
        organizer to approve your request to join [Event Name]", with a
        Cancel Request option) → Approval Alerts push fires on resolution
-       (Phase 6, hb §14.6) → reopening the app routes straight to Event
-       Home if approved. Until it resolves, the request is also a card on
+       (Phase 6, hb §14.6) → reopening the app routes straight to the
+       role's landing tab if approved (D-118). Until it resolves, the request is also a card on
        the Events list that opens this screen (D-115)
 ```
 
@@ -371,7 +371,7 @@ Full-screen swipeable pager. Tap toggles the metadata overlay (capture time, sub
 Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-screen, not one long page:
 
 - **Live status card** (top): upload count, current sub-event and status, Open/Close Album toggle (mirrors the Home banner, same state, two entry points).
-- **Pending Approvals**, kept structurally separate from the Review Queue below. Different data, different actions, not one "moderation" bucket. Row per join requester (photo, name, role they're joining as, determined by which link they used), Approve/Reject per row, multi-select plus bulk action bar. Approve All approves at once, and asks first, naming them, only when the batch holds a Photographer (D-139).
+- **Pending Approvals**, kept structurally separate from the Review Queue below. Different data, different actions, not one "moderation" bucket. Row per join requester (photo, name, join time, role they're joining as, determined by which link they used), Approve, Reject and Block per row, multi-select plus a bulk action bar for Approve and Reject. A batch is all or nothing. Approve acts on the selection at once, and asks first, naming them, only when the selection holds a Photographer (D-139). Reject lets the person ask again, and Block asks first (D-144).
 - **Review Queue**, two sections in one screen:
   - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Delete. Delete is permanent and confirms first (D-130).
   - *Blur regions*, each already applied. The card shows the photo with the region outlined, who drew it and when. Actions: Keep / Remove region; removing restores what was there (D-83).
