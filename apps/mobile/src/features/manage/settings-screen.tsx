@@ -167,7 +167,12 @@ export function SettingsScreen({ eventId }: { eventId: string }) {
   const manual = shown?.approvalMode === 'manual';
   const note =
     settings && shown
-      ? approvalNote(settings.approvalMode, shown.approvalMode, settings.pendingCount)
+      ? approvalNote(
+          settings.approvalMode,
+          shown.approvalMode,
+          settings.pendingCount,
+          settings.pendingPhotographers.length,
+        )
       : '';
   const approvalLabel = byPlatform('Approval Mode', 'Approval mode');
 
