@@ -367,6 +367,7 @@ export function ApprovalsScreen({ eventId }: { eventId: string }) {
                 headerTintColor: foreground,
                 headerStyle: { backgroundColor: background },
                 headerBackVisible: !selecting,
+                headerBackButtonDisplayMode: 'minimal',
                 headerLeft: selecting
                   ? () => (
                       <GlassButton
