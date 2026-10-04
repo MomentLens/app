@@ -1,5 +1,6 @@
 import { Stack, type NativeStackNavigationOptions } from 'expo-router';
 import { useColorScheme } from 'nativewind';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { ActivityIndicator, ScrollView } from 'react-native';
 
 import { GlassButton } from '@/components/ui/glass-button';
@@ -17,37 +18,49 @@ export function SettingsFrame({ title, save, children }: SettingsFrameProps) {
   const background = useTokenColor('background');
   const accent = useTokenColor('accent');
   const onGold = colorScheme === 'dark' ? 'background' : 'textPrimary';
-  const tinted = !save.disabled;
+  const { label, disabled, busy } = save;
+  const tinted = !disabled;
 
-  const options: NativeStackNavigationOptions = {
-    headerShown: true,
-    title,
-    headerTransparent: true,
-    headerShadowVisible: false,
-    headerTitleStyle: { color: text },
-    headerTintColor: text,
-    headerBackButtonDisplayMode: 'minimal',
-    contentStyle: { backgroundColor: background },
-    unstable_headerRightItems: () => [
-      {
-        type: 'custom',
-        hidesSharedBackground: true,
-        element: (
-          <GlassButton
-            label={save.label}
-            onPress={save.onPress}
-            disabled={save.disabled || save.busy}
-            tint={tinted ? accent : undefined}>
-            {save.busy ? (
-              <ActivityIndicator className="text-textPrimary dark:text-background" />
-            ) : (
-              <Glyph name={GLYPH.check} size={18} tone={tinted ? onGold : 'textPrimary'} />
-            )}
-          </GlassButton>
-        ),
-      },
-    ],
-  };
+  // The screen hands a new onPress every render, one per keystroke in a field. Read through a ref,
+  // it leaves the options alone, and Stack.Screen sets them on the native bar again only when
+  // Save's label or state changes.
+  const onPress = useRef(save.onPress);
+  useLayoutEffect(() => {
+    onPress.current = save.onPress;
+  });
+
+  const options = useMemo<NativeStackNavigationOptions>(
+    () => ({
+      headerShown: true,
+      title,
+      headerTransparent: true,
+      headerShadowVisible: false,
+      headerTitleStyle: { color: text },
+      headerTintColor: text,
+      headerBackButtonDisplayMode: 'minimal',
+      contentStyle: { backgroundColor: background },
+      unstable_headerRightItems: () => [
+        {
+          type: 'custom',
+          hidesSharedBackground: true,
+          element: (
+            <GlassButton
+              label={label}
+              onPress={() => onPress.current()}
+              disabled={disabled || busy}
+              tint={tinted ? accent : undefined}>
+              {busy ? (
+                <ActivityIndicator className="text-textPrimary dark:text-background" />
+              ) : (
+                <Glyph name={GLYPH.check} size={18} tone={tinted ? onGold : 'textPrimary'} />
+              )}
+            </GlassButton>
+          ),
+        },
+      ],
+    }),
+    [title, text, background, accent, onGold, label, disabled, busy, tinted],
+  );
 
   return (
     <>
