@@ -91,14 +91,14 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §4.17, arch:sub_event, D-121 | U | S-02, S-08 |
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17, arch:event, arch §3, D-110, D-114, D-142 | B | S-02, S-04, S-08 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03, S-07a |
-| S-06 | Attendees: search, filter by role, role change, block, remove | §4.4, §2.5.7 Manage, D-35, D-102 | B | S-07a |
-| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership, D-142 | B | S-06 |
+| S-06 | Attendees: search, filter by role, role change, block, remove | §4.4, §2.5.7 Manage, spec §4.17, arch:membership, hb §5.3, D-35, D-102, D-114, D-143 | B | S-07a |
+| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership, D-142, D-143 | B | S-06 |
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
 **S-07a is the hub the other Manage screens hang off.** Invite (S-05), Attendees (S-06), Pending Approvals (S-07), the Review Queue (S-24) and the live status card (S-31) are rows on it (spec §2.5.7), so every one of those slices comes after it. Until each ships, S-07a shows its row disabled, and the slice enables its own row. The status card has no placeholder and arrives with S-31 (D-142).
 
-**S-06 filters by role only.** Nothing writes a verification row until Phase 4, so S-17 adds the filter by verification status.
+**S-06 filters by role only.** Nothing writes a verification row until Phase 4, so S-17 adds the filter by check-in status and Check In Manually. It lists active attendees only, with initials until S-29 supplies event-scoped avatar privacy, and adds the Admin update guard and access-version precondition for every action (D-143).
 
 **S-04 carries a trap.** A sub-event is In Progress from its start to its end (D-88), but two can overlap, when capture tags to the most recently started, and there can be gaps inside the event when none is In Progress and the FAB hides. The event's own span is computed from its sub-events, so it needs at least one. This is the slice most worth unit-testing. Deleting and editing follow D-100: delete only a sub-event with no photos and never the last one, and an edit moves nothing. Other phones see a Delay on their next fetch of the schedule, so there is no Realtime to build. The status functions live in `packages/shared-types`, `subEventStatus` and `currentSubEvent`, which the capture button and the API's scan-time check both call, with their unit tests in `apps/api`'s Jest suite (D-121). Editing a sub-event also covers its venue and its verification radius, since the event carries neither (D-111).
 
@@ -191,7 +191,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
-| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141 | B | S-01, S-20, S-25 |
+| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143 | B | S-01, S-06, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent | B | S-08, S-13, S-12, S-07a |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
@@ -204,6 +204,8 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 **S-29's DNP flow is the most sensitive UX in the app** (D-31, HB §15). Not a toggle, and set per event (D-129). Get it right in this slice rather than polishing it later. Its migration adds `membership.dnp_activated_at` and drops `subject.dnp_activated_at`, and the activation is one SQL function that sets the column and enqueues `reprocess` for that event (arch:membership). "Upload over Mobile Data" and the default Viewfinder mode live on the phone in MMKV; the push toggles are `profile.notify_approval` and `profile.notify_album`, which S-27's sender checks.
 
 **S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens that event's Event Preferences, whose account row opens Account Settings (spec §2.5.11, D-132).
+
+**S-29 upgrades the shared avatar presigner and Attendees mapping** to read the event's membership flag. S-06 returns initials until that upgrade rather than use the old account-wide flag (D-143).
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 
