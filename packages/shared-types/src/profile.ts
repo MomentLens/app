@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 import { PresignedImage } from './image';
 
-const FULL_NAME_MAX = 80;
+/** The longest name, in code points (D-109). */
+export const FULL_NAME_MAX = 80;
 
 /**
  * A person's name as signup sends it in the `full_name` metadata and `profile.full_name` stores
