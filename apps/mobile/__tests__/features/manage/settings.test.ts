@@ -273,6 +273,16 @@ describe('saveProblem', () => {
     );
   });
 
+  it('says what will help for each way the PUT to R2 can fail', () => {
+    expect(saveProblem({ cover: 'file_missing' }, 'cover')).toBe(
+      'The photo you picked is no longer on this phone. Pick it again.',
+    );
+    expect(saveProblem({ cover: 'unreachable' }, 'cover')).toBe(
+      'The cover did not upload. Check the connection and try again.',
+    );
+    expect(saveProblem({ cover: 'refused' }, 'cover')).toBe('The cover did not upload. Try again.');
+  });
+
   it('says a cover the API cannot find did not finish uploading', () => {
     expect(saveProblem({ status: 409, code: 'upload_missing' }, 'cover')).toBe(
       'The cover did not finish uploading. Try again.',
@@ -281,7 +291,7 @@ describe('saveProblem', () => {
 
   // Save sends the details first, so a cover that fails after them leaves them saved.
   it('says the other changes are saved when only the cover failed after them', () => {
-    expect(saveProblem({}, 'cover', true)).toBe(
+    expect(saveProblem({ cover: 'unreachable' }, 'cover', true)).toBe(
       'Your other changes are saved. The cover did not upload. Check the connection and try again.',
     );
   });
