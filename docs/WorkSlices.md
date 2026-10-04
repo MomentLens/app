@@ -205,7 +205,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens that event's Event Preferences, whose account row opens Account Settings (spec §2.5.11, D-132).
 
-**S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request return a row whose flag is set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144).
+**S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request retain the row with status set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144).
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 
