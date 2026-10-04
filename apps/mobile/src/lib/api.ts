@@ -47,12 +47,16 @@ export class ApiError extends Error {
   // The ErrorResponse code, when the body carried one this build knows. A screen switches on it,
   // or on `status` when it is missing (Handbook §5.3).
   readonly code: ErrorCode | undefined;
+  // True when the request went out and no answer came within REQUEST_TIMEOUT_MS. A write may have
+  // landed anyway, which a request that never reached the API cannot have.
+  readonly timedOut: boolean;
 
-  constructor(message: string, status?: number, code?: ErrorCode) {
+  constructor(message: string, status?: number, code?: ErrorCode, timedOut = false) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.timedOut = timedOut;
   }
 }
 
@@ -98,7 +102,12 @@ async function request(
       throw error;
     }
     if (controller.signal.aborted) {
-      throw new ApiError(`The API did not answer within ${REQUEST_TIMEOUT_MS / 1000} seconds.`);
+      throw new ApiError(
+        `The API did not answer within ${REQUEST_TIMEOUT_MS / 1000} seconds.`,
+        undefined,
+        undefined,
+        true,
+      );
     }
     throw new ApiError('Could not reach the API. Check the connection and the API address.');
   } finally {

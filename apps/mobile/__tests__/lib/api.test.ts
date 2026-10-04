@@ -142,6 +142,8 @@ describe('getHealth', () => {
 
     const error = await api.getHealth().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(api.ApiError);
+    // Nothing reached the API, so nothing it would have written can have landed.
+    expect((error as InstanceType<Api['ApiError']>).timedOut).toBe(false);
   });
 
   it('times out with ApiError at 10 seconds, not before', async () => {
@@ -162,6 +164,8 @@ describe('getHealth', () => {
     const error = await result;
     expect(error).toBeInstanceOf(api.ApiError);
     expect((error as Error).message).toBe('The API did not answer within 10 seconds.');
+    // The request went out, so a write may have landed (features/manage/settings.ts saveProblem).
+    expect((error as InstanceType<Api['ApiError']>).timedOut).toBe(true);
   });
 
   it('hands a caller abort back as the AbortError itself, not as an ApiError', async () => {
