@@ -44,9 +44,19 @@ export function rememberCreatedEvent(event: EventSummary): void {
 
 // The same once its cover is set.
 export function rememberCover(eventId: string, cover: PresignedImage): void {
+  rememberEventChanges(eventId, { cover });
+}
+
+// Puts what the Admin saved in Event Settings into the listed event, so the Events tab shows the
+// new name or cover without waiting for its next fetch (D-142). A new cover carries the cacheKey
+// of its own upload, so the card stops showing the old one (root invariant 2).
+export function rememberEventChanges(
+  eventId: string,
+  changes: Partial<Pick<EventSummary, 'name' | 'cover'>>,
+): void {
   queryClient.setQueryData<ListEventsResponse>(EVENTS_QUERY_KEY, (list) => {
     const event = list?.events.find((existing) => existing.id === eventId);
-    return event ? withEvent(list, { ...event, cover }) : list;
+    return event ? withEvent(list, { ...event, ...changes }) : list;
   });
 }
 
