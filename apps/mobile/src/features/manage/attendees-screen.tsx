@@ -1,7 +1,7 @@
-import type { Attendee, MembershipRole } from '@momentlens/shared-types';
+import { FULL_NAME_MAX, type Attendee, type MembershipRole } from '@momentlens/shared-types';
 import { FlashList } from '@shopify/flash-list';
 import { Stack, useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -24,6 +24,9 @@ import { useTokenColor } from '@/hooks/use-token-color';
 import { useAuthStore } from '@/stores/auth';
 
 const IOS = Platform.OS === 'ios';
+// How long typing pauses before the list asks the API, so a name costs one request.
+const SEARCH_DELAY_MS = 300;
+
 export function AttendeesScreen({ eventId }: { eventId: string }) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -32,9 +35,19 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
   const border = useTokenColor('border');
   const ripple = useTokenColor('textPrimary', 0.12);
   const owner = useAuthStore((state) => state.userId);
+  const [typed, setTyped] = useState('');
+  // The API trims the search too. Trimming here keeps "Ali" and "Ali " on one cached query.
   const [search, setSearch] = useState('');
   const [role, setRole] = useState<MembershipRole | undefined>();
+  const [pulling, setPulling] = useState(false);
   const query = useAttendees(eventId, { search, role });
+
+  useEffect(() => {
+    const next = typed.trim();
+    // Clearing the field shows everyone at once; typing waits for a pause.
+    const timer = setTimeout(() => setSearch(next), next === '' ? 0 : SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [typed]);
   const items = useMemo(
     () => attendeeListItems(query.data?.pages.flatMap((page) => page.attendees) ?? []),
     [query.data],
@@ -92,8 +105,9 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
       <View className="gap-3 pt-2 ios:px-5 android:px-4">
         <SearchField
           placeholder="Search names"
-          value={search}
-          onChangeText={setSearch}
+          value={typed}
+          onChangeText={setTyped}
+          maxLength={FULL_NAME_MAX}
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="search"
@@ -137,8 +151,13 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
         keyboardShouldPersistTaps="handled"
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingBottom: 24 }}
-        refreshing={query.isRefetching && !query.isFetchingNextPage}
-        onRefresh={() => void query.refetch()}
+        refreshing={pulling}
+        onRefresh={() => {
+          // Only a pull shows the spinner. Background refetches on foreground, on reconnect and
+          // after a write keep the list still.
+          setPulling(true);
+          void query.refetch().finally(() => setPulling(false));
+        }}
         onEndReachedThreshold={0.5}
         onEndReached={() => {
           if (query.hasNextPage && !query.isFetching && !query.isError) void query.fetchNextPage();
