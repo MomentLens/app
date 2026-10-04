@@ -88,15 +88,15 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header, and `GET /events/{eventId}` | §2.5.1, §2.2, §4.10, HB §16.5, HB §4, D-118 | C | S-03 |
-| S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17 | B | S-02, S-08 |
 | S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §4.17, arch:sub_event, D-121 | U | S-02, S-08 |
+| S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17, arch:event, arch §3, D-110, D-114, D-142 | B | S-02, S-04, S-08 |
 | S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03, S-07a |
 | S-06 | Attendees: search, filter by role, role change, block, remove | §4.4, §2.5.7 Manage, D-35, D-102 | B | S-07a |
-| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership | B | S-06 |
+| S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership, D-142 | B | S-06 |
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
-**S-07a is the hub the other Manage screens hang off.** Invite (S-05), Attendees (S-06), Pending Approvals (S-07), the Review Queue (S-24) and the live status card (S-31) are rows on it (spec §2.5.7), so every one of those slices comes after it.
+**S-07a is the hub the other Manage screens hang off.** Invite (S-05), Attendees (S-06), Pending Approvals (S-07), the Review Queue (S-24) and the live status card (S-31) are rows on it (spec §2.5.7), so every one of those slices comes after it. Until each ships, S-07a shows its row disabled, and the slice enables its own row. The status card has no placeholder and arrives with S-31 (D-142).
 
 **S-06 filters by role only.** Nothing writes a verification row until Phase 4, so S-17 adds the filter by verification status.
 
@@ -163,7 +163,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-23 | Find My Photos inside one event, against that event's references, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29, D-35, D-141 | C | S-20, S-13 |
 | S-22a | `media_delete` job: delete every object under a deleted photo's `{media_id}/` prefix and its `face`, `dnp_subject` and `manual_blur_region` rows, and skip a deleted photo in every other job | §4.21, D-130, D-96, arch §5, arch:media | U | S-21 |
 | S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Blur a region (opening S-19's screen) and Delete for the uploader and the Admin, permanent, with its confirm, `DELETE /media/{mediaId}` and `delete_media`, and the migration that lets a deleted photo upload again | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, D-130, HB §4, arch:media, arch:photo_flag | B | S-21, S-22a |
-| S-25 | `reprocess` job: retroactive DNP for the one event it was turned on in, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, D-129, arch §3, arch §5 | U | S-21, S-07 |
+| S-25 | `reprocess` job: retroactive DNP for the one event it was turned on in, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, D-129, arch §3, arch §5, D-142 | U | S-21, S-07 |
 | S-24 | Review Queue: blur regions (Keep / Remove) and flagged photos (Keep / Delete, permanent). No removed photos and no Restore | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, D-130, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22, S-07a |
 
 **S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6). The rectangle is stored as fractions of the upright stored image, the frame the worker's face boxes use (D-99). Its real entry point is S-22's action bar; until S-22 lands, reach the drawing screen through a development-only route, and S-22 deletes that route.
@@ -194,7 +194,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141 | B | S-01, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
 | S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent | B | S-08, S-13, S-12, S-07a |
-| S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile | C | S-07, S-31 |
+| S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
 | S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-07a |
 
 **S-31 writes the `event` SELECT policy** for the Realtime event that flips the album banner, the same way S-13 wrote the one on `media` (arch §1). A human reads it before it merges.

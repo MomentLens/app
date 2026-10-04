@@ -378,7 +378,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 - **Attendees**: search, filter by role and check-in status, row → detail sheet (Change Role, Force Verify labelled "Check In Manually", Remove from Event, Block) (D-133).
 - **Invite**: Guest Link and Photographer Link cards (shortcode prominent, URL secondary, Copy, Share, Revoke & Regenerate), plus one Venue QR per venue (preview, "Download for printing," regenerate).
 - **Sub-events**: deep-links into the Schedule tab rather than duplicating it, since Admin's Delay affordance already lives there.
-- **Event Settings**: edit form (name, description, cover, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). Venue and verification radius belong to each sub-event and are edited there too (D-111). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
+- **Event Settings**: edit form (name, description, cover, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). Venue and verification radius belong to each sub-event and are edited there too (D-111). Switching Approval Mode to auto admits the pending requests the guest cap allows, and asks first when anyone is pending, naming each Photographer (D-142). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
 
 #### 2.5.8 Screens formalized in this pass
 
