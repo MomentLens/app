@@ -229,6 +229,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 - **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
 - **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
 - **A 403 `not_member` on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1). A 403 `wrong_role` means the role changed (D-102), so the app refetches the event and the Event shell redraws its tabs (D-118). `not_uploader` fails only the action that drew it. A join answers a blocked person 403 `blocked` instead, and the app shows Join Blocked, never Access Removed (D-115).
+- **A 409 `membership_changed`** on an attendee action means the target is no longer active or the sheet's access version is stale. The app refetches Attendees before another action. It also refetches after an uncertain mutation result and never automatically retries or queues an attendee mutation (D-143).
 - A failure no other row covers is a 500 with `internal_error`, which Sentry reports. Its `message` names no cause, because the cause goes to Sentry and the logs.
 
 | Status | Means | `code` values so far |
@@ -238,7 +239,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 401 | No session, or it expired | `no_session` |
 | 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |
-| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media`, `sub_event_missing` |
+| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media`, `sub_event_missing`, `membership_changed` |
 | 422 | A limit reached | `event_full`, `too_many_unfinished`, `too_many_references`, `too_many_sub_events`, `event_too_long` |
 | 500 | Anything else, including a dependency the API could not reach | `internal_error` |
 | 503 | A dependency is down | `GET /health` only, with its own body |

@@ -375,7 +375,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 - **Review Queue**, two sections in one screen:
   - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Delete. Delete is permanent and confirms first (D-130).
   - *Blur regions*, each already applied. The card shows the photo with the region outlined, who drew it and when. Actions: Keep / Remove region; removing restores what was there (D-83).
-- **Attendees**: search, filter by role and check-in status, row → detail sheet (Change Role, Force Verify labelled "Check In Manually", Remove from Event, Block) (D-133).
+- **Attendees**: active memberships only, the Admin included, with search and a role filter. Row → detail sheet (Change Role, Force Verify labelled "Check In Manually", Remove from Event, Block). S-06 enables role changes, removal and blocking for active non-Admin targets, and S-17 adds Check In Manually and the check-in filter. S-06 shows initials until S-29 supplies event-scoped avatar privacy. Actions need connectivity and a matching membership access version; a stale or uncertain result refetches the list before another action. Archived events allow them and deleted events refuse them (D-133, D-143).
 - **Invite**: Guest Link and Photographer Link cards (shortcode prominent, URL secondary, Copy, Share, Revoke & Regenerate), plus one Venue QR per venue (preview, "Download for printing," regenerate).
 - **Sub-events**: deep-links into the Schedule tab rather than duplicating it, since Admin's Delay affordance already lives there.
 - **Event Settings**: edit form (name, description, cover, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). Venue and verification radius belong to each sub-event and are edited there too (D-111). Switching Approval Mode to auto admits the pending requests the guest cap allows, and asks first when anyone is pending, naming each Photographer (D-142). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
@@ -519,7 +519,7 @@ A sub-event ends at its scheduled end (D-88). Sub-events are planned across seve
 - Approval Modes: Auto-Approve All, or Approve New Users (manual review).
 - Pending queue, bulk approve/reject, per-user block, revoke access at any time. Remove from Event and Block differ: a removed person can join again through a live invite, and a blocked one cannot (D-102).
 - Every event has exactly one Admin, its creator (D-102).
-- Attendee list: searchable, filterable by role and verification status.
+- Attendee list: active memberships only, searchable by name and filterable by role. S-17 adds check-in status filtering. Only the Admin reads it; pending requests belong to Pending Approvals, and removed or blocked people leave the list. Role changes, removal and blocking require the target's current access version (D-143).
 - **There is no role-based media visibility rule.** All uploaded photos are visible to all event members regardless of the uploader's role, so a role change has no retroactive effect on any photo (D-13). `uploader_role_at_upload` drives the Uploader filter and nothing else: no access control, no routing.
 
 ---
@@ -767,7 +767,7 @@ There is no `PlanTier` concept in v1. Subscriptions are entirely Future Work (§
 - Maximum sub-events per event: **15** (§4.3)
 - Maximum reference photos per person in one event: **5** (§4.2, D-141)
 
-These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests when a join is approved, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded.
+These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests on admission and on an active Photographer's conversion to Guest, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded. Every operation that admits an active Guest or converts a Photographer to Guest takes the same event-row lock before counting and writes in one SQL function called with `rpc`. A conversion at capacity answers 422 `event_full` and leaves the role unchanged (arch:membership, D-143).
 
 ---
 
