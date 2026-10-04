@@ -47,7 +47,10 @@ export function ManageHub({ eventId }: { eventId: string }) {
         <Row
           title={byPlatform('Pending Approvals', 'Pending approvals')}
           leading={<HubGlyph name={GLYPH.approvals} />}
-          {...LATER}
+          chevron
+          onPress={() =>
+            router.push({ pathname: '/event/[id]/manage/approvals', params: { id: eventId } })
+          }
         />
         <Row
           title={byPlatform('Review Queue', 'Review queue')}
