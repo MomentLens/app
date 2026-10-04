@@ -16,6 +16,11 @@ import {
 } from './controllers/events';
 import { healthController } from './controllers/health';
 import {
+  blockRequestController,
+  listPendingRequestsController,
+  requestBatchController,
+} from './controllers/join-requests';
+import {
   cancelJoinRequestController,
   joinEventController,
   resolveInviteController,
@@ -36,6 +41,7 @@ import { attendeesRouter } from './routes/attendees';
 import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
 import { invitesRouter } from './routes/invites';
+import { joinRequestsRouter } from './routes/join-requests';
 import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
 import { subEventsRouter } from './routes/sub-events';
@@ -43,6 +49,7 @@ import type { AttendeeStore } from './services/attendees';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { InviteStore } from './services/invites';
+import type { JoinRequestStore } from './services/join-requests';
 import type { MediaStore } from './services/media';
 import type { FindProfile } from './services/profiles';
 import type { SubEventStore } from './services/sub-events';
@@ -56,6 +63,7 @@ export interface AppDeps {
   findProfile: FindProfile;
   events: EventStore;
   attendees: AttendeeStore;
+  joinRequests: JoinRequestStore;
   invites: InviteStore;
   subEvents: SubEventStore;
   media: MediaStore;
@@ -101,6 +109,14 @@ export function createApp(deps: AppDeps): Express {
       role: attendeeMutationController(deps.events, deps.attendees, 'role'),
       remove: attendeeMutationController(deps.events, deps.attendees, 'remove'),
       block: attendeeMutationController(deps.events, deps.attendees, 'block'),
+    }),
+  );
+  app.use(
+    joinRequestsRouter(auth, {
+      list: listPendingRequestsController(deps.events, deps.joinRequests),
+      approve: requestBatchController(deps.events, deps.joinRequests, 'approve'),
+      reject: requestBatchController(deps.events, deps.joinRequests, 'reject'),
+      block: blockRequestController(deps.events, deps.joinRequests),
     }),
   );
   const mediaDeps = {
