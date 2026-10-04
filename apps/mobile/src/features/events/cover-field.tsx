@@ -16,9 +16,9 @@ interface CoverFieldProps {
   // A photo picked on this phone and prepared, not yet uploaded.
   cover: DraftCover | null;
   onChange: (cover: DraftCover | null) => void;
-  // Event Settings: the cover the event already has, shown until another photo is picked. A cover
-  // is replaced, never removed, so the field then offers Change and no Remove (D-114). The wizard
-  // leaves it out.
+  // Event Settings: the cover the event already has, shown until another photo is picked. A saved
+  // cover is replaced, never removed, so it gets Change and no Remove (D-114). A picked photo over
+  // it gets Undo, which shows the saved one again. The wizard leaves it out.
   saved?: PresignedImage | null;
   disabled?: boolean;
 }
@@ -26,17 +26,19 @@ interface CoverFieldProps {
 // A small pill over the photo, on a dark shade so it reads on any cover.
 function PhotoPill({
   label,
+  accessibilityLabel = `${label} cover photo`,
   onPress,
   disabled = false,
 }: {
   label: string;
+  accessibilityLabel?: string;
   onPress: () => void;
   disabled?: boolean;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${label} cover photo`}
+      accessibilityLabel={accessibilityLabel}
       disabled={disabled}
       hitSlop={6}
       onPress={onPress}
@@ -54,7 +56,9 @@ export function CoverField({ cover, onChange, saved, disabled = false }: CoverFi
   const [preparing, setPreparing] = useState(false);
   const [problem, setProblem] = useState<string | undefined>();
   const ripple = useTokenColor('textPrimary', 0.08);
-  const removable = saved === undefined;
+  // Only a picked photo can be taken back. Over a saved cover that is Undo, since the saved one
+  // stays; anywhere else it is Remove, and the well is empty again.
+  const clearLabel = cover === null ? null : saved ? 'Undo' : 'Remove';
   // The saved cover is cached under the key the API returned, never its URL (root invariant 2).
   const source: ImageSource | null = cover
     ? { uri: cover.uri }
@@ -95,8 +99,13 @@ export function CoverField({ cover, onChange, saved, disabled = false }: CoverFi
             accessibilityIgnoresInvertColors
           />
           <View className="absolute right-3 top-3 flex-row gap-2">
-            {removable ? (
-              <PhotoPill label="Remove" onPress={() => onChange(null)} disabled={disabled} />
+            {clearLabel ? (
+              <PhotoPill
+                label={clearLabel}
+                accessibilityLabel={clearLabel === 'Undo' ? 'Undo the new cover photo' : undefined}
+                onPress={() => onChange(null)}
+                disabled={disabled}
+              />
             ) : null}
             <PhotoPill
               label="Change"
