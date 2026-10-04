@@ -65,6 +65,10 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     verifyToken: () => Promise.resolve(null),
     findProfile: () => Promise.resolve(null),
     events: noEvents,
+    attendees: {
+      list: () => Promise.reject(new Error('no attendee store in this test')),
+      mutate: () => Promise.reject(new Error('no attendee store in this test')),
+    },
     invites: noInvites,
     subEvents: noSubEvents,
     media: noMedia,
