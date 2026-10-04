@@ -3376,7 +3376,9 @@ if (project === null) {
         ];
         const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
         await addMember(event.id, g.id, 'guest', 'active');
-        await addRequest(event.id, x.id, 'guest', iso(T0));
+        // An hour ago, so x asked before the join below, which stamps now(). T0 is in December,
+        // and a join that took the lock first was then the older request and took x's place.
+        await addRequest(event.id, x.id, 'guest', iso(Date.now() - HOUR));
         const invite = await admin
           .from('invite')
           .select('token')
