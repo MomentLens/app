@@ -235,7 +235,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | Status | Means | `code` values so far |
 |---|---|---|
 | 200, 201 | Done; 201 when a row was created | |
-| 400 | The body or path failed validation | `invalid_request` |
+| 400 | The body or path failed validation, or an attendee action targets the event's Admin (D-143) | `invalid_request` |
 | 401 | No session, or it expired | `no_session` |
 | 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |

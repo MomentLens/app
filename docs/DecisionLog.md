@@ -918,6 +918,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** S-02's build found each one unstated, and `docs/ARCHITECTURE.md` recorded the first seven against an issue number that `doc why` cannot follow.
 **Rejected.** Leaving them on the slice card, where only S-02's issue records them. A database rule that refuses to delete an account that is still an event's Admin, which costs a trigger to guard a step the team takes by hand a few times before the demo.
 **Cost.** A replaced cover leaves an orphaned object in R2, and a large cover costs upload time and storage. An account deleted without the manual step leaves Admin-less events that only a hand-written query can repair.
+**Amended (see D-143).** S-06's `guard_membership_admin` trigger now refuses an update that changes the Admin row's identity, role or status, or that makes another member the Admin.
 
 ### D-115: Join rulings from S-03's read-back
 **Decision.** Amends D-110. Ukasha ruled on the first six on 2026-09-29 and let the routine calls stand.
