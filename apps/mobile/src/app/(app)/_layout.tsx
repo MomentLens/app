@@ -60,6 +60,7 @@ export default function AppLayout() {
           28dp corners here and draws its handle in the content. */}
       <Stack.Screen name="sub-event/[eventId]/[subEventId]/index" options={sheet} />
       <Stack.Screen name="sub-event/[eventId]/[subEventId]/delay" options={sheet} />
+      <Stack.Screen name="attendee/[eventId]/[userId]" options={sheet} />
     </Stack>
   );
 }
