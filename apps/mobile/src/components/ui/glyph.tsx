@@ -25,6 +25,13 @@ export const GLYPH = {
   clock: { ios: 'clock', android: 'schedule' },
   venue: { ios: 'mappin.and.ellipse', android: 'add_location_alt' },
   pin: { ios: 'mappin', android: 'location_on' },
+  // The Manage hub's rows (spec §2.5.7).
+  approvals: { ios: 'person.badge.clock', android: 'how_to_reg' },
+  reviewQueue: { ios: 'tray', android: 'flag' },
+  attendees: { ios: 'person.2', android: 'group' },
+  invite: { ios: 'link', android: 'link' },
+  subEvents: { ios: 'calendar', android: 'calendar_month' },
+  settings: { ios: 'gearshape', android: 'settings' },
 } as const satisfies Record<string, GlyphName>;
 
 interface GlyphProps {
