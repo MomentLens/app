@@ -4,6 +4,7 @@ import {
   CreateEventResponse,
   ErrorResponse,
   GetEventResponse,
+  GetEventSettingsResponse,
   HealthResponse,
   JoinEventResponse,
   ListEventsResponse,
@@ -11,11 +12,13 @@ import {
   ProfileResponse,
   ResolveInviteResponse,
   SetEventCoverResponse,
+  UpdateEventSettingsResponse,
   type AddSubEventRequest,
   type CreateEventRequest,
   type ErrorCode,
   type JoinEventRequest,
   type ResolveInviteRequest,
+  type UpdateEventSettingsRequest,
   type UpdateSubEventRequest,
 } from '@momentlens/shared-types';
 import {
@@ -298,6 +301,36 @@ export async function setEventCover(
     throw await errorFrom('PUT /events/{eventId}/cover', response);
   }
   return parseBody('PUT /events/{eventId}/cover', response, SetEventCoverResponse);
+}
+
+// The Event Settings form's fields and the requests a switch to auto would admit, for the event's
+// Admin only (D-142). Anyone else gets 403 not_member or wrong_role, and a deleted or unknown event
+// 404 not_found.
+export async function getEventSettings(
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<GetEventSettingsResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/settings`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/settings', response);
+  }
+  return parseBody('GET /events/{eventId}/settings', response, GetEventSettingsResponse);
+}
+
+// Changes the fields the body carries and nothing else, and answers with the settings after the
+// write and how many pending requests a switch to auto let in (D-142). No signal, for the reason
+// createEvent has none: a PATCH the screen stops waiting for may still land.
+export async function updateEventSettings(
+  eventId: string,
+  body: UpdateEventSettingsRequest,
+): Promise<UpdateEventSettingsResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/settings`;
+  const response = await authenticatedRequest(path, { method: 'PATCH', body });
+  if (response.status !== 200) {
+    throw await errorFrom('PATCH /events/{eventId}/settings', response);
+  }
+  return parseBody('PATCH /events/{eventId}/settings', response, UpdateEventSettingsResponse);
 }
 
 // The event an invite previews, and the caller's own membership when someone is signed in
