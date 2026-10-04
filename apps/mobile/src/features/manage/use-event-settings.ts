@@ -9,6 +9,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { eventQueryKey, recheckEvent, retryUnlessRefused } from '@/features/event-shell/use-event';
 import { uploadCover } from '@/features/events/cover';
+import { CoverUploadError } from '@/features/events/cover-error';
 import type { DraftCover } from '@/features/events/draft';
 import { rememberEventChanges } from '@/features/events/use-events';
 import { saveProblem, type SaveFailure, type SavePart } from '@/features/manage/settings';
@@ -45,13 +46,19 @@ export function useEventSettings(eventId: string) {
 
 export type Outcome<T> = { ok: true; value: T } | { ok: false; problem: string };
 
+// The API's answer, or the reason the cover's PUT to R2 gave. Anything else is a bug here, and
+// reads as one on our side.
+function saveFailure(error: unknown): SaveFailure {
+  if (error instanceof ApiError) return error;
+  if (error instanceof CoverUploadError) return { cover: error.failure };
+  return { status: 500 };
+}
+
 // Whatever went wrong, the cached settings may be out of date: another phone changed them, or a
-// write that timed out landed anyway. They refetch either way. Anything but an ApiError is the
-// cover's own PUT to R2, which never reached the API, so it reads as no answer at all.
+// write that timed out landed anyway. They refetch either way.
 function failure(eventId: string, error: unknown, part: SavePart, detailsSaved = false) {
   void queryClient.invalidateQueries({ queryKey: eventSettingsQueryKey(eventId), exact: true });
-  const refusal: SaveFailure =
-    error instanceof ApiError ? error : part === 'cover' ? {} : { status: 500 };
+  const refusal = saveFailure(error);
   if (refusal.status === 403 || refusal.status === 404) {
     recheckEvent(eventId);
   }

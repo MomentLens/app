@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import { prepareCover, uploadCover } from '@/features/events/cover';
+import { CoverUploadError } from '@/features/events/cover-error';
 
 const EVENT_ID = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
 const UPLOAD_ID = '7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f';
@@ -28,10 +29,12 @@ const mockUpload = jest.fn((_url: string, _options?: UploadOptions) =>
   Promise.resolve({ status: 200, body: '', headers: {} }),
 );
 const mockFiles: string[] = [];
+// Whether the prepared JPEG is still in the cache.
+let mockExists = true;
 jest.mock('expo-file-system', () => ({
   File: jest.fn((uri: string) => {
     mockFiles.push(uri);
-    return { uri, upload: mockUpload };
+    return { uri, exists: mockExists, upload: mockUpload };
   }),
 }));
 
@@ -70,6 +73,7 @@ jest.mock('expo-image-manipulator', () => ({
 afterEach(() => {
   jest.clearAllMocks();
   mockFiles.length = 0;
+  mockExists = true;
   mockSource = { width: 3000, height: 2000 };
 });
 
@@ -98,15 +102,28 @@ describe('uploadCover', () => {
   it('does not set the cover when R2 refuses the upload', async () => {
     mockUpload.mockResolvedValueOnce({ status: 403, body: '<Error/>', headers: {} });
 
-    await expect(uploadCover(EVENT_ID, cover)).rejects.toThrow('R2 refused the cover upload');
+    const failed = uploadCover(EVENT_ID, cover);
+    await expect(failed).rejects.toThrow('R2 refused the cover upload');
+    await expect(failed).rejects.toMatchObject({ failure: 'refused' });
     expect(mockApi.setEventCover).not.toHaveBeenCalled();
   });
 
   it('does not set the cover when the upload cannot reach R2', async () => {
     mockUpload.mockRejectedValueOnce(new Error('The Internet connection appears to be offline.'));
 
-    await expect(uploadCover(EVENT_ID, cover)).rejects.toThrow();
+    const failed = uploadCover(EVENT_ID, cover);
+    await expect(failed).rejects.toBeInstanceOf(CoverUploadError);
+    await expect(failed).rejects.toMatchObject({ failure: 'unreachable' });
     expect(mockApi.setEventCover).not.toHaveBeenCalled();
+  });
+
+  // The OS can clear the cache while Event Settings stays open with a picked photo.
+  it('presigns nothing when the prepared file is gone', async () => {
+    mockExists = false;
+
+    await expect(uploadCover(EVENT_ID, cover)).rejects.toMatchObject({ failure: 'file_missing' });
+    expect(mockApi.createCoverUpload).not.toHaveBeenCalled();
+    expect(mockUpload).not.toHaveBeenCalled();
   });
 });
 
