@@ -1,12 +1,7 @@
-import { TabPlaceholder } from '@/features/event-shell/tab-placeholder';
+import { useEventId } from '@/features/event-shell/event-id';
+import { ManageHub } from '@/features/manage/manage-hub';
 
-// Manage, the Admin's alone (spec §2.5.1).
+// Manage, the Admin's alone (spec §2.5.1, §2.5.7).
 export default function ManageTab() {
-  return (
-    <TabPlaceholder
-      icon="pencil"
-      title="Event settings"
-      body="Invites, members and the event's details are managed here in a later update."
-    />
-  );
+  return <ManageHub eventId={useEventId()} />;
 }
