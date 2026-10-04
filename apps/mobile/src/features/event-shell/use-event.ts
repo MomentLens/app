@@ -27,6 +27,22 @@ export function lostAccess(error: unknown): LostAccess | null {
   return null;
 }
 
+// A refusal from any call on this event means the caller's place in it changed: removed, blocked,
+// or the event deleted. The shell reads that from the event query, so the event refetches and the
+// shell shows the lost state or the new role's tabs (hb §5.3, D-118).
+export function recheckEvent(eventId: string): void {
+  void queryClient.invalidateQueries({ queryKey: eventQueryKey(eventId), exact: true });
+}
+
+// The retry rule for a query on one event. A 4xx is the answer, not a hiccup, and api.ts has
+// already refreshed and retried a 401 once. Anything else gets one more try.
+export function retryUnlessRefused(failureCount: number, error: unknown): boolean {
+  return (
+    !(error instanceof ApiError && error.status !== undefined && error.status < 500) &&
+    failureCount < 1
+  );
+}
+
 // The event as GET /events listed it, so an event opened from the Events tab draws at once. The
 // list's age goes with it, so the shell still asks the API before trusting the role.
 function seedFromList(eventId: string): GetEventResponse | undefined {
@@ -45,10 +61,7 @@ export function useEvent(eventId: string) {
     queryFn: ({ signal }) => getEvent(eventId, signal),
     initialData: () => seedFromList(eventId),
     initialDataUpdatedAt: () => queryClient.getQueryState(EVENTS_QUERY_KEY)?.dataUpdatedAt,
-    // A 4xx is the answer, not a hiccup. api.ts has already refreshed and retried a 401 once.
-    retry: (failureCount, error) =>
-      !(error instanceof ApiError && error.status !== undefined && error.status < 500) &&
-      failureCount < 1,
+    retry: retryUnlessRefused,
     ...PERSISTED_QUERY,
   });
 }
