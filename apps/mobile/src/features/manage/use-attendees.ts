@@ -4,10 +4,16 @@ import type {
   InviteRole,
   ListAttendeesRequest,
   ListAttendeesResponse,
+  MembershipRole,
 } from '@momentlens/shared-types';
 import { onlineManager, useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 
-import { eventQueryKey, recheckEvent, retryUnlessRefused } from '@/features/event-shell/use-event';
+import {
+  eventQueryKey,
+  lostAccess,
+  recheckEvent,
+  retryUnlessRefused,
+} from '@/features/event-shell/use-event';
 import {
   ApiError,
   blockAttendee,
@@ -95,12 +101,39 @@ export function useAttendees(eventId: string, filters: AttendeeFilters = {}, ena
   return useInfiniteQuery({ ...attendeeQueryOptions(eventId, filters), enabled });
 }
 
-export function loadedAttendee(eventId: string, filters: AttendeeFilters, userId: string) {
-  return queryClient
-    .getQueryData<InfiniteData<ListAttendeesResponse>>(attendeesQueryKey(eventId, filters))
-    ?.pages.flatMap((page) => page.attendees)
+// A person repeated across pages after a name change keeps the later row, as attendeeListItems
+// does, so the sheet draws and acts on the same version.
+export function findAttendee(
+  data: InfiniteData<ListAttendeesResponse> | undefined,
+  userId: string,
+): Attendee | undefined {
+  return data?.pages
+    .flatMap((page) => page.attendees)
     .reverse()
     .find((attendee) => attendee.userId === userId);
+}
+
+export function loadedAttendee(eventId: string, filters: AttendeeFilters, userId: string) {
+  return findAttendee(
+    queryClient.getQueryData<InfiniteData<ListAttendeesResponse>>(
+      attendeesQueryKey(eventId, filters),
+    ),
+    userId,
+  );
+}
+
+// Where an open attendee sheet sends the Admin. A target that left the loaded list goes back to
+// Attendees. A changed role or lost access goes to the Event shell, which draws the new tabs or
+// Access Removed. Any other event error, a network failure or a 5xx, keeps the sheet open with its
+// actions disabled by attendeeActionsReady, as the shell keeps its tabs (D-118).
+export function attendeeSheetExit(
+  found: boolean,
+  eventRole: MembershipRole | undefined,
+  eventError: unknown,
+): 'list' | 'event' | null {
+  if (!found) return 'list';
+  if (eventRole !== undefined && eventRole !== 'admin') return 'event';
+  return lostAccess(eventError) === null ? null : 'event';
 }
 
 export type AttendeeAction =
@@ -141,13 +174,16 @@ export function attendeeActionsReady(eventId: string, filters: AttendeeFilters):
 }
 
 async function refreshAttendees(eventId: string) {
-  // Cancel reads made before the write, so their old answers cannot replace the refresh.
+  // Cancel reads made before the write, so their old answers cannot replace the refresh. Every
+  // loaded filter is invalidated, so none can act on an old version, but only the list on screen
+  // refetches now. Another filter refetches when the Admin opens it.
   await queryClient.cancelQueries({ queryKey: ['attendees', eventId] });
-  await queryClient.invalidateQueries({ queryKey: ['attendees', eventId], refetchType: 'all' });
+  await queryClient.invalidateQueries({ queryKey: ['attendees', eventId] });
 }
 
-// No mutation queue or retry. A failed refresh leaves the query invalidated or in error, which
-// refuses the next write even if its old data still draws on screen (D-143).
+// No mutation queue, and no retry of a write whose result is uncertain. api.ts resends once after
+// a 401, which the API answers before the handler runs. A failed refresh leaves the query
+// invalidated or in error, which refuses the next write even if its old data still draws (D-143).
 export async function saveAttendeeAction(
   eventId: string,
   filters: AttendeeFilters,
