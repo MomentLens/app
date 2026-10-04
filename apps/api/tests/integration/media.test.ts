@@ -88,6 +88,8 @@ class FakeEvents implements EventStore {
   listJoinRequests = () => Promise.reject(new Error('not used here'));
   findForCaller = () => Promise.reject(new Error('not used here'));
   setCover = () => Promise.reject(new Error('not used here'));
+  settings = () => Promise.reject(new Error('not used here'));
+  updateSettings = () => Promise.reject(new Error('not used here'));
 
   findAccess(eventId: string, userId: string): Promise<MemberAccess | null> {
     const event = this.events.get(eventId);
