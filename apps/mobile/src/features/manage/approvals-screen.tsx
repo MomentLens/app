@@ -348,7 +348,6 @@ export function ApprovalsScreen({ eventId }: { eventId: string }) {
     setSelection(selectLoadedRequests(people));
   };
   const allLoaded = Math.min(people.length, MAX_JOIN_REQUEST_BATCH);
-  const approveLoaded = () => void act(selectLoadedRequests(people), 'approve');
   const title = selecting
     ? byPlatform(`${count} Selected`, `${count} selected`)
     : byPlatform('Pending Approvals', 'Pending approvals');
@@ -399,7 +398,7 @@ export function ApprovalsScreen({ eventId }: { eventId: string }) {
       />
       {!IOS ? (
         <View style={{ paddingTop: insets.top }} className={selecting ? 'bg-surfaceContainer' : ''}>
-          <View className="min-h-16 flex-row items-center pl-1 pr-2">
+          <View className={`min-h-16 flex-row items-center pl-1 ${selecting ? 'pr-4' : 'pr-2'}`}>
             <BarIconButton
               glyph={selecting ? GLYPH.close : GLYPH.back}
               label={selecting ? 'Cancel selection' : 'Back to Manage'}
@@ -408,24 +407,28 @@ export function ApprovalsScreen({ eventId }: { eventId: string }) {
             />
             <Text
               accessibilityRole="header"
+              numberOfLines={1}
               className="flex-1 px-2 font-h2 text-h2 text-textPrimary">
               {title}
             </Text>
             {selecting ? (
-              <>
-                <BarIconButton
-                  glyph={GLYPH.close}
-                  label={`Reject ${count} selected requests`}
+              // Labels, not icons. The close icon on the left already cancels the selection, and
+              // Reject sends at once with no confirm.
+              <View className="flex-row items-center gap-2">
+                <Button
+                  label="Reject"
+                  variant="quiet"
+                  size="small"
                   disabled={!ready || count === 0}
                   onPress={() => void act(selected, 'reject')}
                 />
-                <BarIconButton
-                  glyph={GLYPH.check}
-                  label={`Approve ${count} selected requests`}
+                <Button
+                  label={`Approve ${count}`}
+                  size="small"
                   disabled={!ready || count === 0}
                   onPress={() => void act(selected, 'approve')}
                 />
-              </>
+              </View>
             ) : people.length > 0 ? (
               <Text
                 accessibilityRole="button"
@@ -483,22 +486,17 @@ export function ApprovalsScreen({ eventId }: { eventId: string }) {
                   {query.hasNextPage ? '+' : ''}{' '}
                   {people.length === 1 && !query.hasNextPage ? 'request' : 'requests'}
                 </Text>
+                {/* Approve All means the selection (D-144), so this selects and the bar approves. */}
                 <Pressable
                   accessibilityRole="button"
-                  accessibilityLabel={
-                    selecting
-                      ? 'Select up to 50 loaded requests'
-                      : `Approve ${allLoaded} loaded requests`
-                  }
+                  accessibilityLabel={`Select ${allLoaded} loaded requests`}
                   disabled={!ready}
-                  onPress={selecting ? selectAll : approveLoaded}
+                  onPress={selectAll}
                   className={`ios:min-h-11 android:min-h-12 justify-center ${!ready ? 'opacity-40' : ''}`}>
                   <Text className="font-body text-body text-accentText">
-                    {selecting
-                      ? 'Select all'
-                      : query.hasNextPage || people.length > MAX_JOIN_REQUEST_BATCH
-                        ? `Approve ${allLoaded}`
-                        : 'Approve all'}
+                    {query.hasNextPage || people.length > MAX_JOIN_REQUEST_BATCH
+                      ? `Select ${allLoaded}`
+                      : 'Select all'}
                   </Text>
                 </Pressable>
               </View>
