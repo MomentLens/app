@@ -149,26 +149,59 @@ describe('attendee endpoints', () => {
     },
   );
 
+  // A 401 comes from the auth check before the handler runs, so nothing was written and the one
+  // resend after an Auth refresh is safe. It is not a retry of an uncertain write (D-143).
   it.each(['changeAttendeeRole', 'removeAttendee', 'blockAttendee'] as const)(
-    'does not resend %s after a 401 Auth refresh',
+    'resends %s once after a 401 Auth refresh with the same version',
     async (method) => {
       signIn();
       mockAuth.refreshSession.mockResolvedValue({
         data: { session: { access_token: 'fresh' } },
         error: null,
       });
-      const fetchMock = answers(401, { error: { code: 'no_session', message: 'No session' } });
+      const status =
+        method === 'removeAttendee' ? 'removed' : method === 'blockAttendee' ? 'blocked' : 'active';
+      const membership = { userId, role: 'guest', status, accessVersion: 'opaque-2' };
+      const replies = [
+        { status: 401, body: { error: { code: 'no_session', message: 'No session' } } },
+        { status: 200, body: { membership } },
+      ];
+      const fetchMock = jest.fn<typeof fetch>(() => {
+        const reply = replies.shift()!;
+        return Promise.resolve({
+          status: reply.status,
+          json: () => Promise.resolve(reply.body),
+        } as unknown as Response);
+      });
       globalThis.fetch = fetchMock;
       const api = loadApi(BASE_URL);
-      const promise =
+      const result =
         method === 'changeAttendeeRole'
-          ? api.changeAttendeeRole(eventId, userId, { expectedVersion: 'opaque-1', role: 'guest' })
-          : api[method](eventId, userId, { expectedVersion: 'opaque-1' });
-      await expect(promise).rejects.toMatchObject({ status: 401, code: 'no_session' });
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+          ? await api.changeAttendeeRole(eventId, userId, {
+              expectedVersion: 'opaque-1',
+              role: 'guest',
+            })
+          : await api[method](eventId, userId, { expectedVersion: 'opaque-1' });
+      expect(result).toEqual({ membership });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(mockAuth.refreshSession).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+      expect((fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>).Authorization).toBe(
+        'Bearer fresh',
+      );
     },
   );
+
+  it('does not resend an attendee write after any answer but a 401', async () => {
+    signIn();
+    const fetchMock = answers(500, { error: { code: 'internal_error', message: 'x' } });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    await expect(
+      api.removeAttendee(eventId, userId, { expectedVersion: 'opaque-1' }),
+    ).rejects.toMatchObject({ status: 500 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 
   it('keeps membership_changed for the action layer and hides the server message', async () => {
     signIn();

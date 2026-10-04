@@ -75,7 +75,6 @@ interface RequestOptions {
   // Sent as JSON. A request without one sends no body and no Content-Type.
   body?: unknown;
   signal?: AbortSignal;
-  retryAfterRefresh?: boolean;
 }
 
 async function request(
@@ -183,9 +182,7 @@ async function authenticatedRequest(path: string, options: RequestOptions = {}):
   if (first.status !== 401) {
     return first;
   }
-  const token = await refreshedAccessToken();
-  // Attendee writes never repeat automatically, including after an Auth refresh (D-143).
-  return options.retryAfterRefresh === false ? first : request(path, options, token);
+  return request(path, options, await refreshedAccessToken());
 }
 
 // A request that works with or without a session (D-115). Nobody signed in sends no header. A
@@ -377,7 +374,6 @@ export async function changeAttendeeRole(
   const response = await authenticatedRequest(path, {
     method: 'PATCH',
     body,
-    retryAfterRefresh: false,
   });
   if (response.status !== 200) throw await errorFrom('PATCH attendee role', response);
   return parseBody('PATCH attendee role', response, ChangeAttendeeRoleResponse);
@@ -392,7 +388,6 @@ export async function removeAttendee(
   const response = await authenticatedRequest(path, {
     method: 'POST',
     body,
-    retryAfterRefresh: false,
   });
   if (response.status !== 200) throw await errorFrom('POST attendee remove', response);
   return parseBody('POST attendee remove', response, RemoveAttendeeResponse);
@@ -407,7 +402,6 @@ export async function blockAttendee(
   const response = await authenticatedRequest(path, {
     method: 'POST',
     body,
-    retryAfterRefresh: false,
   });
   if (response.status !== 200) throw await errorFrom('POST attendee block', response);
   return parseBody('POST attendee block', response, BlockAttendeeResponse);
