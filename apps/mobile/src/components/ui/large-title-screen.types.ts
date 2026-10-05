@@ -1,5 +1,6 @@
 import type { ReactElement, ReactNode } from 'react';
 import type { RefreshControlProps } from 'react-native';
+import type { ScrollHandlerProcessed } from 'react-native-reanimated';
 
 import type { GlyphName } from '@/components/ui/glyph';
 
@@ -30,5 +31,22 @@ export interface LargeTitleScreenProps {
   overlay?: ReactNode;
   // Classes for the scroll view's content, under the title.
   contentClassName?: string;
-  children: ReactNode;
+  // Draws the screen's own list in place of the scroll view, such as My Media's FlashList, which
+  // recycles rows a scroll view would keep. `children` and `refreshControl` are then unused.
+  renderList?: (list: LargeTitleList) => ReactNode;
+  children?: ReactNode;
+}
+
+// What `renderList` gets from the frame.
+export interface LargeTitleList {
+  // Spread onto the list. On Android `onScroll` collapses the title, so the list must be a
+  // Reanimated component. On iOS UIKit collapses it through the content inset.
+  scroll: {
+    onScroll?: ScrollHandlerProcessed<Record<string, unknown>>;
+    scrollEventThrottle?: number;
+    contentInsetAdjustmentBehavior?: 'automatic';
+    contentContainerStyle: { paddingBottom: number };
+  };
+  // The list's first element: the large title and subtitle on Android, the subtitle on iOS.
+  header: ReactNode;
 }
