@@ -2,6 +2,11 @@ import type { Request, Response } from 'express';
 
 import {
   CompleteUploadResponse,
+  ListAlbumRequest,
+  ListAlbumResponse,
+  ListUploadersResponse,
+  MediaImagesRequest,
+  MediaImagesResponse,
   MediaStatusRequest,
   MediaStatusResponse,
   PreflightUploadRequest,
@@ -10,6 +15,11 @@ import {
 
 import { authenticatedUser } from '../middleware/auth';
 import { parseInput, PathId } from '../middleware/body';
+import { listAlbum, listUploaders } from '../services/album';
+import type { AlbumStore } from '../services/album';
+import type { EventStore } from '../services/events';
+import { serveMediaImages } from '../services/media-images';
+import type { ServeImagesDeps } from '../services/media-images';
 import { completeUpload, mediaStatus, preflightUpload } from '../services/media';
 import type { MediaDeps } from '../services/media';
 
@@ -48,5 +58,37 @@ export function mediaStatusController(deps: Pick<MediaDeps, 'events' | 'media'>)
     const request = parseInput(MediaStatusRequest, req.body);
     const answer = await mediaStatus(deps, id, eventId, request);
     res.set('Cache-Control', 'no-store').json(MediaStatusResponse.parse(answer));
+  };
+}
+
+// GET /events/{eventId}/media
+export function listAlbumController(events: EventStore, album: AlbumStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const request = parseInput(ListAlbumRequest, req.query);
+    const answer = await listAlbum(events, album, eventId, id, request);
+    res.set('Cache-Control', 'no-store').json(ListAlbumResponse.parse(answer));
+  };
+}
+
+// GET /events/{eventId}/media/uploaders
+export function listUploadersController(events: EventStore, album: AlbumStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const answer = await listUploaders(events, album, eventId, id);
+    res.set('Cache-Control', 'no-store').json(ListUploadersResponse.parse(answer));
+  };
+}
+
+// POST /events/{eventId}/media/images
+export function mediaImagesController(deps: ServeImagesDeps) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const request = parseInput(MediaImagesRequest, req.body);
+    const answer = await serveMediaImages(deps, id, eventId, request);
+    res.set('Cache-Control', 'no-store').json(MediaImagesResponse.parse(answer));
   };
 }
