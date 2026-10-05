@@ -27,6 +27,9 @@ import {
 } from './controllers/invites';
 import {
   completeUploadController,
+  listAlbumController,
+  listUploadersController,
+  mediaImagesController,
   mediaStatusController,
   preflightUploadController,
 } from './controllers/media';
@@ -49,12 +52,14 @@ import { joinRequestsRouter } from './routes/join-requests';
 import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
 import { subEventsRouter } from './routes/sub-events';
+import type { AlbumStore } from './services/album';
 import type { AttendeeStore } from './services/attendees';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { InviteStore } from './services/invites';
 import type { JoinRequestStore } from './services/join-requests';
 import type { MediaStore } from './services/media';
+import type { MediaImagesStore } from './services/media-images';
 import type { FindProfile } from './services/profiles';
 import type { SubEventStore } from './services/sub-events';
 
@@ -71,6 +76,8 @@ export interface AppDeps {
   invites: InviteStore;
   subEvents: SubEventStore;
   media: MediaStore;
+  album: AlbumStore;
+  mediaImages: MediaImagesStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
@@ -131,11 +138,19 @@ export function createApp(deps: AppDeps): Express {
     deleteObject: deps.deleteObject,
     logger: deps.logger,
   };
+  const serveImagesDeps = {
+    events: deps.events,
+    mediaImages: deps.mediaImages,
+    presignGet: deps.presignGet,
+  };
   app.use(
     mediaRouter(auth, {
       status: mediaStatusController(mediaDeps),
       preflight: preflightUploadController(mediaDeps),
       complete: completeUploadController(mediaDeps),
+      listAlbum: listAlbumController(deps.events, deps.album),
+      listUploaders: listUploadersController(deps.events, deps.album),
+      serveImages: mediaImagesController(serveImagesDeps),
     }),
   );
   app.use(
