@@ -116,10 +116,10 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 |---|---|---|---|---|
 | S-12 | Pre-flight endpoint with the resume path and every check but verification, dedup lookup, upload key function, presigned R2 URLs for photo and thumbnail, idempotent completion, pgmq enqueue | §4.8.2 and §4.8.3, D-70, D-82, spec §4.11.1, arch §3, arch §4, spec §4.17, spec §5.4, D-73, arch:media, D-95, D-96, D-98, D-122, HB §5.3 | U | S-03, S-04 |
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media", the queue banner, and the publish status endpoint | §2.5.3, HB §4, spec §5.2, spec §5.4, arch §4, arch:media, D-145 | C | S-04, S-08, S-12 |
-| S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256, and the **upload loop**: pre-flight, both PUTs, completion, and the queue state each answer leads to | §4.8.1 Stage 1, §4.8.2, §4.8.3, D-58, D-69, D-32, D-53, D-97, D-122, arch §4, HB §5.3, spec §5.4 | C | S-10, S-12 |
+| S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256, and the **upload loop**: pre-flight, both PUTs, completion, and the queue state each answer leads to | §4.8.1 Stage 1, §4.8.2, §4.8.3, D-58, D-69, D-32, D-53, D-97, D-122, arch §4, HB §5.3, spec §5.4, D-146, D-147 | C | S-10, S-12 |
 | S-18a | Worker skeleton: pgmq consumer loop under one advisory lock, `/health`, `thumbnail_dims` job, Sentry for archived messages, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, D-108, D-123, arch §5 | U | S-12 |
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule and the line that replaces the hidden FAB | §4.7, §2.5.4, D-21, D-20, D-90, D-136 | B | S-04, S-08, S-10 |
-| S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3 | B | S-12, S-18a |
+| S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3, D-147 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-11 |
 
 **S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration, which also enables `pgmq` and creates the `jobs` queue, and the `start_upload` and `complete_upload` SQL functions (D-95, D-122). It presigns with `@aws-sdk/s3-request-presigner`, which S-01 installed (D-109). It writes no query on `venue_verification`, which S-15 creates along with the verification check (D-122). It depends on S-03 for joined members and S-04 for sub-events, not on S-11, which calls it. It gives `media.sub_event_id` no `ON DELETE` action and replaces S-04's `delete_sub_event` with one that refuses a sub-event with any `media` row (D-121). Its album-open check ships switched off behind one constant, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
@@ -128,13 +128,15 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 **S-10 builds the SQLite table that S-11's loop moves photos through**, with a state for every answer in arch §4, so S-11 writes no local migration. A photo stays in the table after it uploads, and `POST /events/{eventId}/media/status` tells the phone when it is published or deleted. That endpoint reads only the caller's own rows, so its API PR carries a negative test for another member, another event and each membership that is not active. S-10 builds the queue banner with its waiting and uploading counts. S-16 builds the check-in banner, S-17 turns the waiting count into "waiting to check in", and S-09 writes the line that replaces the hidden camera button (D-136, D-145).
 
-**S-11 is one pipeline with no role branch** (D-58, HB §7). Its thumbnail is made from the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69). S-11 also owns the loop that calls S-12's endpoints and moves each queued item by the table in arch §4 (D-97). That loop is the upload queue's state machine, so a human reads it before it merges.
+**S-11 is one pipeline with no role branch** (D-58, HB §7). It PUTs the thumbnail S-10 made when the photo entered the queue, which shows the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69, D-146). It always sends a capture time (D-147). S-11 also owns the loop that calls S-12's endpoints and moves each queued item by the table in arch §4 (D-97). That loop is the upload queue's state machine, so a human reads it before it merges.
 
-**S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue.
+**S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue. It calls S-11's runner and never starts a second loop, which would send two pre-flights for one photo (D-146).
 
 **S-13 writes the `media` SELECT policy** that Realtime needs, the first one after `health_check`. It checks membership through a `security definer` function (arch §1, D-73). A human reads it before it merges.
 
 **S-13 also builds the image-serving endpoint, without the subject's file** (D-93). It takes a batch of media ids, leaves out any the requester may not see under arch §1's media rule, presigns the public file or public thumbnail from its column, and returns the cache key (D-86). Write its negative test first (HB §11.3), and get it a human read: it is the serving check. S-21 adds the subject's own file and the own-variant flag to this endpoint; nothing else serves an image.
+
+**S-13's album sorts by `captured_at`, newest first, then by `id`**, in the grid, under every chip and filter, and in its keyset pages. A photo Realtime delivers late takes its place by capture time, not the top (D-147).
 
 ---
 
@@ -146,7 +148,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, My Media's check-in banner and the full-screen Scan Venue QR route its button opens (no tab), **offline scan record** with its scan time | §4.5, §4.14, §2.5.3, D-17, D-85, D-131, D-133, D-145, arch:venue, arch:venue_verification | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), labelled "Check In Manually", the queue banner's "waiting to check in" count, "Ask the organizer to check you in", and the Attendees filter by check-in status that S-06 leaves out | §4.5, §2.5.3, §2.5.7, D-133, D-145, arch:venue_verification | B | S-15, S-06 |
 
-**S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Photos carry no location. The device keeps one reading per sub-event when its check passes and sends it with the next pre-flight (D-89). The event response also carries the user's server-side verification state, so a Force Verify or a verification on another device unlocks this device's queue (spec §4.5). The gate is the `unverified` row of S-11's queue table (arch §4), and the reading rides on S-11's pre-flight call, so S-15 changes the upload queue's state machine and a human reads that change before it merges.
+**S-15 is the security-sensitive one.** The client gates optimistically, the server is the authority, and nobody trusts a client-supplied `verified: true` (D-16). Photos carry no location. The device keeps one reading per sub-event when its check passes and sends it with the next pre-flight (D-89). The event response also carries the user's server-side verification state, so a Force Verify or a verification on another device unlocks this device's queue (spec §4.5). The gate is the `unverified` row of S-11's queue table (arch §4), and the reading rides on S-11's pre-flight call, so S-15 changes the upload queue's state machine and a human reads that change before it merges. S-15 moves `waiting_verification` photos back to queued through the release S-11 exports (D-146).
 
 ---
 
@@ -209,7 +211,11 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request retain the row with status set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144).
 
+**S-29's Upload over Mobile Data toggle writes the MMKV key S-11's runner reads** (arch §4, D-146).
+
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
+
+**S-31 adds the album state to the event response** when it switches the album check on, and moves `waiting_album` photos back to queued through the release S-11 exports once it shows the album open (D-146).
 
 **S-27 writes `membership.last_viewed_at`** when someone opens an event, because the "new since last visit" dot reads it (arch:membership) and no earlier slice writes it (D-118).
 
