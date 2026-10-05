@@ -4,7 +4,7 @@ import type { ReactElement, ReactNode } from 'react';
 import type { RefreshControlProps } from 'react-native';
 
 import { LargeTitleScreen } from '@/components/ui/large-title-screen';
-import type { BarAction } from '@/components/ui/large-title-screen.types';
+import type { BarAction, LargeTitleList } from '@/components/ui/large-title-screen.types';
 import { useEventId } from '@/features/event-shell/event-id';
 import { useEvent } from '@/features/event-shell/use-event';
 import { formatEventDates } from '@/features/events/format';
@@ -21,7 +21,8 @@ interface EventTabScreenProps {
   bottomInset?: number;
   overlay?: ReactNode;
   contentClassName?: string;
-  children: ReactNode;
+  renderList?: (list: LargeTitleList) => ReactNode;
+  children?: ReactNode;
 }
 
 // The first screen of every Event shell tab, under the Event header (spec §2.5.1, D-119, D-125):
