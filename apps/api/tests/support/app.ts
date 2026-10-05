@@ -6,9 +6,11 @@ import { pino } from 'pino';
 import { createApp } from '../../src/app';
 import type { AppDeps } from '../../src/app';
 import { createR2 } from '../../src/lib/r2';
+import type { AlbumStore } from '../../src/services/album';
 import type { EventStore } from '../../src/services/events';
 import type { InviteStore } from '../../src/services/invites';
 import type { MediaStore } from '../../src/services/media';
+import type { MediaImagesStore } from '../../src/services/media-images';
 import type { SubEventStore } from '../../src/services/sub-events';
 
 // R2 settings that presign for real, with no network and no account. A URL signed with them
@@ -56,6 +58,15 @@ const noMedia: MediaStore = {
   complete: () => Promise.reject(new Error('no media store in this test')),
 };
 
+const noAlbum: AlbumStore = {
+  query: () => Promise.reject(new Error('no album store in this test')),
+  uploaders: () => Promise.reject(new Error('no album store in this test')),
+};
+
+const noMediaImages: MediaImagesStore = {
+  findForServing: () => Promise.reject(new Error('no media images store in this test')),
+};
+
 // Dependencies for createApp that need no Supabase project. Each test overrides what it checks.
 // The token check rejects every token unless a test passes a real one, and R2 holds no objects.
 export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
@@ -77,6 +88,8 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     invites: noInvites,
     subEvents: noSubEvents,
     media: noMedia,
+    album: noAlbum,
+    mediaImages: noMediaImages,
     presignGet: r2.presignGet,
     presignPut: r2.presignPut,
     objectExists: () => Promise.resolve(false),
