@@ -424,7 +424,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Why.** Phone JPEGs are already 1 to 3MB, so the resize was solving a storage and bandwidth problem D-49 removed. Inference cost barely moves either, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; input resolution mostly costs JPEG decode time.
 **Rejected.** Removing the resize entirely with no guard. The guard never fires on a phone photo and exists so a DSLR file dragged in during a rehearsal does not surprise anyone.
 **What this deleted for free.** D-11's two client pipelines and the role branch. D-48 entirely. The download routing that `uploader_role_at_upload` used to drive (D-13). The `variant` worker job, which was also Phase 5's warm-up task, so Handbook §14 needed a new one.
-**Amended (see D-99, D-146).** Stage 1 re-encodes every photo, so no JPEG uploads as it is. The guard fires on every photo from a phone that shoots 24MP or more by default, the iPhone 15 and later among them.
+**Amended (see D-99, D-146).** Stage 1 re-encodes every photo, so no JPEG uploads as it is. The guard fires on most photos from a phone that shoots 24MP or more by default, the iPhone 15 and later among them. A 12MP shot from the same phone, such as one from its ultra wide camera, passes under it.
 
 ### D-59 — Pinch-zoom and pan are restored
 **Decision.** The full-screen viewer supports pinch-zoom and pan. Supersedes D-06.
@@ -1421,10 +1421,12 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 - Routine calls:
   - Stage 1 encodes the JPEG at quality 0.9, as event covers do.
   - A network failure, a timeout or a 5xx retries after 5 seconds, doubling to 5 minutes, with no cap. Foreground and reconnect retry at once.
-  - Each PUT times out after 2 minutes and is cancelled when the account changes.
+  - Each PUT is cancelled after 2 minutes with no progress, and when the account changes. A slow link that keeps sending finishes.
   - A photo whose Stage 1 fails or is interrupted 3 times stops as `invalid_request`, so a photo that crashes the app cannot crash it on every launch.
   - After any failed or interrupted PUT, the photo goes back through pre-flight and sends both files.
-  - The oldest photo goes first, across every event.
+  - The oldest photo goes first, across every event. A photo whose hash matches an older one still in flight in the same event waits for it. Once that one uploads, its own pre-flight answers `duplicate` and it leaves the queue.
+  - A release after a `not_member` or `not_found` stop keeps the photo's backoff, so a server whose pre-flight and event read disagree gets one request per backoff instead of a loop.
+  - While Upload over Mobile Data is off, the runner sends only on Wi-Fi or Ethernet. Cellular behind a VPN, and a network the phone cannot name, wait.
   - My Media's Delete refuses an uploading photo in the same SQL statement that deletes, so it cannot race the runner's claim.
 **Why.** S-11's read-back found D-99 asking for an EXIF field that no installed library writes. The `upload_missing` row asked for a PUT with URLs the queue never stored. The wake conditions for the album and verification read fields the event response does not carry. Nothing held the processed bytes across a kill. An account switch mid-upload stopped the first account's photo as an app bug. Spec §4.8.1 said the 4096px guard never fires on a phone photo, and the iPhone 15 and later shoot 24MP by default.
 **Rejected.** Writing the timestamp back with a JavaScript EXIF library, a new dependency for a field nothing reads. A completion that checks the album, which needs a new queue state for a photo whose files are already in R2. S-29 adding the Mobile Data check to the loop, which would make S-29 change a human-read surface.
@@ -1436,7 +1438,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 - The album shows the newest capture first, within each group and under every sub-event chip and filter. It sorts on `media.captured_at`, then on `id`, both descending.
 - A photo that reaches the server late takes its place by capture time. Realtime inserts it there, not at the top.
 - The phone always sends a capture time, the photo's EXIF time or else the time the photo entered the queue. The API keeps the pre-flight time for a request that carries none.
-- No new column. `captured_at` already exists (arch:media).
+- No new column. `captured_at` already exists (arch:media). S-13's migration adds an index on `media (event_id, captured_at desc, id desc)` for the album's keyset pages.
 **Why.** Spec §4.9 grouped the album by sub-event and date and named no order, and D-98 stamped a photo with no EXIF time with its upload time. A photo held for hours by a closed album or a missing check-in would have landed above photos taken after it.
 **Rejected.** Ordering by upload or processing time, which puts a Photographer's evening delivery above the guests' photos from the day. Reading the gallery for a picked photo's creation date, which needs read access to the photo library that the app asks for nowhere else.
 **Cost.** The phone's clock and EXIF decide the order (D-98). A photo with no EXIF time sorts by when it was added on the phone, not when it was taken. A photo that arrives late can land among photos the viewer has already scrolled past.
