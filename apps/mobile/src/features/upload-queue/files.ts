@@ -9,6 +9,7 @@ import {
 import type { QueueFiles } from './store';
 
 const root = () => new Directory(Paths.document, 'upload-queue');
+const LIST_BATCH = 50;
 const safeSegment = (value: string) => {
   if (!/^[a-zA-Z0-9-]+$/.test(value)) throw new Error('Invalid queue directory');
   return value;
@@ -77,14 +78,19 @@ export const queueFiles: QueueFiles = {
     const directory = root();
     if (!directory.exists) return [];
     const paths: string[] = [];
-    function walk(at: Directory, prefix: string) {
+    const pending: [Directory, string][] = [[directory, '']];
+    let listed = 0;
+    while (pending.length) {
+      const [at, prefix] = pending.pop()!;
       for (const entry of at.list()) {
         const path = `${prefix}${entry.name}`;
-        if (entry instanceof Directory) walk(entry, `${path}/`);
+        if (entry instanceof Directory) pending.push([entry, `${path}/`]);
         else paths.push(path);
       }
+      // Each list() blocks the JS thread, and a Photographer keeps one directory per photo, so
+      // the walk hands the thread back between batches while the app starts.
+      if (++listed % LIST_BATCH === 0) await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    walk(directory, '');
     return paths;
   },
   uri: (path) => fileAt(path).uri,

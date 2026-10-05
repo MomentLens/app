@@ -1,13 +1,18 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { DatabaseSync } from 'node:sqlite';
 
-import { QueueStore, type QueueDatabase, type QueueFiles } from '@/features/upload-queue/store';
+import {
+  QueueStore,
+  queueCounts,
+  type QueueDatabase,
+  type QueueFiles,
+} from '@/features/upload-queue/store';
 
 let nextId = 0;
 let database: DatabaseSync;
 let files: Set<string>;
 let store: QueueStore;
-function createStore() {
+function createStore(overrides: Partial<QueueFiles> = {}) {
   const db: QueueDatabase = {
     execAsync: async (sql) => {
       database.exec(sql);
@@ -32,6 +37,7 @@ function createStore() {
     },
     list: async () => [...files],
     uri: (path) => `file:///documents/queue/${path}`,
+    ...overrides,
   };
   return new QueueStore(db, disk, () => `item-${++nextId}`);
 }
@@ -47,7 +53,10 @@ describe('account-owned durable queue', () => {
   it('gives account B no rows or counts belonging to A', async () => {
     await store.enqueue('A', 'event', 'sub', photo);
     expect(await store.listForEvent('B', 'event')).toEqual([]);
-    expect(await store.counts('B', 'event')).toEqual({ waiting: 0, uploading: 0 });
+    expect(queueCounts(await store.listForEvent('B', 'event'))).toEqual({
+      waiting: 0,
+      uploading: 0,
+    });
     expect(await store.remove('B', 'item-1')).toBe(false);
     expect(await store.update('B', 'item-1', { state: 'published', mediaId: 'media' })).toBe(false);
     expect(await store.listForEvent('A', 'event')).toHaveLength(1);
@@ -66,9 +75,52 @@ describe('account-owned durable queue', () => {
     await store.enqueue('B', 'event', 'sub', photo);
     files.add('A/orphan/source.jpg');
     files.add('A/orphan/thumb.webp');
-    await createStore().initialize();
+    await createStore().sweep();
     expect([...files]).toHaveLength(4);
     expect(files.has('A/orphan/source.jpg')).toBe(false);
+  });
+  it('opens the queue when the sweep cannot delete a file, and deletes the rest', async () => {
+    files.add('A/stuck/source.jpg');
+    files.add('A/orphan/source.jpg');
+    const restarted = createStore({
+      delete: async (path) => {
+        if (path.startsWith('A/stuck/')) throw new Error('Invalid queue file path');
+        files.delete(path);
+      },
+    });
+    await expect(restarted.sweep()).resolves.toBeUndefined();
+    expect([...files]).toEqual(['A/stuck/source.jpg']);
+    await restarted.enqueue('A', 'event', 'sub', photo);
+    expect(await restarted.listForEvent('A', 'event')).toHaveLength(1);
+  });
+  it('opens the queue when the sweep cannot list the directory', async () => {
+    const restarted = createStore({ list: () => Promise.reject(new Error('unreadable')) });
+    await expect(restarted.sweep()).resolves.toBeUndefined();
+    await restarted.enqueue('A', 'event', 'sub', photo);
+    expect(await restarted.listForEvent('A', 'event')).toHaveLength(1);
+  });
+  it('keeps a copy the sweep finds before its INSERT', async () => {
+    let release!: () => void;
+    const copied = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = createStore({
+      copy: async (owner, id) => {
+        const paths = {
+          photoPath: `${owner}/${id}/source.jpg`,
+          thumbnailPath: `${owner}/${id}/thumb.webp`,
+        };
+        files.add(paths.photoPath);
+        files.add(paths.thumbnailPath);
+        await copied;
+        return paths;
+      },
+    });
+    const added = slow.enqueue('A', 'event', 'sub', photo);
+    const swept = slow.sweep();
+    release();
+    await Promise.all([added, swept]);
+    expect([...files].sort()).toEqual(['A/item-1/source.jpg', 'A/item-1/thumb.webp']);
   });
   it('keeps the thumbnail and media id after completion and removes the source', async () => {
     await store.enqueue('A', 'event', 'sub', photo);

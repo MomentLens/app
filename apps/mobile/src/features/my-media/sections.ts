@@ -16,7 +16,11 @@ export function mediaSections(
   now: Date,
 ): MediaSection[] {
   const byId = new Map<string, QueueItem[]>();
-  for (const item of rows) byId.set(item.subEventId, [...(byId.get(item.subEventId) ?? []), item]);
+  for (const item of rows) {
+    const list = byId.get(item.subEventId);
+    if (list) list.push(item);
+    else byId.set(item.subEventId, [item]);
+  }
   const sections = schedule
     .flatMap((subEvent, index) => {
       const items = byId.get(subEvent.id) ?? [];
@@ -84,6 +88,13 @@ export function tileStatus(item: QueueItem): {
     default:
       return { kind: 'clock', label: 'Queued' };
   }
+}
+// Delete removes only the phone's copy of a photo the queue has not sent (D-145). An uploading
+// photo may already be finished on the server, so deleting it would hide a photo that still
+// publishes, and Local Only belongs to S-30.
+export function canDeleteLocally(item: QueueItem, removed: boolean): boolean {
+  if (item.state === 'uploading' || item.state === 'local_only') return false;
+  return removed || (item.state !== 'uploaded' && item.state !== 'published');
 }
 export type MediaListItem =
   | { type: 'header'; key: string; section: MediaSection }

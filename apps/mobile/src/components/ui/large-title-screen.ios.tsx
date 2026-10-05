@@ -31,6 +31,7 @@ export function LargeTitleScreen({
   bottomInset = 0,
   overlay,
   contentClassName = '',
+  renderList,
   children,
 }: LargeTitleScreenProps) {
   const text = useTokenColor('textPrimary');
@@ -66,25 +67,35 @@ export function LargeTitleScreen({
     unstable_headerRightItems: right.length > 0 ? () => right : undefined,
   };
 
+  const subtitleLine = subtitle ? (
+    <View className="px-5 pb-2">
+      <Text className="font-bodySecondary text-bodySecondary text-textSecondary">{subtitle}</Text>
+    </View>
+  ) : null;
+
   return (
     <>
       <Stack.Screen options={options} />
       {/* "automatic" lets UIKit inset the content under the bar and above the tab bar, and is
           what makes the large title collapse as the content scrolls. */}
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        refreshControl={refreshControl}
-        className="flex-1 bg-background"
-        contentContainerStyle={{ paddingBottom: bottomInset + 24 }}>
-        {subtitle ? (
-          <View className="px-5 pb-2">
-            <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-              {subtitle}
-            </Text>
-          </View>
-        ) : null}
-        <View className={contentClassName}>{children}</View>
-      </ScrollView>
+      {renderList ? (
+        renderList({
+          scroll: {
+            contentInsetAdjustmentBehavior: 'automatic',
+            contentContainerStyle: { paddingBottom: bottomInset + 24 },
+          },
+          header: subtitleLine,
+        })
+      ) : (
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          refreshControl={refreshControl}
+          className="flex-1 bg-background"
+          contentContainerStyle={{ paddingBottom: bottomInset + 24 }}>
+          {subtitleLine}
+          <View className={contentClassName}>{children}</View>
+        </ScrollView>
+      )}
       {overlay}
     </>
   );
