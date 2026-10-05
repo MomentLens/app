@@ -5,12 +5,14 @@
 // does with it. rls.test.ts runs both functions against the dev project.
 import { randomUUID } from 'node:crypto';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
 
 import {
   CompleteUploadResponse,
   ErrorResponse,
+  MediaStatusResponse,
   PreflightUploadResponse,
 } from '@momentlens/shared-types';
 import type { MembershipRole, MembershipStatus } from '@momentlens/shared-types';
@@ -18,7 +20,7 @@ import type { MembershipRole, MembershipStatus } from '@momentlens/shared-types'
 import { uploadKeys } from '../../src/lib/keys';
 import type { VerifyToken } from '../../src/middleware/auth';
 import type { EventStore, MemberAccess } from '../../src/services/events';
-import { preflightUpload, UPLOAD_LIMITS } from '../../src/services/media';
+import { createMediaStore, preflightUpload, UPLOAD_LIMITS } from '../../src/services/media';
 import type {
   CompleteResult,
   MediaDeps,
@@ -107,12 +109,38 @@ class FakeEvents implements EventStore {
 // `completeAnswer` holds an answer, as the real function gives under its lock.
 class FakeMedia implements MediaStore {
   readonly rows = new Map<string, UploadRecord>();
+  readonly processed = new Set<string>();
+  readonly deleted = new Set<string>();
+  readonly statusReads: { eventId: string; userId: string; mediaIds: string[] }[] = [];
   readonly starts: { upload: NewUpload; limits: UploadLimits }[] = [];
   readonly completes: { mediaId: string; userId: string; sizeBytes: number }[] = [];
   startAnswer: StartResult | null = null;
   completeAnswer: CompleteResult | null = null;
   messages = 0;
   failWith: Error | null = null;
+
+  statuses(eventId: string, userId: string, mediaIds: string[]): Promise<MediaStatusResponse> {
+    this.statusReads.push({ eventId, userId, mediaIds });
+    if (this.failWith) return Promise.reject(this.failWith);
+    return Promise.resolve({
+      statuses: [...this.rows.values()]
+        .filter(
+          (row) =>
+            mediaIds.includes(row.id) &&
+            row.eventId === eventId &&
+            row.uploaderUserId === userId &&
+            row.uploaded,
+        )
+        .map((row) => ({
+          mediaId: row.id,
+          status: this.deleted.has(row.id)
+            ? 'deleted'
+            : this.processed.has(row.id)
+              ? 'published'
+              : 'processing',
+        })),
+    });
+  }
 
   start(upload: NewUpload, limits: UploadLimits): Promise<StartResult> {
     if (this.failWith) return Promise.reject(this.failWith);
@@ -227,6 +255,9 @@ afterAll(async () => {
 beforeEach(() => {
   events.events.clear();
   media.rows.clear();
+  media.processed.clear();
+  media.deleted.clear();
+  media.statusReads.length = 0;
   media.starts.length = 0;
   media.completes.length = 0;
   media.startAnswer = null;
@@ -299,6 +330,7 @@ function preflightBody(overrides: Record<string, unknown> = {}) {
 
 const preflightPath = (id: string = eventId) => `/events/${id}/media/preflight`;
 const completePath = (id: string) => `/media/${id}/complete`;
+const statusPath = (id: string = eventId) => `/events/${id}/media/status`;
 
 // Checks a URL is a presigned PUT of exactly this key, with its content type signed.
 function expectPut(url: string, key: string) {
@@ -749,4 +781,213 @@ describe('POST /media/{mediaId}/complete', () => {
       expect(bucket.deletes).toEqual([]);
     },
   );
+});
+
+// Status reads return metadata for the authenticated uploader, never image keys or URLs (D-145).
+describe('POST /events/{eventId}/media/status', () => {
+  it.each(UPLOADERS.map(([name, token]) => [name, token] as const))(
+    'returns %s their processing and published rows in a closed album',
+    async (_case, token) => {
+      const userId = tokens.get(token)!;
+      const processing = seedUpload(userId, { uploaded: true });
+      const published = seedUpload(userId, { uploaded: true });
+      media.processed.add(published.id);
+      const response = await send('POST', statusPath(), token, {
+        mediaIds: [processing.id, published.id],
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(await response.json()).toEqual({
+        statuses: [
+          { mediaId: processing.id, status: 'processing' },
+          { mediaId: published.id, status: 'published' },
+        ],
+      });
+      expect(bucket.heads).toEqual([]);
+      expect(bucket.deletes).toEqual([]);
+      expect(bucket.presignGets).toBe(0);
+      expect(puts).toEqual([]);
+      expect(media.starts).toEqual([]);
+      expect(media.completes).toEqual([]);
+    },
+  );
+
+  it.each(UPLOADERS.map(([name, token]) => [name, token] as const))(
+    "omits another member's ids for %s, including the Admin",
+    async (_case, token) => {
+      const own = seedUpload(tokens.get(token)!, { uploaded: true });
+      const other = seedUpload(SECOND_GUEST, { uploaded: true });
+      const response = await send('POST', statusPath(), token, { mediaIds: [own.id, other.id] });
+      expect(response.status).toBe(200);
+      expect(MediaStatusResponse.parse(await response.json())).toEqual({
+        statuses: [{ mediaId: own.id, status: 'processing' }],
+      });
+    },
+  );
+
+  it('omits my ids under another event path even when I belong to both events', async () => {
+    events.events.get(otherEventId)!.members.set(GUEST, { role: 'guest', status: 'active' });
+    const row = seedUpload(GUEST, { uploaded: true });
+    const response = await send('POST', statusPath(otherEventId), 'token-guest', {
+      mediaIds: [row.id],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ statuses: [] });
+    expect(media.statusReads).toEqual([
+      { eventId: otherEventId, userId: GUEST, mediaIds: [row.id] },
+    ]);
+  });
+
+  it('omits unknown and unfinished ids, including a soft-deleted unfinished row', async () => {
+    const row = seedUpload(GUEST);
+    media.deleted.add(row.id);
+    const response = await send('POST', statusPath(), 'token-guest', {
+      mediaIds: [row.id, randomUUID()],
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ statuses: [] });
+  });
+
+  it.each([false, true])(
+    'returns deleted for an uploaded soft-deleted row, processed=%s',
+    async (processed) => {
+      const row = seedUpload(GUEST, { uploaded: true });
+      media.deleted.add(row.id);
+      if (processed) media.processed.add(row.id);
+      const response = await send('POST', statusPath(), 'token-guest', { mediaIds: [row.id] });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ statuses: [{ mediaId: row.id, status: 'deleted' }] });
+    },
+  );
+
+  it.each(NOT_MEMBERS)(
+    'refuses %s with 403 not_member before reading media',
+    async (_case, token) => {
+      const response = await send('POST', statusPath(), token, { mediaIds: [randomUUID()] });
+      expect(response.status).toBe(403);
+      await expect(errorCode(response)).resolves.toBe('not_member');
+      expect(media.statusReads).toEqual([]);
+    },
+  );
+
+  it.each(['deleted', 'unknown'])(
+    'refuses a %s event with 404 before reading media',
+    async (kind) => {
+      if (kind === 'deleted') events.events.get(eventId)!.deleted = true;
+      const response = await send(
+        'POST',
+        statusPath(kind === 'unknown' ? randomUUID() : eventId),
+        'token-admin',
+        { mediaIds: [randomUUID()] },
+      );
+      expect(response.status).toBe(404);
+      await expect(errorCode(response)).resolves.toBe('not_found');
+      expect(media.statusReads).toEqual([]);
+    },
+  );
+
+  it('authenticates before parsing malformed JSON', async () => {
+    const response = await send('POST', statusPath(), undefined, '{');
+    expect(response.status).toBe(401);
+    await expect(errorCode(response)).resolves.toBe('no_session');
+    expect(media.statusReads).toEqual([]);
+  });
+
+  const repeated = randomUUID();
+  it.each([
+    ['zero ids', { mediaIds: [] }],
+    ['51 ids', { mediaIds: Array.from({ length: 51 }, () => randomUUID()) }],
+    ['repeated ids', { mediaIds: [repeated, repeated] }],
+    ['mixed-case repeated ids', { mediaIds: [repeated, repeated.toUpperCase()] }],
+    ['invalid UUID', { mediaIds: ['not-an-id'] }],
+    ['no body', undefined],
+    ['malformed JSON', '{'],
+    ['uploader override', { mediaIds: [repeated], userId: SECOND_GUEST }],
+    ['event override', { mediaIds: [repeated], eventId: randomUUID() }],
+  ])('refuses %s with 400 invalid_request before reading media', async (_case, body) => {
+    const response = await send('POST', statusPath(), 'token-guest', body);
+    expect(response.status).toBe(400);
+    await expect(errorCode(response)).resolves.toBe('invalid_request');
+    expect(media.statusReads).toEqual([]);
+  });
+
+  it('refuses an invalid event path', async () => {
+    const response = await send('POST', statusPath('not-an-id'), 'token-guest', {
+      mediaIds: [randomUUID()],
+    });
+    expect(response.status).toBe(400);
+    await expect(errorCode(response)).resolves.toBe('invalid_request');
+    expect(media.statusReads).toEqual([]);
+  });
+
+  it('accepts 50 ids and normalizes UUID spellings', async () => {
+    const rows = Array.from({ length: 50 }, () => seedUpload(GUEST, { uploaded: true }));
+    const response = await send('POST', statusPath(eventId.toUpperCase()), 'token-guest', {
+      mediaIds: rows.map((row) => row.id.toUpperCase()),
+    });
+    expect(response.status).toBe(200);
+    expect(MediaStatusResponse.parse(await response.json()).statuses).toHaveLength(50);
+    expect(media.statusReads[0]).toEqual({
+      eventId,
+      userId: GUEST,
+      mediaIds: rows.map((row) => row.id),
+    });
+  });
+
+  it('returns 500 internal_error when the status store fails', async () => {
+    media.failWith = new Error('database unavailable');
+    const response = await send('POST', statusPath(), 'token-guest', { mediaIds: [randomUUID()] });
+    expect(response.status).toBe(500);
+    await expect(errorCode(response)).resolves.toBe('internal_error');
+  });
+});
+
+// Exercise the real Supabase query builder so an unscoped query cannot hide behind FakeMedia.
+describe('media status database read', () => {
+  it('scopes the query to the event, uploader, requested ids and uploaded rows, keeping deleted rows', async () => {
+    const ids = [randomUUID(), randomUUID(), randomUUID()];
+    const request = jest.fn<typeof fetch>(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify([
+            { id: ids[0], processed_at: null, deleted_at: null },
+            { id: ids[1], processed_at: '2026-10-05T08:00:00Z', deleted_at: null },
+            {
+              id: ids[2],
+              processed_at: '2026-10-05T08:00:00Z',
+              deleted_at: '2026-10-05T09:00:00Z',
+            },
+          ]),
+          { headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    );
+    const client = createClient('https://database.test', 'test-key', {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+      global: { fetch: request },
+    });
+    await expect(createMediaStore(client).statuses(eventId, GUEST, ids)).resolves.toEqual({
+      statuses: [
+        { mediaId: ids[0], status: 'processing' },
+        { mediaId: ids[1], status: 'published' },
+        { mediaId: ids[2], status: 'deleted' },
+      ],
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    const input = request.mock.calls[0]![0];
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    expect(url.pathname).toBe('/rest/v1/media');
+    expect(url.searchParams.get('event_id')).toBe(`eq.${eventId}`);
+    expect(url.searchParams.get('uploader_user_id')).toBe(`eq.${GUEST}`);
+    expect(url.searchParams.get('id')).toBe(`in.(${ids.join(',')})`);
+    expect(url.searchParams.get('uploaded_at')).toBe('not.is.null');
+    expect(url.searchParams.has('deleted_at')).toBe(false);
+    expect(
+      url.searchParams
+        .get('select')
+        ?.split(',')
+        .map((column) => column.trim())
+        .sort(),
+    ).toEqual(['deleted_at', 'id', 'processed_at']);
+  });
 });

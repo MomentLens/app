@@ -25,7 +25,11 @@ import {
   joinEventController,
   resolveInviteController,
 } from './controllers/invites';
-import { completeUploadController, preflightUploadController } from './controllers/media';
+import {
+  completeUploadController,
+  mediaStatusController,
+  preflightUploadController,
+} from './controllers/media';
 import { getMyProfileController } from './controllers/profiles';
 import {
   addSubEventController,
@@ -129,6 +133,7 @@ export function createApp(deps: AppDeps): Express {
   };
   app.use(
     mediaRouter(auth, {
+      status: mediaStatusController(mediaDeps),
       preflight: preflightUploadController(mediaDeps),
       complete: completeUploadController(mediaDeps),
     }),
