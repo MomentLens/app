@@ -1274,3 +1274,38 @@ describe('event settings endpoints', () => {
     expect(error.code).toBe('not_found');
   });
 });
+
+describe('My Media publish status', () => {
+  const eventId = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const mediaId = '7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f';
+  it('POSTs only the requested ids and validates the status envelope', async () => {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+    const fetchMock = answers(200, { statuses: [{ mediaId, status: 'published' }] });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    await expect(api.getMediaStatus(eventId, { mediaIds: [mediaId] })).resolves.toEqual({
+      statuses: [{ mediaId, status: 'published' }],
+    });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/media/status`,
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      mediaIds: [mediaId],
+    });
+  });
+  it('refuses a malformed status response', async () => {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+    globalThis.fetch = answers(200, { statuses: [{ mediaId, status: 'ready' }] });
+    const api = loadApi(BASE_URL);
+    await expect(api.getMediaStatus(eventId, { mediaIds: [mediaId] })).rejects.toBeInstanceOf(
+      api.ApiError,
+    );
+  });
+});

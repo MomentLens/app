@@ -17,6 +17,8 @@ import {
   ListAttendeesResponse,
   ListSubEventsResponse,
   ProfileResponse,
+  MediaStatusResponse,
+  MediaStatusRequest,
   ResolveInviteResponse,
   RemoveAttendeeResponse,
   SetEventCoverResponse,
@@ -562,4 +564,21 @@ export async function deleteSubEvent(subEventId: string): Promise<ListSubEventsR
     throw await errorFrom('DELETE /sub-events/{subEventId}', response);
   }
   return parseBody('DELETE /sub-events/{subEventId}', response, ListSubEventsResponse);
+}
+
+// S-10 reads only publish metadata. Local thumbnails never go through this endpoint (D-145).
+export async function getMediaStatus(
+  eventId: string,
+  body: MediaStatusRequest,
+  signal?: AbortSignal,
+): Promise<MediaStatusResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/media/status`;
+  const response = await authenticatedRequest(path, {
+    method: 'POST',
+    body: MediaStatusRequest.parse(body),
+    signal,
+  });
+  if (response.status !== 200)
+    throw await errorFrom('POST /events/{eventId}/media/status', response);
+  return parseBody('POST /events/{eventId}/media/status', response, MediaStatusResponse);
 }
