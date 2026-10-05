@@ -159,4 +159,52 @@ describe('account-owned durable queue', () => {
     expect(await store.listForEvent('A', 'event')).toHaveLength(1);
     expect([...files]).toEqual(['A/item-2/source.jpg', 'A/item-2/thumb.webp']);
   });
+  it('refuses Delete for an uploading photo in the same statement, keeping its files (D-146)', async () => {
+    await store.enqueue('A', 'event', 'sub', photo);
+    await store.update('A', 'item-1', { state: 'uploading', step: 'put_photo', mediaId: 'media' });
+    expect(await store.remove('A', 'item-1')).toBe(false);
+    expect((await store.listForEvent('A', 'event'))[0]?.state).toBe('uploading');
+    expect(files.size).toBe(2);
+  });
+  it('lets the runner drop an uploading photo after a duplicate answer', async () => {
+    await store.enqueue('A', 'event', 'sub', photo);
+    await store.update('A', 'item-1', { state: 'uploading', step: 'complete', mediaId: 'media' });
+    expect(await store.drop('B', 'item-1')).toBe(false);
+    expect(await store.drop('A', 'item-1')).toBe(true);
+    expect(await store.listForEvent('A', 'event')).toEqual([]);
+    expect(files.size).toBe(0);
+  });
+  it('writes a guarded update only from the states it names', async () => {
+    await store.enqueue('A', 'event', 'sub', photo);
+    expect(
+      await store.update('A', 'item-1', { state: 'uploaded', mediaId: 'm' }, ['uploading']),
+    ).toBe(false);
+    expect((await store.listForEvent('A', 'event'))[0]).toMatchObject({ state: 'queued' });
+    expect(files.size).toBe(2);
+  });
+  it('picks the oldest due photo for one account and skips the ones already tried', async () => {
+    await store.enqueue('A', 'event', 'sub', photo);
+    await store.enqueue('A', 'other', 'sub', photo);
+    await store.enqueue('B', 'event', 'sub', photo);
+    await store.update('A', 'item-1', { retryCount: 1, nextRetryAt: 5_000 });
+    expect((await store.nextUpload('A', 4_999, []))?.id).toBe('item-2');
+    expect((await store.nextUpload('A', 5_000, []))?.id).toBe('item-1');
+    expect((await store.nextUpload('A', 5_000, ['item-1']))?.id).toBe('item-2');
+    expect(await store.nextUpload('A', 5_000, ['item-1', 'item-2'])).toBeNull();
+    expect(await store.nextWake('A', 4_000)).toBe(5_000);
+    expect(await store.nextWake('A', 5_000)).toBeNull();
+  });
+  it('stores the prepared file and hash in one write and then deletes the source', async () => {
+    await store.enqueue('A', 'event', 'sub', photo);
+    files.add('A/item-1/upload.jpg');
+    expect(await store.prepared('A', 'item-1', 'A/item-1/upload.jpg', 'f'.repeat(64))).toBe(true);
+    expect((await store.listForEvent('A', 'event'))[0]).toMatchObject({
+      photoPath: 'A/item-1/upload.jpg',
+      contentHash: 'f'.repeat(64),
+      step: 'preflight',
+      retryCount: 0,
+    });
+    expect([...files].sort()).toEqual(['A/item-1/thumb.webp', 'A/item-1/upload.jpg']);
+    expect(await store.prepared('A', 'item-1', 'A/item-1/upload.jpg', 'e'.repeat(64))).toBe(false);
+  });
 });
