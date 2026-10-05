@@ -18,6 +18,8 @@ import {
   ListSubEventsResponse,
   ProfileResponse,
   MediaStatusResponse,
+  CompleteUploadResponse,
+  PreflightUploadResponse,
   ResolveInviteResponse,
   RemoveAttendeeResponse,
   SetEventCoverResponse,
@@ -34,6 +36,7 @@ import {
   type JoinEventRequest,
   type ListAttendeesRequest,
   type MediaStatusRequest,
+  type PreflightUploadRequest,
   type RemoveAttendeeRequest,
   type ResolveInviteRequest,
   type UpdateEventSettingsRequest,
@@ -43,6 +46,7 @@ import {
   isAuthApiError,
   isAuthRefreshDiscardedError,
   isAuthRetryableFetchError,
+  type Session,
 } from '@supabase/supabase-js';
 
 import { supabase } from '@/lib/supabase';
@@ -75,6 +79,17 @@ export class ApiError extends Error {
     this.status = status;
     this.code = code;
     this.timedOut = timedOut;
+  }
+}
+
+// Thrown before a queued photo's request goes out under another account's session, and before
+// the retry after a 401 when the refresh brought back another account. The upload queue leaves
+// the photo as it was (D-146). Without it, completion under the next account answers 403
+// not_uploader, which stops the first account's photo for good.
+export class AccountChangedError extends Error {
+  constructor() {
+    super('Another account is signed in. The queued photo waits for its own account.');
+    this.name = 'AccountChangedError';
   }
 }
 
@@ -134,12 +149,20 @@ async function request(
   }
 }
 
+// A session's token, or AccountChangedError when the request belongs to another account.
+function tokenFor(session: Session, owner: string | undefined): string {
+  if (owner !== undefined && session.user.id !== owner) {
+    throw new AccountChangedError();
+  }
+  return session.access_token;
+}
+
 // The signed-in user's access token. getSession refreshes it first when it is within 90 seconds of
-// expiring, so the API rarely sees an expired one.
-async function accessToken(): Promise<string> {
+// expiring, so the API rarely sees an expired one. With an owner, only that account's token.
+async function accessToken(owner?: string): Promise<string> {
   const { data, error } = await supabase.auth.getSession();
   if (data.session) {
-    return data.session.access_token;
+    return tokenFor(data.session, owner);
   }
   // Offline with an expired token: the session is still stored and still good, it just cannot be
   // refreshed yet. Nobody is logged out for that (D-109).
@@ -160,10 +183,10 @@ function refreshWasRejected(error: unknown): boolean {
 }
 
 // After a 401, a fresh access token for the one retry, or an ApiError.
-async function refreshedAccessToken(): Promise<string> {
+async function refreshedAccessToken(owner?: string): Promise<string> {
   const { data, error } = await supabase.auth.refreshSession();
   if (data.session) {
-    return data.session.access_token;
+    return tokenFor(data.session, owner);
   }
   if (refreshWasRejected(error)) {
     // The session is dead, the one case that shows Forced Logout (D-109). auth-js removes the
@@ -175,7 +198,7 @@ async function refreshedAccessToken(): Promise<string> {
   if (isAuthRefreshDiscardedError(error)) {
     // Another refresh or a sign-out changed the stored session while this refresh was in flight.
     // Whatever it left is the current answer.
-    return accessToken();
+    return accessToken(owner);
   }
   if (isAuthRetryableFetchError(error)) {
     throw new ApiError(AUTH_UNREACHABLE);
@@ -187,12 +210,18 @@ async function refreshedAccessToken(): Promise<string> {
 // once (D-109), with the same method and body, so a create retried here carries the same
 // requestId. A second 401 goes back to the caller as it stands: Supabase accepted the refresh,
 // so the session is alive and nobody is logged out for it (S-01 card, decided at build mobile).
-async function authenticatedRequest(path: string, options: RequestOptions = {}): Promise<Response> {
-  const first = await request(path, options, await accessToken());
+//
+// With an owner, the request goes out only under that account's session (D-146).
+async function authenticatedRequest(
+  path: string,
+  options: RequestOptions = {},
+  owner?: string,
+): Promise<Response> {
+  const first = await request(path, options, await accessToken(owner));
   if (first.status !== 401) {
     return first;
   }
-  return request(path, options, await refreshedAccessToken());
+  return request(path, options, await refreshedAccessToken(owner));
 }
 
 // A request that works with or without a session (D-115). Nobody signed in sends no header. A
@@ -577,4 +606,37 @@ export async function getMediaStatus(
   if (response.status !== 200)
     throw await errorFrom('POST /events/{eventId}/media/status', response);
   return parseBody('POST /events/{eventId}/media/status', response, MediaStatusResponse);
+}
+
+// Pre-flight for one queued photo, as the account that queued it (D-146): JSON only, no image bytes
+// (root invariant 5). A 201 made the media row and a 200 resumed the caller's own unfinished one,
+// and both carry the two PUT URLs (D-122). The app never sees or builds an object key (root
+// invariant 12). What each refusal does to the photo is features/upload-queue/transitions.ts.
+export async function preflightUpload(
+  owner: string,
+  eventId: string,
+  body: PreflightUploadRequest,
+  signal?: AbortSignal,
+): Promise<PreflightUploadResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/media/preflight`;
+  const response = await authenticatedRequest(path, { method: 'POST', body, signal }, owner);
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /events/{eventId}/media/preflight', response);
+  }
+  return parseBody('POST /events/{eventId}/media/preflight', response, PreflightUploadResponse);
+}
+
+// Completion after both PUTs, as the photo's uploader. Safe to repeat: a finished row answers 200
+// again and enqueues nothing (D-95, D-122).
+export async function completeUpload(
+  owner: string,
+  mediaId: string,
+  signal?: AbortSignal,
+): Promise<CompleteUploadResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}/complete`;
+  const response = await authenticatedRequest(path, { method: 'POST', signal }, owner);
+  if (response.status !== 200) {
+    throw await errorFrom('POST /media/{mediaId}/complete', response);
+  }
+  return parseBody('POST /media/{mediaId}/complete', response, CompleteUploadResponse);
 }

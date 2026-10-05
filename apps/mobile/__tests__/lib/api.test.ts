@@ -1309,3 +1309,80 @@ describe('My Media publish status', () => {
     );
   });
 });
+
+describe('upload pre-flight and completion (D-146)', () => {
+  const eventId = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
+  const mediaId = '7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f';
+  const subEventId = '11111111-1111-4111-8111-111111111111';
+  const body = { contentHash: 'a'.repeat(64), subEventId, capturedAt: '2026-10-04T10:15:30.000Z' };
+  const upload = {
+    mediaId,
+    photoUploadUrl: 'https://account.r2.cloudflarestorage.com/photo?X-Amz-Signature=1',
+    thumbnailUploadUrl: 'https://account.r2.cloudflarestorage.com/thumb?X-Amz-Signature=2',
+  };
+  function signInAs(id: string, token = 'token') {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: token, user: { id } } } as SessionResult['data'],
+      error: null,
+    });
+  }
+
+  it.each([201, 200])('POSTs the pre-flight as JSON and accepts %s', async (status) => {
+    signInAs('A');
+    const fetched = answers(status, upload);
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).preflightUpload('A', eventId, body)).resolves.toEqual(upload);
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/media/preflight`,
+    );
+    expect(fetched.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(fetched.mock.calls[0]?.[1]?.body as string)).toEqual(body);
+  });
+
+  it('POSTs completion with no body', async () => {
+    signInAs('A');
+    const fetched = answers(200, { status: 'completed' });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).completeUpload('A', mediaId)).resolves.toEqual({
+      status: 'completed',
+    });
+    expect(fetched.mock.calls[0]?.[0]).toBe(`https://api.example.test/media/${mediaId}/complete`);
+    expect(fetched.mock.calls[0]?.[1]?.body).toBeUndefined();
+  });
+
+  it('refuses to send a queued photo under another account’s session', async () => {
+    signInAs('B');
+    const fetched = answers(201, upload);
+    globalThis.fetch = fetched;
+    const api = loadApi(BASE_URL);
+    await expect(api.preflightUpload('A', eventId, body)).rejects.toBeInstanceOf(
+      api.AccountChangedError,
+    );
+    await expect(api.completeUpload('A', mediaId)).rejects.toBeInstanceOf(api.AccountChangedError);
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it('refuses the retry after a 401 when the refreshed session is another account', async () => {
+    signInAs('A');
+    mockAuth.refreshSession.mockResolvedValue({
+      data: { session: { access_token: 'fresh', user: { id: 'B' } } } as SessionResult['data'],
+      error: null,
+    });
+    const fetched = answers(401, { error: { code: 'no_session', message: 'expired' } });
+    globalThis.fetch = fetched;
+    const api = loadApi(BASE_URL);
+    await expect(api.preflightUpload('A', eventId, body)).rejects.toBeInstanceOf(
+      api.AccountChangedError,
+    );
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes on the refusal code for the queue to act on', async () => {
+    signInAs('A');
+    globalThis.fetch = answers(409, { error: { code: 'album_closed', message: 'closed' } });
+    await expect(loadApi(BASE_URL).preflightUpload('A', eventId, body)).rejects.toMatchObject({
+      status: 409,
+      code: 'album_closed',
+    });
+  });
+});
