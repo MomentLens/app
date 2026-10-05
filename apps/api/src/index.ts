@@ -5,12 +5,14 @@ import { loadEnv, r2Settings } from './config';
 import { createSupabase } from './db/supabase';
 import { createR2 } from './lib/r2';
 import { createTokenVerifier } from './middleware/auth';
+import { createAlbumStore } from './services/album';
 import { createAttendeeStore } from './services/attendees';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createInviteStore } from './services/invites';
 import { createJoinRequestStore } from './services/join-requests';
 import { createMediaStore } from './services/media';
+import { createMediaImagesStore } from './services/media-images';
 import { createFindProfile } from './services/profiles';
 import { createSubEventStore } from './services/sub-events';
 
@@ -61,6 +63,8 @@ createApp({
   invites: createInviteStore(supabase),
   subEvents: createSubEventStore(supabase),
   media: createMediaStore(supabase),
+  album: createAlbumStore(supabase),
+  mediaImages: createMediaImagesStore(supabase),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,
