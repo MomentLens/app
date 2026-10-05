@@ -136,7 +136,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 **S-13 also builds the image-serving endpoint, without the subject's file** (D-93). It takes a batch of media ids, leaves out any the requester may not see under arch §1's media rule, presigns the public file or public thumbnail from its column, and returns the cache key (D-86). Write its negative test first (HB §11.3), and get it a human read: it is the serving check. S-21 adds the subject's own file and the own-variant flag to this endpoint; nothing else serves an image.
 
-**S-13's album sorts by `captured_at`, newest first, then by `id`**, in the grid, under every chip and filter, and in its keyset pages. A photo Realtime delivers late takes its place by capture time, not the top (D-147).
+**S-13's album sorts by `captured_at`, newest first, then by `id`**, in the grid, under every chip and filter, and in its keyset pages. A photo Realtime delivers late takes its place by capture time, not the top. S-13's migration adds the index on `media (event_id, captured_at desc, id desc)` that those pages read (D-147).
 
 ---
 
@@ -144,7 +144,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification`, and writing pre-flight's verification check | §4.5, §4.14, §4.10, D-14, D-36, D-89, D-122, arch:sub_event, arch:venue_verification | U | S-11, S-12 |
+| S-15 | On-device GPS check, server re-validation, queue gate, `venue_verification`, and writing pre-flight's verification check | §4.5, §4.14, §4.10, D-14, D-36, D-89, D-122, arch:sub_event, arch:venue_verification, D-146 | U | S-11, S-12 |
 | S-16 | Venue QR: one per **venue**, shared by the sub-events at it, print view, My Media's check-in banner and the full-screen Scan Venue QR route its button opens (no tab), **offline scan record** with its scan time | §4.5, §4.14, §2.5.3, D-17, D-85, D-131, D-133, D-145, arch:venue, arch:venue_verification | C | S-15 |
 | S-17 | Force Verify (`admin_verified_at`), labelled "Check In Manually", the queue banner's "waiting to check in" count, "Ask the organizer to check you in", and the Attendees filter by check-in status that S-06 leaves out | §4.5, §2.5.3, §2.5.7, D-133, D-145, arch:venue_verification | B | S-15, S-06 |
 
@@ -195,9 +195,9 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
-| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143, D-144 | B | S-01, S-06, S-20, S-25 |
+| S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143, D-144, D-146 | B | S-01, S-06, S-20, S-25 |
 | S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
-| S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent | B | S-08, S-13, S-12, S-07a |
+| S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent, arch §4, D-146 | B | S-08, S-13, S-12, S-07a, S-11 |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
 | S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-07a |
 

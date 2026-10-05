@@ -288,8 +288,8 @@ Worth its own section because getting this wrong is the easiest way to make a sm
 | Step | Every role |
 |---|---|
 | EXIF strip | Yes. The orientation is applied to the pixels first, then every EXIF field is stripped, the tag, GPS and the timestamp included (D-99, D-146). |
-| HEIC to JPEG | Yes, and any other format that is not JPEG (D-105) |
-| Client resize | **None**, unless the longest edge exceeds 4096px, in which case resize to 4096px. Fires on every photo from a phone that shoots 24MP or more by default (D-146). |
+| JPEG re-encode | Every photo, a JPEG as much as a HEIC or any other format, at quality 0.9 (D-105, D-146) |
+| Client resize | **None**, unless the longest edge exceeds 4096px, in which case resize to 4096px. Fires on most photos from a phone that shoots 24MP or more by default (D-146). |
 | Thumbnail | WebP, 300px on the long edge, for the grid, made when the photo enters the queue. Unblurred, so it goes to R2 by presigned PUT and is served only for photos with no Do Not Publish face and no blur region (D-69, D-83) |
 | Hash | SHA-256 over the **exact byte stream about to be uploaded**, after EXIF strip and HEIC conversion |
 | Location gate | Server-side in pre-flight. Photographers pass automatically. |
