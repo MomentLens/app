@@ -41,6 +41,7 @@ import type {
 import { createServerClient } from '../../src/db/supabase';
 import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
+import { createAlbumStore } from '../../src/services/album';
 import {
   createEventParams,
   createEventStore,
@@ -3946,6 +3947,227 @@ if (project === null) {
           status: 'pending',
           access_version: 1,
         });
+      });
+    });
+
+    describe('media SELECT policy and list_album (S-13)', () => {
+      const albumStore = createAlbumStore(admin);
+      const subEvents = createSubEventStore(admin);
+
+      async function eventWithSchedule(adminId: string) {
+        const event = await createdEvent(adminId);
+        const schedule = (await subEvents.schedule(event.id)) ?? [];
+        const found = schedule[0];
+        if (!found) throw new Error('no sub-event found');
+        return { event, subEventId: found.id };
+      }
+
+      it('enforces active_event_role and the media SELECT policy for Realtime across roles and statuses', async () => {
+        const [a, g, p, pen, blk, rem, out] = await Promise.all([
+          createNamedUser('Admin'),
+          createNamedUser('Guest'),
+          createNamedUser('Photographer'),
+          createNamedUser('Pending'),
+          createNamedUser('Blocked'),
+          createNamedUser('Removed'),
+          createNamedUser('Outsider'),
+        ]);
+
+        const { event, subEventId } = await eventWithSchedule(a.id);
+
+        // Set up memberships
+        await admin.from('membership').insert([
+          { event_id: event.id, user_id: g.id, role: 'guest', status: 'active' },
+          { event_id: event.id, user_id: p.id, role: 'photographer', status: 'active' },
+          { event_id: event.id, user_id: pen.id, role: 'guest', status: 'pending' },
+          { event_id: event.id, user_id: blk.id, role: 'guest', status: 'blocked' },
+          { event_id: event.id, user_id: rem.id, role: 'guest', status: 'removed' },
+        ]);
+
+        // Insert media rows:
+        // 1. Unfinished row (uploaded_at is null) - visible to NO ONE
+        const unfinishedId = randomUUID();
+        // 2. Admin's own uploaded but unprocessed row
+        const adminUnprocessedId = randomUUID();
+        // 3. Guest's own uploaded but unprocessed row
+        const guestUnprocessedId = randomUUID();
+        // 4. Admin's published row
+        const adminPublishedId = randomUUID();
+        // 5. Photographer's published row
+        const photoPublishedId = randomUUID();
+        // 6. Published row that is soft-deleted
+        const softDeletedId = randomUUID();
+
+        const now = new Date().toISOString();
+        await admin.from('media').insert([
+          {
+            id: unfinishedId,
+            event_id: event.id,
+            sub_event_id: subEventId,
+            uploader_user_id: a.id,
+            uploader_role_at_upload: 'admin',
+            captured_at: now,
+            content_hash: 'a'.repeat(64),
+            upload_key: `${unfinishedId}/upload.jpg`,
+            upload_thumb_key: `${unfinishedId}/upload_thumb.webp`,
+            uploaded_at: null,
+            processed_at: null,
+            deleted_at: null,
+          },
+          {
+            id: adminUnprocessedId,
+            event_id: event.id,
+            sub_event_id: subEventId,
+            uploader_user_id: a.id,
+            uploader_role_at_upload: 'admin',
+            captured_at: now,
+            content_hash: 'b'.repeat(64),
+            size_bytes: 100,
+            upload_key: `${adminUnprocessedId}/upload.jpg`,
+            upload_thumb_key: `${adminUnprocessedId}/upload_thumb.webp`,
+            uploaded_at: now,
+            processed_at: null,
+            deleted_at: null,
+          },
+          {
+            id: guestUnprocessedId,
+            event_id: event.id,
+            sub_event_id: subEventId,
+            uploader_user_id: g.id,
+            uploader_role_at_upload: 'guest',
+            captured_at: now,
+            content_hash: 'c'.repeat(64),
+            size_bytes: 100,
+            upload_key: `${guestUnprocessedId}/upload.jpg`,
+            upload_thumb_key: `${guestUnprocessedId}/upload_thumb.webp`,
+            uploaded_at: now,
+            processed_at: null,
+            deleted_at: null,
+          },
+          {
+            id: adminPublishedId,
+            event_id: event.id,
+            sub_event_id: subEventId,
+            uploader_user_id: a.id,
+            uploader_role_at_upload: 'admin',
+            captured_at: now,
+            content_hash: 'd'.repeat(64),
+            size_bytes: 100,
+            upload_key: `${adminPublishedId}/upload.jpg`,
+            upload_thumb_key: `${adminPublishedId}/upload_thumb.webp`,
+            uploaded_at: now,
+            processed_at: now,
+            deleted_at: null,
+          },
+          {
+            id: photoPublishedId,
+            event_id: event.id,
+            sub_event_id: subEventId,
+            uploader_user_id: p.id,
+            uploader_role_at_upload: 'photographer',
+            captured_at: now,
+            content_hash: 'e'.repeat(64),
+            size_bytes: 100,
+            upload_key: `${photoPublishedId}/upload.jpg`,
+            upload_thumb_key: `${photoPublishedId}/upload_thumb.webp`,
+            uploaded_at: now,
+            processed_at: now,
+            deleted_at: null,
+          },
+          {
+            id: softDeletedId,
+            event_id: event.id,
+            sub_event_id: subEventId,
+            uploader_user_id: a.id,
+            uploader_role_at_upload: 'admin',
+            captured_at: now,
+            content_hash: 'f'.repeat(64),
+            size_bytes: 100,
+            upload_key: `${softDeletedId}/upload.jpg`,
+            upload_thumb_key: `${softDeletedId}/upload_thumb.webp`,
+            uploaded_at: now,
+            processed_at: now,
+            deleted_at: now,
+          },
+        ]);
+
+        // Non-member, pending, blocked, removed, outsider: receive NOTHING (empty array)
+        for (const user of [pen, blk, rem, out]) {
+          const client = await signedInClient(user);
+          const res = await client.from('media').select('id').eq('event_id', event.id);
+          expect(res.error).toBeNull();
+          expect(res.data).toEqual([]);
+        }
+
+        // Guest sees:
+        // - guestUnprocessedId (their own unprocessed row)
+        // - adminPublishedId (published row)
+        // - photoPublishedId (published row)
+        // - softDeletedId (soft delete reaches members)
+        // But NOT:
+        // - unfinishedId (no uploaded_at)
+        // - adminUnprocessedId (another user's unprocessed row)
+        const guestClient = await signedInClient(g);
+        const guestRes = await guestClient.from('media').select('id').eq('event_id', event.id);
+        expect(guestRes.error).toBeNull();
+        const guestIds = new Set(guestRes.data!.map((r: { id: string }) => r.id));
+        expect(guestIds.has(guestUnprocessedId)).toBe(true);
+        expect(guestIds.has(adminPublishedId)).toBe(true);
+        expect(guestIds.has(photoPublishedId)).toBe(true);
+        expect(guestIds.has(softDeletedId)).toBe(true);
+        expect(guestIds.has(unfinishedId)).toBe(false);
+        expect(guestIds.has(adminUnprocessedId)).toBe(false);
+
+        // Photographer sees ONLY their own uploads:
+        // - photoPublishedId
+        // But NOT adminPublishedId, guestUnprocessedId, softDeletedId, etc.
+        const photoClient = await signedInClient(p);
+        const photoRes = await photoClient.from('media').select('id').eq('event_id', event.id);
+        expect(photoRes.error).toBeNull();
+        expect(photoRes.data!.map((r: { id: string }) => r.id)).toEqual([photoPublishedId]);
+
+        // Admin sees:
+        // - adminUnprocessedId (own unprocessed)
+        // - adminPublishedId
+        // - photoPublishedId
+        // - softDeletedId
+        // But NOT unfinishedId or guestUnprocessedId
+        const adminClient = await signedInClient(a);
+        const adminRes = await adminClient.from('media').select('id').eq('event_id', event.id);
+        expect(adminRes.error).toBeNull();
+        const adminIds = new Set(adminRes.data!.map((r: { id: string }) => r.id));
+        expect(adminIds.has(adminUnprocessedId)).toBe(true);
+        expect(adminIds.has(adminPublishedId)).toBe(true);
+        expect(adminIds.has(photoPublishedId)).toBe(true);
+        expect(adminIds.has(softDeletedId)).toBe(true);
+        expect(adminIds.has(unfinishedId)).toBe(false);
+        expect(adminIds.has(guestUnprocessedId)).toBe(false);
+      });
+
+      it('protects list_album and list_uploaders from publishable key and authenticated clients', async () => {
+        const a = await createNamedUser('Admin');
+        const event = await createdEvent(a.id);
+        const clients = [
+          createServerClient(project.url, project.publishableKey),
+          await signedInClient(a),
+        ];
+
+        for (const client of clients) {
+          const resAlbum = await client.rpc('list_album', { p_event_id: event.id });
+          expect(resAlbum.error).not.toBeNull();
+          const resUploaders = await client.rpc('list_uploaders', { p_event_id: event.id });
+          expect(resUploaders.error).not.toBeNull();
+        }
+      });
+
+      it('executes list_album and list_uploaders via the service role', async () => {
+        const a = await createNamedUser('Admin');
+        const event = await createdEvent(a.id);
+        const albumResult = await albumStore.query(event.id, { limit: 50 });
+        expect(albumResult.media).toEqual([]);
+        expect(albumResult.sectionCounts).toEqual([]);
+        const uploadersResult = await albumStore.uploaders(event.id);
+        expect(uploadersResult).toEqual([]);
       });
     });
   });
