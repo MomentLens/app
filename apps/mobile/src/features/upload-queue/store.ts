@@ -1,4 +1,11 @@
-import type { QueueCounts, QueueItem, QueuePatch, QueuePhoto } from './types';
+import type {
+  QueueCounts,
+  QueueItem,
+  QueuePatch,
+  QueuePhoto,
+  QueueState,
+  WaitingState,
+} from './types';
 
 export interface QueueDatabase {
   execAsync(sql: string): Promise<void>;
@@ -160,7 +167,16 @@ export class QueueStore {
       });
     });
   }
+  // My Media's Delete. The DELETE itself refuses an uploading photo, so it cannot race the runner's
+  // move to uploading, and one of the two wins (D-146).
   remove(userId: string, id: string): Promise<boolean> {
+    return this.deleteRow(userId, id, true);
+  }
+  // The runner's drop after a duplicate answer, from any state (arch §4).
+  drop(userId: string, id: string): Promise<boolean> {
+    return this.deleteRow(userId, id, false);
+  }
+  private deleteRow(userId: string, id: string, refuseUploading: boolean): Promise<boolean> {
     return this.mutate(async () => {
       const [row] = await this.db.getAllAsync<StoredItem>(
         `SELECT ${COLUMNS} FROM queue_item WHERE userId = ? AND id = ?`,
@@ -168,7 +184,12 @@ export class QueueStore {
         id,
       );
       if (!row) return false;
-      await this.db.runAsync('DELETE FROM queue_item WHERE userId = ? AND id = ?', userId, id);
+      const result = await this.db.runAsync(
+        `DELETE FROM queue_item WHERE userId = ? AND id = ?${refuseUploading ? " AND state != 'uploading'" : ''}`,
+        userId,
+        id,
+      );
+      if (!result.changes) return false;
       this.changed();
       // Delete the row first. A crash or a disk refusal leaves an orphan for the next launch.
       await Promise.allSettled(
@@ -179,7 +200,13 @@ export class QueueStore {
       return true;
     });
   }
-  update(userId: string, id: string, patch: QueuePatch): Promise<boolean> {
+  // With `from`, the write lands only on a photo still in one of those states.
+  update(
+    userId: string,
+    id: string,
+    patch: QueuePatch,
+    from?: readonly QueueState[],
+  ): Promise<boolean> {
     return this.mutate(async () => {
       const allowed = [
         'state',
@@ -203,15 +230,113 @@ export class QueueStore {
           )
         : [];
       const set = entries.map(([key]) => `${key} = ?`).join(',');
+      const guard = from?.length ? ` AND state IN (${from.map(() => '?').join(',')})` : '';
       const result = await this.db.runAsync(
-        `UPDATE queue_item SET ${set}${finished ? ',photoPath = NULL' : ''} WHERE userId = ? AND id = ?`,
+        `UPDATE queue_item SET ${set}${finished ? ',photoPath = NULL' : ''} WHERE userId = ? AND id = ?${guard}`,
         ...entries.map(([, value]) => value),
         userId,
         id,
+        ...(from ?? []),
       );
       if (result.changes) this.changed();
-      if (finished && row?.photoPath) await Promise.allSettled([this.files.delete(row.photoPath)]);
+      if (finished && result.changes && row?.photoPath)
+        await Promise.allSettled([this.files.delete(row.photoPath)]);
       return result.changes > 0;
+    });
+  }
+
+  // The runner's next photo for one account: the oldest queued or uploading photo across every
+  // event whose backoff ends by `horizon`, leaving out the ones this round already tried (D-146).
+  // Waiting, stopped, finished and Local Only photos never qualify.
+  async nextUpload(
+    userId: string,
+    horizon: number,
+    skip: readonly string[],
+  ): Promise<QueueItem | null> {
+    await this.initialize();
+    const skipped = skip.length ? ` AND id NOT IN (${skip.map(() => '?').join(',')})` : '';
+    const [row] = await this.db.getAllAsync<StoredItem>(
+      `SELECT ${COLUMNS} FROM queue_item WHERE userId = ? AND state IN ('queued','uploading') AND (nextRetryAt IS NULL OR nextRetryAt <= ?)${skipped} ORDER BY createdAt ASC, id ASC LIMIT 1`,
+      userId,
+      horizon,
+      ...skip,
+    );
+    return row ? this.hydrate(row) : null;
+  }
+  // When the account's next backoff after `after` ends, or null when nothing is backing off.
+  async nextWake(userId: string, after: number): Promise<number | null> {
+    await this.initialize();
+    const [row] = await this.db.getAllAsync<{ at: number | null }>(
+      `SELECT MIN(nextRetryAt) AS at FROM queue_item WHERE userId = ? AND state IN ('queued','uploading') AND nextRetryAt > ?`,
+      userId,
+      after,
+    );
+    return row?.at ?? null;
+  }
+  // A photo left uploading by a kill, or by an account change mid-upload, is queued again at
+  // pre-flight, which resumes its row (arch §4). One at step complete stays uploading: both files
+  // were sent, so completion runs again and pre-flight never does (D-122). The runner calls this
+  // only while no attempt is in flight.
+  recover(userId: string): Promise<number> {
+    return this.mutate(async () => {
+      const result = await this.db.runAsync(
+        `UPDATE queue_item SET state = 'queued', step = CASE WHEN step IN ('put_photo','put_thumbnail') THEN 'preflight' ELSE step END WHERE userId = ? AND state = 'uploading' AND step != 'complete'`,
+        userId,
+      );
+      if (result.changes) this.changed();
+      return result.changes;
+    });
+  }
+  // Stage 1's result in one write: the photo points at upload.jpg, stores its hash and moves to
+  // pre-flight, and only then is the source deleted. Every later attempt sends those bytes, so a
+  // kill never changes the hash (arch §4, D-146). False when My Media deleted the photo meanwhile.
+  prepared(userId: string, id: string, photoPath: string, contentHash: string): Promise<boolean> {
+    return this.mutate(async () => {
+      const [row] = await this.db.getAllAsync<Pick<StoredItem, 'photoPath'>>(
+        'SELECT photoPath FROM queue_item WHERE userId = ? AND id = ?',
+        userId,
+        id,
+      );
+      if (!row) return false;
+      const result = await this.db.runAsync(
+        `UPDATE queue_item SET photoPath = ?, contentHash = ?, step = 'preflight', retryCount = 0, nextRetryAt = NULL WHERE userId = ? AND id = ? AND state = 'queued' AND step = 'prepare'`,
+        photoPath,
+        contentHash,
+        userId,
+        id,
+      );
+      if (!result.changes) return false;
+      this.changed();
+      if (row.photoPath && row.photoPath !== photoPath)
+        await Promise.allSettled([this.files.delete(row.photoPath)]);
+      return true;
+    });
+  }
+  // Moves one event's waiting photos back to queued (D-146).
+  release(userId: string, eventId: string, state: WaitingState): Promise<number> {
+    return this.mutate(async () => {
+      const result = await this.db.runAsync(
+        `UPDATE queue_item SET state = 'queued', retryCount = 0, nextRetryAt = NULL WHERE userId = ? AND eventId = ? AND state = ?`,
+        userId,
+        eventId,
+        state,
+      );
+      if (result.changes) this.changed();
+      return result.changes;
+    });
+  }
+  // A fresh 200 from GET /events/{eventId} releases photos stopped by not_member or not_found. One
+  // stopped after both files were sent retries completion, and any other goes back through
+  // pre-flight (D-146).
+  releaseLostAccess(userId: string, eventId: string): Promise<number> {
+    return this.mutate(async () => {
+      const result = await this.db.runAsync(
+        `UPDATE queue_item SET state = CASE WHEN step = 'complete' THEN 'uploading' ELSE 'queued' END, stoppedReason = NULL, retryCount = 0, nextRetryAt = NULL WHERE userId = ? AND eventId = ? AND state = 'stopped' AND stoppedReason IN ('not_member','not_found')`,
+        userId,
+        eventId,
+      );
+      if (result.changes) this.changed();
+      return result.changes;
     });
   }
 }
