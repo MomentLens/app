@@ -1,3 +1,4 @@
+import { backoffDelay } from './transitions';
 import type {
   QueueCounts,
   QueueItem,
@@ -24,6 +25,11 @@ export interface QueueFiles {
 }
 const COLUMNS =
   'id, userId, eventId, subEventId, photoPath, thumbnailPath, capturedAt, createdAt, state, step, mediaId, contentHash, retryCount, nextRetryAt, stoppedReason';
+// True for a queue row `q` whose twin, another photo of the account in the same event with the
+// same hash, is still in flight holding a server row. A photo with no media id waits for any such
+// twin. One with a media id waits only for an older twin, so two photos never wait for each other.
+// A row with no hash yet matches nothing.
+const HAS_TWIN = `EXISTS (SELECT 1 FROM queue_item t WHERE t.userId = q.userId AND t.eventId = q.eventId AND t.id != q.id AND t.contentHash = q.contentHash AND t.mediaId IS NOT NULL AND t.state IN ('queued','uploading') AND (q.mediaId IS NULL OR t.createdAt < q.createdAt OR (t.createdAt = q.createdAt AND t.id < q.id)))`;
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
 CREATE TABLE IF NOT EXISTS queue_item (
@@ -246,22 +252,44 @@ export class QueueStore {
   }
 
   // The runner's next photo for one account: the oldest queued or uploading photo across every
-  // event whose backoff ends by `horizon`, leaving out the ones this round already tried (D-146).
-  // Waiting, stopped, finished and Local Only photos never qualify.
+  // event whose backoff ends by `horizon`, leaving out `skip` and any photo waiting for its twin
+  // (D-146). Waiting, stopped, finished and Local Only photos never qualify.
   async nextUpload(
     userId: string,
     horizon: number,
     skip: readonly string[],
   ): Promise<QueueItem | null> {
     await this.initialize();
-    const skipped = skip.length ? ` AND id NOT IN (${skip.map(() => '?').join(',')})` : '';
+    const skipped = skip.length ? ` AND q.id NOT IN (${skip.map(() => '?').join(',')})` : '';
     const [row] = await this.db.getAllAsync<StoredItem>(
-      `SELECT ${COLUMNS} FROM queue_item WHERE userId = ? AND state IN ('queued','uploading') AND (nextRetryAt IS NULL OR nextRetryAt <= ?)${skipped} ORDER BY createdAt ASC, id ASC LIMIT 1`,
+      `SELECT ${COLUMNS} FROM queue_item q WHERE q.userId = ? AND q.state IN ('queued','uploading') AND (q.nextRetryAt IS NULL OR q.nextRetryAt <= ?) AND NOT ${HAS_TWIN}${skipped} ORDER BY q.createdAt ASC, q.id ASC LIMIT 1`,
       userId,
       horizon,
       ...skip,
     );
     return row ? this.hydrate(row) : null;
+  }
+  // Whether this photo waits for its twin, by the same rule nextUpload leaves it out by.
+  async waitsForTwin(userId: string, id: string): Promise<boolean> {
+    await this.initialize();
+    const rows = await this.db.getAllAsync<{ id: string }>(
+      `SELECT q.id FROM queue_item q WHERE q.userId = ? AND q.id = ? AND ${HAS_TWIN}`,
+      userId,
+      id,
+    );
+    return rows.length > 0;
+  }
+  // Foreground, reconnect or a release makes every queued or uploading photo due now. retryCount
+  // stays, so the next failure backs off from where it was (D-146).
+  clearBackoff(userId: string): Promise<number> {
+    return this.mutate(async () => {
+      const result = await this.db.runAsync(
+        `UPDATE queue_item SET nextRetryAt = NULL WHERE userId = ? AND state IN ('queued','uploading') AND nextRetryAt IS NOT NULL`,
+        userId,
+      );
+      if (result.changes) this.changed();
+      return result.changes;
+    });
   }
   // When the account's next backoff after `after` ends, or null when nothing is backing off.
   async nextWake(userId: string, after: number): Promise<number | null> {
@@ -327,16 +355,29 @@ export class QueueStore {
   }
   // A fresh 200 from GET /events/{eventId} releases photos stopped by not_member or not_found. One
   // stopped after both files were sent retries completion, and any other goes back through
-  // pre-flight (D-146).
-  releaseLostAccess(userId: string, eventId: string): Promise<number> {
+  // pre-flight (D-146). Each counts the stop as a failure and backs off, so a server whose
+  // pre-flight refuses while its event read answers 200 gets one request per backoff, not a loop.
+  releaseLostAccess(userId: string, eventId: string, now: number): Promise<number> {
     return this.mutate(async () => {
-      const result = await this.db.runAsync(
-        `UPDATE queue_item SET state = CASE WHEN step = 'complete' THEN 'uploading' ELSE 'queued' END, stoppedReason = NULL, retryCount = 0, nextRetryAt = NULL WHERE userId = ? AND eventId = ? AND state = 'stopped' AND stoppedReason IN ('not_member','not_found')`,
+      const rows = await this.db.getAllAsync<Pick<StoredItem, 'id' | 'retryCount'>>(
+        `SELECT id, retryCount FROM queue_item WHERE userId = ? AND eventId = ? AND state = 'stopped' AND stoppedReason IN ('not_member','not_found')`,
         userId,
         eventId,
       );
-      if (result.changes) this.changed();
-      return result.changes;
+      let released = 0;
+      for (const row of rows) {
+        const failures = row.retryCount + 1;
+        const result = await this.db.runAsync(
+          `UPDATE queue_item SET state = CASE WHEN step = 'complete' THEN 'uploading' ELSE 'queued' END, stoppedReason = NULL, retryCount = ?, nextRetryAt = ? WHERE userId = ? AND id = ? AND state = 'stopped' AND stoppedReason IN ('not_member','not_found')`,
+          failures,
+          now + backoffDelay(failures),
+          userId,
+          row.id,
+        );
+        released += result.changes;
+      }
+      if (released) this.changed();
+      return released;
     });
   }
 }
