@@ -1,5 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
-import { mediaSections, tileStatus } from '@/features/my-media/sections';
+import { canDeleteLocally, mediaSections, tileStatus } from '@/features/my-media/sections';
 import type { QueueItem } from '@/features/upload-queue/types';
 
 const schedule = [
@@ -31,6 +31,26 @@ describe('My Media sections', () => {
       name: 'Removed sub-event',
       canAdd: false,
     });
+  });
+  it('keeps the queue order inside a section', () => {
+    const rows = ['a', 'b', 'c'].map((id) => ({ ...item('live'), id }));
+    expect(mediaSections(schedule, rows, now)[0]!.items.map((row) => row.id)).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+  it('offers local Delete only for a photo the queue has not sent (D-145)', () => {
+    const at = (state: QueueItem['state']) => ({ ...item('live'), state });
+    expect(canDeleteLocally(at('queued'), false)).toBe(true);
+    expect(canDeleteLocally(at('waiting_verification'), false)).toBe(true);
+    expect(canDeleteLocally({ ...at('stopped'), stoppedReason: 'event_full' }, false)).toBe(true);
+    expect(canDeleteLocally(at('uploading'), false)).toBe(false);
+    expect(canDeleteLocally(at('uploading'), true)).toBe(false);
+    expect(canDeleteLocally(at('uploaded'), false)).toBe(false);
+    expect(canDeleteLocally(at('published'), false)).toBe(false);
+    expect(canDeleteLocally(at('local_only'), false)).toBe(false);
+    expect(canDeleteLocally(at('queued'), true)).toBe(true);
   });
   it('uses schedule order for numerals while displaying newest first', () => {
     expect(mediaSections(schedule, [], now).map((s) => s.number)).toEqual([2, 1]);

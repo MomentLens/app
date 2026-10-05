@@ -18,7 +18,6 @@ import {
   ListSubEventsResponse,
   ProfileResponse,
   MediaStatusResponse,
-  MediaStatusRequest,
   ResolveInviteResponse,
   RemoveAttendeeResponse,
   SetEventCoverResponse,
@@ -34,6 +33,7 @@ import {
   type ErrorCode,
   type JoinEventRequest,
   type ListAttendeesRequest,
+  type MediaStatusRequest,
   type RemoveAttendeeRequest,
   type ResolveInviteRequest,
   type UpdateEventSettingsRequest,
@@ -573,11 +573,7 @@ export async function getMediaStatus(
   signal?: AbortSignal,
 ): Promise<MediaStatusResponse> {
   const path = `/events/${encodeURIComponent(eventId)}/media/status`;
-  const response = await authenticatedRequest(path, {
-    method: 'POST',
-    body: MediaStatusRequest.parse(body),
-    signal,
-  });
+  const response = await authenticatedRequest(path, { method: 'POST', body, signal });
   if (response.status !== 200)
     throw await errorFrom('POST /events/{eventId}/media/status', response);
   return parseBody('POST /events/{eventId}/media/status', response, MediaStatusResponse);
