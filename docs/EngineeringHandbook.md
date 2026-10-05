@@ -208,7 +208,7 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 
 The rules easiest to get wrong:
 
-- **`media`**: an **active** member of the event, only **once `processed_at` is set**, or at any time the uploader (D-55). A Photographer sees only their own uploads (spec §4.10). A row without `uploaded_at` is shown to nobody (D-82). Update and delete by the uploader and the event's Admin. `uploader_role_at_upload` is display metadata that drives the Uploader filter and nothing else: never in an authorization check, never in a routing branch (D-13).
+- **`media`**: an **active** member of the event, only **once `processed_at` is set**, or at any time the uploader (D-55). A Photographer sees only their own uploads (spec §4.10). A row without `uploaded_at` is shown to nobody (D-82). Update and delete by the uploader and the event's Admin. `uploader_role_at_upload` is display metadata on the photo and nothing else, never in an authorization check or a routing branch (D-13). The Uploader filter matches `uploader_user_id` (D-148).
 - **`event`**: **active** members only.
 - **`membership`**: a user reads their own rows; the Admin reads every row for their events.
 - **`face_reference`**: the owner sees their own reference photos. Embeddings never leave the database and the worker.
@@ -219,13 +219,13 @@ There is no `PlanTier` table. The hard-coded constants in spec §4.17 are plain 
 
 ### 5.2 The image-serving endpoint
 
-**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It first drops every media id the requester may not see under the media rule in `docs/ARCHITECTURE.md` §1. For the rest it answers "which file does this requester get for this photo": the subject's own variant if a `dnp_subject` row on that media points at the requester's subject, the public file otherwise, each read from its column. It takes a batch of media ids, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3). It is built in two steps: S-13 in Phase 3 with the visibility check and the public file only, then S-21 in Phase 5 adds the subject's file and the own-variant flag (D-93).
+**The image-serving endpoint is the most sensitive authorization check in the system**, and it is application logic. It first drops every media id the requester may not see under the media rule in `docs/ARCHITECTURE.md` §1. For the rest it answers "which file does this requester get for this photo": the subject's own variant if a `dnp_subject` row on that media points at the requester's subject, the public file otherwise, each read from its column. It is `POST /events/{eventId}/media/images`, takes up to 50 media ids and a size, and returns with each URL the cache key and the own-variant flag that `docs/ARCHITECTURE.md` §3 describes (D-86). It signs nothing for a row whose `processed_at` is null, the uploader's own included (D-148). Get it wrong and a subject's unblurred variant reaches somebody else, which is the one thing the app promises not to do. Write the negative test before the endpoint (§11.3). It is built in two steps: S-13 in Phase 3 with the visibility check and the public file only, then S-21 in Phase 5 adds the subject's file and the own-variant flag (D-93).
 
 ### 5.3 API conventions
 
 Every endpoint follows these, so the app has one way to read an answer. They exist before S-01 writes its first schema (D-94).
 
-- **Paths** are plural nouns under the resource that owns them: `GET /events/{eventId}/media`, `POST /events/{eventId}/media/preflight`, `POST /media/{mediaId}/complete`. Ids are uuids in the path, never in a query string. A batch action names its targets in the body instead (D-144).
+- **Paths** are plural nouns under the resource that owns them: `GET /events/{eventId}/media`, `POST /events/{eventId}/media/preflight`, `POST /media/{mediaId}/complete`. Ids that name the resource are uuids in the path. A batch action names its targets in the body (D-144). A list GET may carry filter values and its cursor in the query string, uuids included, as `GET /events/{eventId}/media?subEventId=...` does (D-148).
 - **Bodies** are JSON, with camelCase fields named as the zod schema in `packages/shared-types` names them, as `HealthResponse` has `checkedAt`. A schema is named for its endpoint and ends in `Request` or `Response`.
 - **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
 - **A 403 `not_member` on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1). A 403 `wrong_role` means the role changed (D-102), so the app refetches the event and the Event shell redraws its tabs (D-118). `not_uploader` fails only the action that drew it. A join answers a blocked person 403 `blocked` instead, and the app shows Join Blocked, never Access Removed (D-115).
@@ -384,6 +384,8 @@ Testing proportionate to your timeline.
 Some integration tests, and one of them is the most valuable test in the project.
 
 **Write this one first, before the endpoint it tests exists.** Authenticate as user A. Request the image for a photo where user B is a Do Not Publish subject. Assert that what comes back is the public file and not B's variant, that no response to A contains B's variant key, and that an unsigned GET of that key on the bucket returns 403. Roughly twenty lines. If this project has exactly one test, that is the one, because a too-permissive authorization check throws no error and looks identical to a correct one; it just returns the wrong file (§18).
+
+**S-13 writes the public-file half, because nothing writes a `dnp_subject` row before S-21** (D-93, D-148). Seed a processed row whose `public_key` differs from its `upload_key`. Assert that the URL A gets signs `public_key`, that no response contains either upload key, and that an unsigned GET of the signed key returns 403. S-21 adds B's variant to the same test.
 
 Then the negative API tests (D-73): a Photographer cannot read another user's media, one user cannot read another's `face_reference` rows, and no endpoint returns a Do Not Publish subject's identity to anyone else. The two RLS policies, `SELECT` on `media` and `event`, get a Realtime test: a non-member receives nothing, and a member receives no unprocessed row they did not upload.
 

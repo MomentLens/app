@@ -824,6 +824,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Keeping the previous files, D-103's first answer. Letting the `media` policy pass the unpublished row so Realtime removes it live, which would also hand members rows that were never processed, against the Realtime test in Handbook §11.3.
 **Cost.** The photo is gone from the album until someone re-queues the job, and only the log says so, and Sentry once the worker has it. A URL already signed stays valid for up to an hour, and a phone that already shows the photo keeps it until its next fetch.
 **Amended (see D-123).** The archive and the clearing of `processed_at` commit in one transaction, and the worker reports each archived message to Sentry.
+**Amended (see D-148).** Other phones drop the photo on their next fetch of the album, which a Realtime reconnect and a return to the foreground both start. The event fetch carries no photos.
 
 ### D-109: Auth rulings from S-01's read-back
 **Decision.** Amends D-35, D-94 and D-105. Ukasha ruled on each of these on 2026-09-24.
@@ -1297,6 +1298,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** The cover in the header (D-119). An empty state alone.
 **Cost.** One more state on Home.
 **Reopen if.** The Admin skips the cover often enough that the state is mostly a placeholder.
+**Amended (see D-148).** Once the first sub-event starts, Home shows the grid, with an empty state until the first photo is published. S-13 builds both states.
 
 ### D-139: Approve All asks first only when it admits a Photographer
 **Decision.** Amends spec §2.5.7.
@@ -1442,6 +1444,33 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Why.** Spec §4.9 grouped the album by sub-event and date and named no order, and D-98 stamped a photo with no EXIF time with its upload time. A photo held for hours by a closed album or a missing check-in would have landed above photos taken after it.
 **Rejected.** Ordering by upload or processing time, which puts a Photographer's evening delivery above the guests' photos from the day. Reading the gallery for a picked photo's creation date, which needs read access to the photo library that the app asks for nowhere else.
 **Cost.** The phone's clock and EXIF decide the order (D-98). A photo with no EXIF time sorts by when it was added on the phone, not when it was taken. A photo that arrives late can land among photos the viewer has already scrolled past.
+**Amended (see D-148).** The album's keyset pages follow D-137's sections, so the cursor runs over the sub-event's start, the sub-event's id, `captured_at` and `id`, and S-13's index is `media (event_id, sub_event_id, captured_at desc, id desc)`.
+
+### D-148: Album rulings from S-13's read-back
+**Decision.** Amends D-108, D-138, D-147, hb §5.3 and spec §2.5.2. Ukasha ruled on each of these on 2026-10-05, at S-13's read-back, and let the routine calls stand.
+- Home's sections follow the schedule, oldest sub-event first (D-137). Within a section, and under every chip and filter, photos sort newest capture first, then by id (D-147). `GET /events/{eventId}/media` pages in that order with an opaque cursor over the sub-event's start, the sub-event's id, `captured_at` and `id`. S-13's index is `media (event_id, sub_event_id, captured_at desc, id desc)`, in place of D-147's.
+- A list GET may carry filter values and its cursor in the query string, uuids included. Ids that name the resource stay in the path, and a batch action names its targets in the body (hb §5.3).
+- The image-serving endpoint is `POST /events/{eventId}/media/images`. Its body names 1 to 50 distinct media ids and a `size`, `thumbnail` or `full`. It answers 200 with a URL and a cache key for each id the caller may see, and leaves out every other id without saying why. A caller who is not an active member gets 403 `not_member`, and an unknown or deleted event 404 `not_found`. It signs a file only when `processed_at` is set and the public column it reads is filled, for every caller, the uploader included. Arch §1's uploader clause covers the Realtime policy and the status read (D-145), and nothing serves a photo before the worker finishes it.
+- S-13 builds D-138's cover state, shown until the first sub-event starts. From then Home shows the grid, with an empty state until the first photo is published. S-31 builds the Album Closed banner along with the album state it reads (D-146). S-28 builds download.
+- Routine calls:
+  - Album pages and the serving batch both hold 50, as the status read does (D-145). The first page also carries each section's photo count under the active filters, for the header spec §2.5.3 describes.
+  - `GET /events/{eventId}/media` and `GET /events/{eventId}/media/uploaders` answer a Photographer 403 `wrong_role`. The serving endpoint signs a Photographer's own published photos and nobody else's (arch §1).
+  - `GET /events/{eventId}/media/uploaders` lists the active members with a published photo in the event, each with their name, current role and photo count, and `avatar: null` until S-29 (D-143). A removed or blocked uploader is left off it, and their photos stay under All. The phone searches the list, which holds at most about 150 people.
+  - The Uploader filter matches `uploader_user_id`. `uploader_role_at_upload` stays display metadata on the photo.
+  - A chip filters on `sub_event_id`, never on the time window, so a photo added to a sub-event through "+ Add Media" stays in that sub-event's section.
+  - One section per sub-event. Its header carries the numeral, which is the sub-event's position in the schedule (D-145), the name, the date and venue in the phone's time zone (D-110), and the count. A sub-event with no photos gets no section under All.
+  - The chip row holds every chip and scrolls to the sub-event In Progress when Home mounts, gains focus and returns to the foreground. Past 6 sub-events a "More" chip at its end opens a sheet listing them all.
+  - The cache key is the signed object key, then `#v`, then `variant_version`.
+  - S-13's migration adds `media` to the `supabase_realtime` publication. Without it Realtime delivers nothing and nothing reports an error.
+  - The app opens one Realtime channel on `media` per open event, in the Event shell, filtered on `event_id`, and removes it on logout. It feeds Home and My Media's status badges (D-145). A row with `processed_at` set and no `deleted_at` takes its place in the loaded pages, or waits for its page when its place lies past them. A row with `deleted_at` set or `processed_at` cleared, and a DELETE from a cascade, leave the pages. The app refetches the loaded pages when the channel reconnects and on foreground.
+  - The app drops a tile when the serving endpoint leaves its id out.
+  - The album query is not persisted across a restart. A persisted page holds the `variant_version` it was loaded with, so offline it would show a pre-blur file from the disk cache (root invariant 2).
+  - Tapping a tile opens nothing until S-22.
+  - The filter sheet ships with its Uploader half alone. S-23 adds People above it.
+**Why.** S-13's read-back found D-147's single capture-time order unable to page D-137's sections, hb §5.3 forbidding the uuids the album's own filters need, a serving rule that let the uploader through to a row with no public file to sign, and spec §2.5.2 and D-138 ending the cover state at different moments. Spec §2.5.2 also scrolled a chip row whose overflow it had collapsed into a sheet.
+**Rejected.** Newest sub-event first on Home, which reverses D-137. One global capture-time order with a header wherever the sub-event changes, which repeats a section for every photo filed outside its sub-event's hours. A POST search endpoint for the album, which would be the one read in the app with a body. Serving the upload file to its uploader before processing, which adds an unblurred path no screen needs, since My Media shows its local thumbnails (D-145). An Album Closed banner in S-13, which needs the album state D-146 gives S-31.
+**Cost.** A Delay between two page loads can skip or repeat a section until the next refetch. Reading down Home, time runs forward at each header and backward inside a section. The album is empty offline. Nobody can filter to a removed member's photos by name.
+**Reopen if.** Testers read the grid's direction as a bug, or ask to filter to a former member's photos.
 
 ## Open items that are not decisions yet
 
