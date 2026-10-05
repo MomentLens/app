@@ -12,6 +12,7 @@ import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { startSessionSync } from '@/features/auth/session';
+import { initializeQueue } from '@/features/upload-queue/queue';
 import { persistOptions, queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
 
@@ -33,6 +34,11 @@ SplashScreen.preventAutoHideAsync();
 // Here rather than in an effect, so the store already knows who is signed in when the first frame
 // renders, and so the Auth subscription exists before anything auth-js does at startup is announced.
 startSessionSync();
+// Sweep copies left by a kill before the queue INSERT, whichever tab opens first (D-145).
+void initializeQueue().catch(() => {
+  // My Media retries initialization and shows a local-storage error.
+  console.warn('The upload queue could not be opened. My Media will retry.');
+});
 
 // The keys are the family names tailwind.config.js uses, so `font-h1` resolves to Fraunces_600SemiBold.
 // Each weight is imported from its own path, which keeps the package's other font files out of the
