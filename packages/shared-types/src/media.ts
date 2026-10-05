@@ -88,3 +88,52 @@ export const CompleteUploadResponse = z.object({
   status: z.literal('completed'),
 });
 export type CompleteUploadResponse = z.infer<typeof CompleteUploadResponse>;
+
+/** The most media ids one status read accepts (arch:media, D-145). */
+export const MAX_MEDIA_STATUS_BATCH = 50;
+
+/**
+ * An uploaded photo is `processing` until the worker sets `processed_at` last, then `published`.
+ * `deleted` takes precedence over both once `deleted_at` is set (root invariant 1, D-145).
+ */
+export const MediaPublishState = z.enum(['processing', 'published', 'deleted']);
+export type MediaPublishState = z.infer<typeof MediaPublishState>;
+
+/**
+ * POST /events/{eventId}/media/status, for every active role (arch:media, D-145).
+ * The path identifies the event; the body names 1 to 50 distinct media ids.
+ * A UUID's upper-case and lower-case spellings identify the same row in Postgres.
+ * An empty batch, an oversized batch or a repeated id answers 400 `invalid_request`.
+ */
+export const MediaStatusRequest = z.strictObject({
+  mediaIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(MAX_MEDIA_STATUS_BATCH)
+    .refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, {
+      message: 'A media id appears more than once',
+    }),
+});
+export type MediaStatusRequest = z.infer<typeof MediaStatusRequest>;
+
+/**
+ * POST /events/{eventId}/media/status. A 200 with only the caller's finished rows in this event.
+ * Another uploader's row, another event's row, an unfinished row or an unknown id is omitted.
+ * An empty result is valid. Match entries by `mediaId`, with no promised order (D-145).
+ * The body carries no image, object key or URL.
+ *
+ * Refusals use the existing `ErrorResponse` (hb §5.3): 401 `no_session`, 404 `not_found` for
+ * an unknown or deleted event, then 403 `not_member` for a caller whose membership is not active.
+ * No role, album state or sub-event timing check limits this read.
+ */
+export const MediaStatusResponse = z.object({
+  statuses: z
+    .array(
+      z.object({
+        mediaId: z.uuid(),
+        status: MediaPublishState,
+      }),
+    )
+    .max(MAX_MEDIA_STATUS_BATCH),
+});
+export type MediaStatusResponse = z.infer<typeof MediaStatusResponse>;
