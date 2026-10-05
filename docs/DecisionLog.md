@@ -390,6 +390,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Why.** D-32 hashed the 300px WebP thumbnail. WebP encoders differ across iOS, Android and library versions, so the same source photo hashes differently on two devices and after any dependency bump. The dedup would have caught close to nothing while looking like it worked.
 **Rejected.** Hashing the source file before processing, which is also deterministic but misses the case where the same photo arrives as HEIC on one device and JPEG on another.
 **Amended (see D-96).** The hash is unique per event among finished rows, deleted ones included. Another user's unfinished row with the same hash is not a duplicate.
+**Amended (see D-146).** Stage 1 re-encodes every photo (D-99), so the same photo hashes differently on two phones or after a library update. The case in Rejected, one photo arriving as HEIC on one phone and JPEG on another, does not match either. The dedup catches the same photo added twice on one phone and build, the case D-32 named, and no exact check catches more for less.
 
 ### D-54 — Curated and auto-added references are tracked separately ~~(SUPERSEDED by D-83)~~
 > **Superseded.** With no auto-added references, every reference is one the user uploaded, so there is nothing to split.
@@ -423,6 +424,7 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Why.** Phone JPEGs are already 1 to 3MB, so the resize was solving a storage and bandwidth problem D-49 removed. Inference cost barely moves either, because InsightFace resizes internally to `det_size` for detection and crops to 112x112 for recognition; input resolution mostly costs JPEG decode time.
 **Rejected.** Removing the resize entirely with no guard. The guard never fires on a phone photo and exists so a DSLR file dragged in during a rehearsal does not surprise anyone.
 **What this deleted for free.** D-11's two client pipelines and the role branch. D-48 entirely. The download routing that `uploader_role_at_upload` used to drive (D-13). The `variant` worker job, which was also Phase 5's warm-up task, so Handbook §14 needed a new one.
+**Amended (see D-99, D-146).** Stage 1 re-encodes every photo, so no JPEG uploads as it is. The guard fires on every photo from a phone that shoots 24MP or more by default, the iPhone 15 and later among them.
 
 ### D-59 — Pinch-zoom and pan are restored
 **Decision.** The full-screen viewer supports pinch-zoom and pan. Supersedes D-06.
@@ -734,12 +736,14 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** `captured_at` was a column nothing wrote. The API cannot read the file (root invariant 5), and no worker job set it.
 **Rejected.** The worker reading EXIF, which adds a write after publishing and leaves the order unknown until it runs.
 **Cost.** One field in the pre-flight schema. The phone's clock and EXIF are trusted, which only affects sort order.
+**Amended (see D-147).** The phone sends the time the photo entered its queue when the photo has no EXIF time, so the pre-flight time stands in only for a request that carries none.
 
 ### D-99: Stage 1 rotates the pixels, and every box and region is a fraction of the stored image
 **Decision.** Stage 1 applies the EXIF orientation tag to the pixels, then strips the tag with everything else but the timestamp, so the uploaded file is upright and carries no orientation. Every face box and every blur region is stored as fractions of that file's width and height, so one set of numbers fits every file and thumbnail of the photo.
 **Why.** The phone kept the orientation tag. An app drawing on the rotated image and a worker reading raw pixels disagree about where a rectangle is, and the wrong area gets blurred with no error.
 **Rejected.** Keeping the tag and trusting every reader to honour it, which is one missed flag away from a silent leak.
 **Cost.** It replaces "keep timestamp and orientation" in spec §4.8.1. Stage 1 already re-encodes the file.
+**Amended (see D-146).** Stage 1 strips the timestamp too. No installed library writes EXIF, and nothing reads the timestamp, since pre-flight carries the capture time (D-98).
 
 ### D-100: A sub-event with photos cannot be deleted, and editing one moves nothing
 **Decision.** The Admin can delete a sub-event only while it has no photos, and never the event's last one (D-88). Editing a sub-event's name, venue or times moves no photo and no `venue_verification` row. Other phones learn of an edit or a Delay when they next fetch the event, on foreground and on reconnect. `sub_event` has no Realtime.
@@ -1400,6 +1404,42 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** A full list of the caller's rows from every device, which needs S-13's serving endpoint and a ruling on which file the uploader gets before processing. A My Media fed by the local queue alone, which never shows the check. Sections for Upcoming sub-events, which sort above the live one. An unlimited picker. S-17 building the check-in banner, which S-16 sits above in build order and does not depend on.
 **Cost.** One endpoint and an API PR in S-10's stack, and S-10 now depends on S-12. A photo uploaded from another phone or before a reinstall is missing from My Media. The phone keeps a 300px thumbnail of every photo it uploaded. That thumbnail is unblurred, so the uploader's My Media still shows a face the worker later blurs, the same pixels the phone's gallery already holds (D-90); it is a local file, never served to anyone (root invariant 13). An Admin's delete of a published photo, and the worker clearing `processed_at` after a job's third failure (D-108), reach My Media only on a pull to refresh until S-13's Realtime, so its check badge can outlast the photo's place in the album.
 **Reopen if.** Testers look in My Media for photos from their other phone, or Photographers find 50 per pick too few.
+
+### D-146: S-11's upload loop, from its read-back
+**Decision.** Amends D-53, D-58, D-99, the queue table in `docs/ARCHITECTURE.md` §4, and the scopes of S-14, S-15, S-29 and S-31. Ukasha ruled on each of these on 2026-10-05, at S-11's read-back, and let the routine calls stand.
+- Stage 1 strips every EXIF field, the timestamp included. `expo-image-manipulator` writes none when it saves, and pre-flight carries the capture time (D-98).
+- Stage 1 runs once per photo. At step `prepare` the phone writes `upload.jpg`, and one queue mutation points `photoPath` at it and stores its hash. Every later attempt sends those bytes. Running Stage 1 again after a kill could encode different bytes, and the new hash would start a second row and strand the first.
+- The thumbnail is the one S-10 writes when the photo enters the queue. S-11 makes no other.
+- 409 `upload_missing` sends the photo back through pre-flight, which resumes the row and signs fresh URLs. The queue stores no URLs, and they expire after 15 minutes.
+- S-11 maps 409 `album_closed` to `waiting_album` and 409 `unverified` to `waiting_verification`, and exports a release that moves an event's waiting photos back to queued. S-31 calls it once the event response carries the album state, and S-15 once the local check passes or the event response shows the person verified. Neither answer can arrive before then, because the album check is off and the verification check does not exist (D-122).
+- A fresh `GET /events/{eventId}` answering 200 releases photos stopped by `not_member` or `not_found`. A photo stopped after both files were sent retries completion, and any other goes back through pre-flight.
+- Every pre-flight and completion carries the queue item's account, and the phone refuses to send it under another session. An answer that arrives after the account changes leaves the item as it was. Without this, completion under the next account answers 403 `not_uploader`, which stops the photo for good.
+- A photo past pre-flight when the album closes finishes its upload and publishes. Completion does not check the album.
+- One runner moves photos, one at a time, for the signed-in account. S-14's background task calls the same runner.
+- The runner reads "Upload over Mobile Data" from MMKV store `device-preferences`, key `uploadOverMobileData`, default on, and waits for Wi-Fi while it is off. S-29's toggle writes the key.
+- S-11's stack has no schema stage. S-12's schemas cover every call it makes.
+- Routine calls:
+  - Stage 1 encodes the JPEG at quality 0.9, as event covers do.
+  - A network failure, a timeout or a 5xx retries after 5 seconds, doubling to 5 minutes, with no cap. Foreground and reconnect retry at once.
+  - Each PUT times out after 2 minutes and is cancelled when the account changes.
+  - A photo whose Stage 1 fails or is interrupted 3 times stops as `invalid_request`, so a photo that crashes the app cannot crash it on every launch.
+  - After any failed or interrupted PUT, the photo goes back through pre-flight and sends both files.
+  - The oldest photo goes first, across every event.
+  - My Media's Delete refuses an uploading photo in the same SQL statement that deletes, so it cannot race the runner's claim.
+**Why.** S-11's read-back found D-99 asking for an EXIF field that no installed library writes. The `upload_missing` row asked for a PUT with URLs the queue never stored. The wake conditions for the album and verification read fields the event response does not carry. Nothing held the processed bytes across a kill. An account switch mid-upload stopped the first account's photo as an app bug. Spec §4.8.1 said the 4096px guard never fires on a phone photo, and the iPhone 15 and later shoot 24MP by default.
+**Rejected.** Writing the timestamp back with a JavaScript EXIF library, a new dependency for a field nothing reads. A completion that checks the album, which needs a new queue state for a photo whose files are already in R2. S-29 adding the Mobile Data check to the loop, which would make S-29 change a human-read surface.
+**Cost.** A downloaded photo carries no capture date in its file, though `media.captured_at` keeps it. Dedup catches the same photo added twice on one phone and nothing across phones (D-53). A photo pre-flighted a moment before the album closes still publishes. S-15 and S-31 each make one call into the queue.
+**Reopen if.** Testers' downloaded photos sort under the download date in their gallery and they mind.
+
+### D-147: The album sorts by capture time
+**Decision.** Amends D-98 and spec §4.9. Ukasha ruled on 2026-10-05, at S-11's read-back.
+- The album shows the newest capture first, within each group and under every sub-event chip and filter. It sorts on `media.captured_at`, then on `id`, both descending.
+- A photo that reaches the server late takes its place by capture time. Realtime inserts it there, not at the top.
+- The phone always sends a capture time, the photo's EXIF time or else the time the photo entered the queue. The API keeps the pre-flight time for a request that carries none.
+- No new column. `captured_at` already exists (arch:media).
+**Why.** Spec §4.9 grouped the album by sub-event and date and named no order, and D-98 stamped a photo with no EXIF time with its upload time. A photo held for hours by a closed album or a missing check-in would have landed above photos taken after it.
+**Rejected.** Ordering by upload or processing time, which puts a Photographer's evening delivery above the guests' photos from the day. Reading the gallery for a picked photo's creation date, which needs read access to the photo library that the app asks for nowhere else.
+**Cost.** The phone's clock and EXIF decide the order (D-98). A photo with no EXIF time sorts by when it was added on the phone, not when it was taken. A photo that arrives late can land among photos the viewer has already scrolled past.
 
 ## Open items that are not decisions yet
 
