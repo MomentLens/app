@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
-import { Timestamp } from './event';
+import { MembershipRole, Timestamp } from './event';
+import { PresignedImage } from './image';
+import { FullName } from './profile';
 
 /**
  * A photo's content hash: SHA-256 over the exact bytes the phone uploads, after the EXIF strip and
@@ -137,3 +139,166 @@ export const MediaStatusResponse = z.object({
     .max(MAX_MEDIA_STATUS_BATCH),
 });
 export type MediaStatusResponse = z.infer<typeof MediaStatusResponse>;
+
+/** The most media ids one serving batch accepts (D-148). */
+export const MAX_MEDIA_IMAGES_BATCH = 50;
+
+/** The most media rows one album page holds (D-148). */
+export const MAX_ALBUM_PAGE = 50;
+
+/**
+ * Whether the caller wants a thumbnail or the full display image (D-148). The serving endpoint
+ * reads the corresponding column on the `media` row (`public_thumb_key` or `public_key`).
+ * S-21 extends this to pick the subject's own variant when one exists.
+ */
+export const MediaImageSize = z.enum(['thumbnail', 'full']);
+export type MediaImageSize = z.infer<typeof MediaImageSize>;
+
+/**
+ * GET /events/{eventId}/media, for every active role except Photographer (D-148). Query
+ * parameters, with no body. The path identifies the event.
+ *
+ * - `subEventId` filters to one sub-event. The chip row sends it. Without it the album shows
+ *   every sub-event's section.
+ * - `uploaderId` filters to one uploader. The Uploader sheet sends it. Without it every uploader
+ *   contributes.
+ * - Both stack: an active chip plus an active uploader filter gives "Sarah's photos from the
+ *   reception" (spec §2.5.2).
+ * - `cursor` is the opaque keyset cursor the previous page returned. The first request leaves it
+ *   out. The API validates its encoding; a tampered or stale cursor is 400 `invalid_request`.
+ *
+ * Refusals, in order: 401 `no_session`; 404 `not_found` for an unknown or deleted event; 403
+ * `not_member` for a non-active member; 403 `wrong_role` for a Photographer (D-148).
+ */
+export const ListAlbumRequest = z.strictObject({
+  subEventId: z.uuid().optional(),
+  uploaderId: z.uuid().optional(),
+  cursor: z.string().min(1).optional(),
+});
+export type ListAlbumRequest = z.infer<typeof ListAlbumRequest>;
+
+/**
+ * One photo in the album grid. The serving endpoint handles URLs; this carries only metadata
+ * needed for layout, section headers and the tile.
+ *
+ * - `uploaderRole` is `uploader_role_at_upload`, display and filter metadata only (spec §4.4).
+ * - `width` and `height` are the photo's pixel dimensions, written by the worker (D-22). They
+ *   are null until the worker finishes; the album query already filters on `processed_at`, so a
+ *   null here would mean a consistency bug, but the schema still allows it to stay forward-safe.
+ */
+export const AlbumMediaItem = z.object({
+  id: z.uuid(),
+  subEventId: z.uuid(),
+  capturedAt: Timestamp,
+  uploaderRole: MembershipRole,
+  width: z.int().positive().nullable(),
+  height: z.int().positive().nullable(),
+});
+export type AlbumMediaItem = z.infer<typeof AlbumMediaItem>;
+
+/**
+ * One sub-event section's photo count under the active filters, returned with the first page
+ * so the grid can draw its section headers with counts before all pages are loaded (D-148).
+ */
+export const SectionCount = z.object({
+  subEventId: z.uuid(),
+  count: z.int().nonnegative(),
+});
+export type SectionCount = z.infer<typeof SectionCount>;
+
+/**
+ * GET /events/{eventId}/media. A 200 with one page of the album in D-148's section order:
+ * sub-events by start ascending, then by id, and within each section `captured_at` descending,
+ * then `id` descending.
+ *
+ * - `media` is the page, up to 50 rows.
+ * - `sectionCounts` appears only on the first page (when the request carried no `cursor`) and
+ *   holds the photo count for every sub-event that has at least one photo under the active
+ *   filters. Subsequent pages set it to null so the app does not re-render its counts.
+ * - `nextCursor` is null on the last page. The app sends it unchanged to fetch the next.
+ */
+export const ListAlbumResponse = z.object({
+  media: z.array(AlbumMediaItem).max(MAX_ALBUM_PAGE),
+  sectionCounts: z.array(SectionCount).nullable(),
+  nextCursor: z.string().min(1).nullable(),
+});
+export type ListAlbumResponse = z.infer<typeof ListAlbumResponse>;
+
+/**
+ * POST /events/{eventId}/media/images, for every active role (D-148). The body names 1 to 50
+ * distinct media ids and a `size`. The endpoint answers with a presigned URL and cache key for
+ * each id the caller may see, and silently omits every other id.
+ *
+ * A Photographer gets only their own published photos signed. A Guest or Admin gets every
+ * published photo in the event. No id that has no `processed_at` is ever signed, the uploader
+ * included (D-148, root invariant 1).
+ *
+ * Refusals, in order: 401 `no_session`; 404 `not_found` for an unknown or deleted event; 403
+ * `not_member` for a non-active member. No role check: every active role may call it, the
+ * Photographer included, who receives only their own photos (arch §1).
+ * 400 `invalid_request` for a body that fails validation: empty, oversized, or repeated ids.
+ *
+ * S-21 adds the own-variant flag (`isOwnVariant`) to each entry, and picks the subject's file
+ * when the requester is a Do Not Publish subject in that photo. Until then, every entry carries
+ * the public file only.
+ */
+export const MediaImagesRequest = z.strictObject({
+  mediaIds: z
+    .array(z.uuid())
+    .min(1)
+    .max(MAX_MEDIA_IMAGES_BATCH)
+    .refine((ids) => new Set(ids.map((id) => id.toLowerCase())).size === ids.length, {
+      message: 'A media id appears more than once',
+    }),
+  size: MediaImageSize,
+});
+export type MediaImagesRequest = z.infer<typeof MediaImagesRequest>;
+
+/**
+ * One image the serving endpoint returned. `cacheKey` is the signed object key, then `#v`,
+ * then `variant_version` (D-148, D-86, root invariant 2). The app caches under it, never under
+ * `url`, which rotates hourly.
+ *
+ * S-21 adds `isOwnVariant: boolean` here. Until then every image is the public file.
+ */
+export const MediaImage = PresignedImage;
+export type MediaImage = z.infer<typeof MediaImage>;
+
+/**
+ * POST /events/{eventId}/media/images. A 200 with the signed images the caller may see. Each
+ * entry is keyed by its media id. An id the caller may not see, or one with no public file yet,
+ * is absent from the map — no error, no null, just not there.
+ */
+export const MediaImagesResponse = z.object({
+  images: z.record(z.uuid(), MediaImage),
+});
+export type MediaImagesResponse = z.infer<typeof MediaImagesResponse>;
+
+/**
+ * One uploader in the Uploader filter sheet: an active member of this event who has at least one
+ * published photo. A removed or blocked uploader is left off the list, and their photos stay
+ * visible under All (D-148).
+ *
+ * `avatar` is null for everyone until S-29 adds event-scoped avatar privacy (D-143, D-148).
+ */
+export const Uploader = z.object({
+  userId: z.uuid(),
+  fullName: FullName,
+  role: MembershipRole,
+  photoCount: z.int().positive(),
+  avatar: PresignedImage.nullable(),
+});
+export type Uploader = z.infer<typeof Uploader>;
+
+/**
+ * GET /events/{eventId}/media/uploaders, for every active role except Photographer (D-148).
+ * The request has no body and no query parameters. The app searches the list client-side, since
+ * an event holds at most about 150 members.
+ *
+ * Refusals, in order: 401 `no_session`; 404 `not_found` for an unknown or deleted event; 403
+ * `not_member` for a non-active member; 403 `wrong_role` for a Photographer (D-148).
+ */
+export const ListUploadersResponse = z.object({
+  uploaders: z.array(Uploader),
+});
+export type ListUploadersResponse = z.infer<typeof ListUploadersResponse>;
