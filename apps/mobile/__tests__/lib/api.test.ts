@@ -1386,3 +1386,175 @@ describe('upload pre-flight and completion (D-146)', () => {
     });
   });
 });
+
+describe('GET /events/{eventId}/media', () => {
+  const eventId = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d';
+  const subEventId = '11111111-1111-4111-8111-111111111111';
+  const uploaderId = '22222222-2222-4222-8222-222222222222';
+  const mediaId = '33333333-3333-4333-8333-333333333333';
+
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+  }
+
+  it('GETs the album with query parameters and returns parsed response', async () => {
+    signIn();
+    const albumData = {
+      media: [
+        {
+          id: mediaId,
+          subEventId,
+          capturedAt: new Date().toISOString(),
+          uploaderRole: 'guest',
+          width: 1200,
+          height: 800,
+        },
+      ],
+      sectionCounts: [{ subEventId, count: 1 }],
+      nextCursor: 'next-cursor-token',
+    };
+    const fetched = answers(200, albumData);
+    globalThis.fetch = fetched;
+
+    const result = await loadApi(BASE_URL).listAlbum(eventId, {
+      subEventId,
+      uploaderId,
+      cursor: 'cursor-token',
+    });
+
+    expect(result).toEqual(albumData);
+    const url = fetched.mock.calls[0]?.[0] as string;
+    expect(url).toContain(`/events/${eventId}/media`);
+    expect(url).toContain(`subEventId=${subEventId}`);
+    expect(url).toContain(`uploaderId=${uploaderId}`);
+    expect(url).toContain(`cursor=cursor-token`);
+  });
+
+  it('throws ApiError with wrong_role on Photographer refusal', async () => {
+    signIn();
+    globalThis.fetch = answers(403, {
+      error: { code: 'wrong_role', message: 'Photographers cannot view the shared album' },
+    });
+
+    await expect(loadApi(BASE_URL).listAlbum(eventId)).rejects.toMatchObject({
+      status: 403,
+      code: 'wrong_role',
+    });
+  });
+
+  it('throws ApiError with not_member on non-member access', async () => {
+    signIn();
+    globalThis.fetch = answers(403, {
+      error: { code: 'not_member', message: 'Not an active member' },
+    });
+
+    await expect(loadApi(BASE_URL).listAlbum(eventId)).rejects.toMatchObject({
+      status: 403,
+      code: 'not_member',
+    });
+  });
+});
+
+describe('POST /events/{eventId}/media/images', () => {
+  const eventId = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d';
+  const mediaId = '33333333-3333-4333-8333-333333333333';
+
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+  }
+
+  it('POSTs image request and returns presigned URLs and cache keys', async () => {
+    signIn();
+    const imagesData = {
+      images: {
+        [mediaId]: {
+          url: 'https://r2.example.com/signed.webp',
+          cacheKey: `${mediaId}/public_thumb_v1.webp#v1`,
+        },
+      },
+    };
+    const fetched = answers(200, imagesData);
+    globalThis.fetch = fetched;
+
+    const result = await loadApi(BASE_URL).getMediaImages(eventId, {
+      mediaIds: [mediaId],
+      size: 'thumbnail',
+    });
+
+    expect(result).toEqual(imagesData);
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/media/images`,
+    );
+    expect(JSON.parse(fetched.mock.calls[0]?.[1]?.body as string)).toEqual({
+      mediaIds: [mediaId],
+      size: 'thumbnail',
+    });
+  });
+
+  it('throws ApiError on 400 invalid_request', async () => {
+    signIn();
+    globalThis.fetch = answers(400, {
+      error: { code: 'invalid_request', message: 'Too many ids' },
+    });
+
+    await expect(
+      loadApi(BASE_URL).getMediaImages(eventId, { mediaIds: [mediaId], size: 'thumbnail' }),
+    ).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+});
+
+describe('GET /events/{eventId}/media/uploaders', () => {
+  const eventId = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d';
+  const userId = '22222222-2222-4222-8222-222222222222';
+
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+  }
+
+  it('GETs uploaders list', async () => {
+    signIn();
+    const uploadersData = {
+      uploaders: [
+        {
+          userId,
+          fullName: 'Sana Iqbal',
+          role: 'guest',
+          photoCount: 88,
+          avatar: null,
+        },
+      ],
+    };
+    const fetched = answers(200, uploadersData);
+    globalThis.fetch = fetched;
+
+    const result = await loadApi(BASE_URL).listUploaders(eventId);
+    expect(result).toEqual(uploadersData);
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/media/uploaders`,
+    );
+  });
+
+  it('throws ApiError on wrong_role', async () => {
+    signIn();
+    globalThis.fetch = answers(403, {
+      error: { code: 'wrong_role', message: 'Photographer cannot list uploaders' },
+    });
+
+    await expect(loadApi(BASE_URL).listUploaders(eventId)).rejects.toMatchObject({
+      status: 403,
+      code: 'wrong_role',
+    });
+  });
+});
