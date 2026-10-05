@@ -30,6 +30,7 @@ export function LargeTitleScreen({
   bottomInset = 0,
   overlay,
   contentClassName = '',
+  renderList,
   children,
 }: LargeTitleScreenProps) {
   const insets = useSafeAreaInsets();
@@ -54,6 +55,25 @@ export function LargeTitleScreen({
       Extrapolation.CLAMP,
     ),
   }));
+
+  const largeTitle = (
+    <View
+      onLayout={(event) => {
+        largeHeight.value = event.nativeEvent.layout.height;
+      }}
+      style={{ minHeight: LARGE_TITLE_AREA }}
+      className="justify-end gap-1 px-4 pb-6">
+      <Text
+        accessibilityRole="header"
+        numberOfLines={2}
+        className="font-title text-title text-textPrimary">
+        {title}
+      </Text>
+      {subtitle ? (
+        <Text className="font-bodySecondary text-bodySecondary text-textSecondary">{subtitle}</Text>
+      ) : null}
+    </View>
+  );
 
   return (
     <View className="flex-1 bg-background">
@@ -86,31 +106,25 @@ export function LargeTitleScreen({
         </View>
       </Animated.View>
 
-      <Animated.ScrollView
-        onScroll={onScroll}
-        scrollEventThrottle={16}
-        refreshControl={refreshControl}
-        contentContainerStyle={{ paddingBottom: bottomInset + 24 }}>
-        <View
-          onLayout={(event) => {
-            largeHeight.value = event.nativeEvent.layout.height;
-          }}
-          style={{ minHeight: LARGE_TITLE_AREA }}
-          className="justify-end gap-1 px-4 pb-6">
-          <Text
-            accessibilityRole="header"
-            numberOfLines={2}
-            className="font-title text-title text-textPrimary">
-            {title}
-          </Text>
-          {subtitle ? (
-            <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-              {subtitle}
-            </Text>
-          ) : null}
-        </View>
-        <View className={contentClassName}>{children}</View>
-      </Animated.ScrollView>
+      {renderList ? (
+        renderList({
+          scroll: {
+            onScroll,
+            scrollEventThrottle: 16,
+            contentContainerStyle: { paddingBottom: bottomInset + 24 },
+          },
+          header: largeTitle,
+        })
+      ) : (
+        <Animated.ScrollView
+          onScroll={onScroll}
+          scrollEventThrottle={16}
+          refreshControl={refreshControl}
+          contentContainerStyle={{ paddingBottom: bottomInset + 24 }}>
+          {largeTitle}
+          <View className={contentClassName}>{children}</View>
+        </Animated.ScrollView>
+      )}
       {overlay}
     </View>
   );

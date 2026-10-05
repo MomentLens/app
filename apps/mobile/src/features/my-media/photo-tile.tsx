@@ -5,7 +5,7 @@ import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native
 import type { MenuAnchor } from '@/components/ui/anchored-menu';
 import { Glyph, GLYPH } from '@/components/ui/glyph';
 import { Icon } from '@/components/ui/icon';
-import { tileStatus } from './sections';
+import { canDeleteLocally, tileStatus } from './sections';
 import type { QueueItem } from '@/features/upload-queue/types';
 
 export function PhotoTile({
@@ -23,7 +23,7 @@ export function PhotoTile({
 }) {
   const ref = useRef<View>(null);
   const status = tileStatus(item);
-  const deletable = removed || (item.state !== 'uploaded' && item.state !== 'published');
+  const deletable = canDeleteLocally(item, removed);
   const tile = (
     <Pressable
       ref={ref}
@@ -72,20 +72,15 @@ export function PhotoTile({
     </Pressable>
   );
   if (Platform.OS !== 'ios' || !deletable) return tile;
+  // UIKit's context menu comes from Link.Menu (D-127). No Link.Preview: with one, expo-router
+  // preloads the href when the menu opens and navigates to it when the preview is tapped, and this
+  // href is the screen already showing. The tap itself goes nowhere.
   return (
     <Link
       href={{ pathname: '/event/[id]/media', params: { id: eventId } }}
       asChild
       onPress={(event) => event.preventDefault()}>
       <Link.Trigger>{tile}</Link.Trigger>
-      <Link.Preview style={{ width: 260, height: 260 }}>
-        <Image
-          source={{ uri: item.thumbnailUri }}
-          cachePolicy="none"
-          contentFit="cover"
-          style={{ width: '100%', height: '100%' }}
-        />
-      </Link.Preview>
       <Link.Menu>
         <Link.MenuAction title="Delete" icon={GLYPH.trash.ios} destructive onPress={onDelete} />
       </Link.Menu>

@@ -12,6 +12,8 @@ export function getQueue(): Promise<QueueStore> {
       .then(async (db) => {
         const store = new QueueStore(db, queueFiles, randomUUID);
         await store.initialize();
+        // Reads start at once. An enqueue made during the sweep waits behind it.
+        void store.sweep();
         return store;
       })
       .catch((error: unknown) => {
@@ -37,9 +39,6 @@ export async function remove(userId: string, id: string) {
 }
 export async function listForEvent(userId: string, eventId: string) {
   return (await getQueue()).listForEvent(userId, eventId);
-}
-export async function counts(userId: string, eventId: string) {
-  return (await getQueue()).counts(userId, eventId);
 }
 export async function update(userId: string, id: string, patch: QueuePatch) {
   return (await getQueue()).update(userId, id, patch);

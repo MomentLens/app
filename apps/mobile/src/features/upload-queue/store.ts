@@ -51,22 +51,32 @@ export class QueueStore {
 
   initialize(): Promise<void> {
     if (!this.ready) {
-      this.ready = this.db
-        .execAsync(SCHEMA)
-        .then(async () => {
-          const rows = await this.db.getAllAsync<StoredItem>(`SELECT ${COLUMNS} FROM queue_item`);
-          const keep = new Set(rows.flatMap((row) => [row.photoPath, row.thumbnailPath]));
-          for (const path of await this.files.list()) {
-            if (!keep.has(path)) await this.files.delete(path);
-          }
-          // A kill after the completion UPDATE can leave its source on disk. The sweep removes it.
-        })
-        .catch((error: unknown) => {
-          this.ready = undefined;
-          throw error;
-        });
+      this.ready = this.db.execAsync(SCHEMA).catch((error: unknown) => {
+        this.ready = undefined;
+        throw error;
+      });
     }
     return this.ready;
+  }
+  // Deletes files no row references: a copy left by a kill before its INSERT, or a source left by
+  // a kill after the completion UPDATE. It runs on the mutation chain, so reads do not wait for it.
+  // It never fails. A file it cannot list or delete waits for the next launch, and the queue
+  // works meanwhile.
+  sweep(): Promise<void> {
+    return this.mutate(async () => {
+      const rows = await this.db.getAllAsync<Pick<StoredItem, 'photoPath' | 'thumbnailPath'>>(
+        'SELECT photoPath, thumbnailPath FROM queue_item',
+      );
+      const keep = new Set(rows.flatMap((row) => [row.photoPath, row.thumbnailPath]));
+      for (const path of await this.files.list()) {
+        if (keep.has(path)) continue;
+        try {
+          await this.files.delete(path);
+        } catch {
+          // The next launch tries again.
+        }
+      }
+    }).catch(() => undefined);
   }
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -100,10 +110,6 @@ export class QueueStore {
       eventId,
     );
     return rows.map((row) => this.hydrate(row));
-  }
-  async counts(userId: string, eventId: string): Promise<QueueCounts> {
-    const rows = await this.listForEvent(userId, eventId);
-    return queueCounts(rows);
   }
   enqueue(
     userId: string,
