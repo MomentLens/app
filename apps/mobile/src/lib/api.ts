@@ -13,9 +13,12 @@ import {
   GetEventSettingsResponse,
   HealthResponse,
   JoinEventResponse,
+  ListAlbumResponse,
   ListEventsResponse,
   ListAttendeesResponse,
   ListSubEventsResponse,
+  ListUploadersResponse,
+  MediaImagesResponse,
   ProfileResponse,
   MediaStatusResponse,
   CompleteUploadResponse,
@@ -27,6 +30,7 @@ import {
   type AddSubEventRequest,
   type ApproveRequestsRequest,
   type BlockRequestRequest,
+  type ListAlbumRequest,
   type ListPendingRequestsRequest,
   type RejectRequestsRequest,
   type BlockAttendeeRequest,
@@ -35,6 +39,7 @@ import {
   type ErrorCode,
   type JoinEventRequest,
   type ListAttendeesRequest,
+  type MediaImagesRequest,
   type MediaStatusRequest,
   type PreflightUploadRequest,
   type RemoveAttendeeRequest,
@@ -639,4 +644,52 @@ export async function completeUpload(
     throw await errorFrom('POST /media/{mediaId}/complete', response);
   }
   return parseBody('POST /media/{mediaId}/complete', response, CompleteUploadResponse);
+}
+
+// GET /events/{eventId}/media, for every active role except Photographer (D-148).
+// Keyset cursor pagination over sub-events by start, then id, and captured_at desc, id desc.
+export async function listAlbum(
+  eventId: string,
+  filters: ListAlbumRequest = {},
+  signal?: AbortSignal,
+): Promise<ListAlbumResponse> {
+  const query = Object.entries(filters)
+    .filter((entry): entry is [string, string] => entry[1] !== undefined)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .join('&');
+  const path = `/events/${encodeURIComponent(eventId)}/media${query ? `?${query}` : ''}`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/media', response);
+  }
+  return parseBody('GET /events/{eventId}/media', response, ListAlbumResponse);
+}
+
+// POST /events/{eventId}/media/images, for every active role (D-148).
+// Signs 1 to 50 media ids. Omitted ids are absent from the map.
+export async function getMediaImages(
+  eventId: string,
+  body: MediaImagesRequest,
+  signal?: AbortSignal,
+): Promise<MediaImagesResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/media/images`;
+  const response = await authenticatedRequest(path, { method: 'POST', body, signal });
+  if (response.status !== 200) {
+    throw await errorFrom('POST /events/{eventId}/media/images', response);
+  }
+  return parseBody('POST /events/{eventId}/media/images', response, MediaImagesResponse);
+}
+
+// GET /events/{eventId}/media/uploaders, for every active role except Photographer (D-148).
+// Lists active members with at least one published photo.
+export async function listUploaders(
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<ListUploadersResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/media/uploaders`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/media/uploaders', response);
+  }
+  return parseBody('GET /events/{eventId}/media/uploaders', response, ListUploadersResponse);
 }
