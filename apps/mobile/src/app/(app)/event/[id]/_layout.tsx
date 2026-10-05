@@ -12,6 +12,7 @@ import { LoadFailed, Loading, NoAccess } from '@/features/event-shell/no-access'
 import { lostBody, shellBody } from '@/features/event-shell/shell-state';
 import { redirectFor, tabHref, tabsFor, type EventTab } from '@/features/event-shell/tabs';
 import { lostAccess, useEvent, type LostAccess } from '@/features/event-shell/use-event';
+import { useMediaRealtime } from '@/features/event-shell/use-media-realtime';
 import { useEvents } from '@/features/events/use-events';
 
 type TabIcon = ComponentProps<typeof NativeTabs.Trigger.Icon>;
@@ -73,7 +74,7 @@ export default function EventShellLayout() {
         <Redirect href={tabHref(id, redirect)} />
       ) : (
         <EventIdContext.Provider value={id}>
-          <RoleTabs role={event.data.event.role} />
+          <RoleTabs role={event.data.event.role} eventId={id} />
         </EventIdContext.Provider>
       );
   } else if (view === 'failed') {
@@ -110,8 +111,9 @@ export default function EventShellLayout() {
 // role and a role change mounts a new one (D-118). The first tab is the landing tab, and the tabs
 // open on it. Android labels every item, as Material 3's navigation bar does and as the Global
 // shell's two tabs already are; left to itself it drops the unselected labels past three items.
-function RoleTabs({ role }: { role: MembershipRole }) {
+function RoleTabs({ role, eventId }: { role: MembershipRole; eventId: string }) {
   const colors = useTabBarColors();
+  useMediaRealtime(eventId);
   return (
     <NativeTabs key={role} {...colors} labelVisibilityMode="labeled">
       {tabsFor(role).map((name) => (
