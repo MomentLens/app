@@ -1,14 +1,11 @@
 import type { PresignedImage } from '@momentlens/shared-types';
 import { File, type UploadResult } from 'expo-file-system';
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 
 import { CoverUploadError } from '@/features/events/cover-error';
 import type { DraftCover } from '@/features/events/draft';
 import { createCoverUpload, setEventCover } from '@/lib/api';
+import { encodeUploadJpeg } from '@/lib/upload-jpeg';
 
-// The longest edge the app sends, the one client-side resize root invariant 9 allows.
-const MAX_EDGE_PX = 4096;
-const JPEG_QUALITY = 0.9;
 // The content type the API signed the PUT with (apps/api/src/lib/r2.ts). R2 refuses any other.
 const COVER_CONTENT_TYPE = 'image/jpeg';
 
@@ -16,13 +13,7 @@ const COVER_CONTENT_TYPE = 'image/jpeg';
 // the source's metadata, so a HEIC or PNG becomes a JPEG and the photo's EXIF, GPS included,
 // never reaches the members who see the cover. Only an image over 4096 px is shrunk.
 export async function prepareCover(uri: string): Promise<DraftCover> {
-  const context = ImageManipulator.manipulate(uri);
-  let image = await context.renderAsync();
-  if (Math.max(image.width, image.height) > MAX_EDGE_PX) {
-    context.resize(image.width >= image.height ? { width: MAX_EDGE_PX } : { height: MAX_EDGE_PX });
-    image = await context.renderAsync();
-  }
-  const saved = await image.saveAsync({ format: SaveFormat.JPEG, compress: JPEG_QUALITY });
+  const saved = await encodeUploadJpeg(uri);
   return { uri: saved.uri, width: saved.width, height: saved.height };
 }
 

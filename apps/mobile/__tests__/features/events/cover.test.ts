@@ -63,7 +63,9 @@ jest.mock('expo-image-manipulator', () => ({
             height: size.height,
             saveAsync: (options: { format?: string; compress?: number }) =>
               mockSave(options).then((saved) => ({ ...saved, ...size })),
+            release: () => undefined,
           }),
+        release: () => undefined,
       };
       return context;
     }),
