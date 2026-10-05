@@ -2,13 +2,15 @@ import type { Request, Response } from 'express';
 
 import {
   CompleteUploadResponse,
+  MediaStatusRequest,
+  MediaStatusResponse,
   PreflightUploadRequest,
   PreflightUploadResponse,
 } from '@momentlens/shared-types';
 
 import { authenticatedUser } from '../middleware/auth';
 import { parseInput, PathId } from '../middleware/body';
-import { completeUpload, preflightUpload } from '../services/media';
+import { completeUpload, mediaStatus, preflightUpload } from '../services/media';
 import type { MediaDeps } from '../services/media';
 
 // Each answer is parsed with its contract before sending, so a value the contract rejects is a 500,
@@ -36,5 +38,15 @@ export function completeUploadController(deps: MediaDeps) {
     const mediaId = parseInput(PathId, req.params.mediaId);
     const answer = await completeUpload(deps, id, mediaId);
     res.set('Cache-Control', 'no-store').json(CompleteUploadResponse.parse(answer));
+  };
+}
+
+export function mediaStatusController(deps: Pick<MediaDeps, 'events' | 'media'>) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const request = parseInput(MediaStatusRequest, req.body);
+    const answer = await mediaStatus(deps, id, eventId, request);
+    res.set('Cache-Control', 'no-store').json(MediaStatusResponse.parse(answer));
   };
 }
