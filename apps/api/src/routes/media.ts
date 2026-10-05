@@ -4,6 +4,7 @@ import type { RequestHandler } from 'express';
 import { jsonBody } from '../middleware/body';
 
 export interface MediaHandlers {
+  status: RequestHandler;
   preflight: RequestHandler;
   complete: RequestHandler;
 }
@@ -13,6 +14,7 @@ export interface MediaHandlers {
 // body, so no image byte is ever read here (root invariant 5).
 export function mediaRouter(auth: RequestHandler, handlers: MediaHandlers): Router {
   const router = Router();
+  router.post('/events/:eventId/media/status', auth, jsonBody, handlers.status);
   router.post('/events/:eventId/media/preflight', auth, jsonBody, handlers.preflight);
   router.post('/media/:mediaId/complete', auth, handlers.complete);
   return router;

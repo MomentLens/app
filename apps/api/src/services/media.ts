@@ -5,6 +5,8 @@ import { z } from 'zod';
 
 import type {
   CompleteUploadResponse,
+  MediaStatusRequest,
+  MediaStatusResponse,
   MembershipRole,
   PreflightUploadRequest,
   PreflightUploadResponse,
@@ -88,6 +90,7 @@ export type CompleteResult =
 // Every read and write of media that upload makes. It checks nothing about who asks; the functions
 // below do, before each call.
 export interface MediaStore {
+  statuses(eventId: string, userId: string, mediaIds: string[]): Promise<MediaStatusResponse>;
   start(upload: NewUpload, limits: UploadLimits): Promise<StartResult>;
   // Null when no row has this id, or the row was soft-deleted (D-122).
   findUpload(mediaId: string): Promise<UploadRecord | null>;
@@ -159,6 +162,12 @@ const UploadRow = z
     uploaded: row.uploaded_at !== null,
   }));
 
+const StatusRow = z.object({
+  id: z.uuid(),
+  processed_at: z.string().nullable(),
+  deleted_at: z.string().nullable(),
+});
+
 // start_upload's arguments. Exported so the dev-project test can call it with the publishable key
 // and see it refused.
 export function startUploadParams(upload: NewUpload, limits: UploadLimits) {
@@ -198,6 +207,33 @@ async function callOne<T extends z.ZodType>(
 
 export function createMediaStore(supabase: Supabase): MediaStore {
   return {
+    async statuses(eventId, userId, mediaIds) {
+      const { data, error } = await supabase
+        .from('media')
+        .select('id, processed_at, deleted_at')
+        .eq('event_id', eventId)
+        .eq('uploader_user_id', userId)
+        .in('id', mediaIds)
+        .not('uploaded_at', 'is', null);
+      if (error) {
+        throw error;
+      }
+      return {
+        statuses: z
+          .array(StatusRow)
+          .parse(data)
+          .map((row) => ({
+            mediaId: row.id,
+            status:
+              row.deleted_at !== null
+                ? 'deleted'
+                : row.processed_at !== null
+                  ? 'published'
+                  : 'processing',
+          })),
+      };
+    },
+
     async start(upload, limits) {
       return callOne(supabase, 'start_upload', startUploadParams(upload, limits), StartRow);
     },
@@ -221,6 +257,22 @@ export function createMediaStore(supabase: Supabase): MediaStore {
       return callOne(supabase, 'complete_upload', params, CompleteRow);
     },
   };
+}
+
+// Membership comes first. The database read then scopes every id to this uploader and event,
+// including deleted rows but excluding unfinished uploads (arch:media, D-145).
+export async function mediaStatus(
+  deps: Pick<MediaDeps, 'events' | 'media'>,
+  userId: string,
+  eventId: string,
+  request: MediaStatusRequest,
+): Promise<MediaStatusResponse> {
+  await requireMember(deps.events, eventId, userId);
+  return deps.media.statuses(
+    eventId,
+    userId,
+    request.mediaIds.map((id) => id.toLowerCase()),
+  );
 }
 
 // POST /events/{eventId}/media/preflight, for every active role alike (D-58). `created` is false
