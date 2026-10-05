@@ -69,7 +69,7 @@ Thumbnails and downloads use this same endpoint and the same check. There is no 
 - **`profile.avatar_key`**: never presigned in an event's context for a user whose membership in that event has Do Not Publish on, for anyone but that user, the Admin included (D-109, D-129). Another event's context presigns it as usual, so the avatar function takes the event. The app shows a name-initial placeholder instead (D-35). One function presigns avatars, and every endpoint that returns a person calls it.
 - **`profile.full_name`**: members of a shared event, Do Not Publish or not (D-35). A Photographer sees no other member's name, because the name list is the guest list (D-08).
 
-`uploader_role_at_upload` is display metadata. It drives the Uploader filter chip and nothing else. Never in an authorization check, never in a routing branch.
+`uploader_role_at_upload` is display metadata on the photo and nothing else. Never in an authorization check, never in a routing branch. The Uploader filter matches `uploader_user_id` (D-148).
 
 There is no `dnp_crop` table (D-57) and no `PlanTier` table; spec §4.17's limits are plain constants in the relevant service.
 

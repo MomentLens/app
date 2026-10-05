@@ -119,7 +119,7 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256, and the **upload loop**: pre-flight, both PUTs, completion, and the queue state each answer leads to | §4.8.1 Stage 1, §4.8.2, §4.8.3, D-58, D-69, D-32, D-53, D-97, D-122, arch §4, HB §5.3, spec §5.4, D-146, D-147 | C | S-10, S-12 |
 | S-18a | Worker skeleton: pgmq consumer loop under one advisory lock, `/health`, `thumbnail_dims` job, Sentry for archived messages, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, D-108, D-123, arch §5 | U | S-12 |
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule and the line that replaces the hidden FAB | §4.7, §2.5.4, D-21, D-20, D-90, D-136 | B | S-04, S-08, S-10 |
-| S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3, D-147 | B | S-12, S-18a |
+| S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3, D-137, D-138, D-147, D-148 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-11 |
 
 **S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration, which also enables `pgmq` and creates the `jobs` queue, and the `start_upload` and `complete_upload` SQL functions (D-95, D-122). It presigns with `@aws-sdk/s3-request-presigner`, which S-01 installed (D-109). It writes no query on `venue_verification`, which S-15 creates along with the verification check (D-122). It depends on S-03 for joined members and S-04 for sub-events, not on S-11, which calls it. It gives `media.sub_event_id` no `ON DELETE` action and replaces S-04's `delete_sub_event` with one that refuses a sub-event with any `media` row (D-121). Its album-open check ships switched off behind one constant, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
@@ -134,9 +134,11 @@ S-18a is the one worker slice in this phase. Only the worker sets `processed_at`
 
 **S-13 writes the `media` SELECT policy** that Realtime needs, the first one after `health_check`. It checks membership through a `security definer` function (arch §1, D-73). A human reads it before it merges.
 
-**S-13 also builds the image-serving endpoint, without the subject's file** (D-93). It takes a batch of media ids, leaves out any the requester may not see under arch §1's media rule, presigns the public file or public thumbnail from its column, and returns the cache key (D-86). Write its negative test first (HB §11.3), and get it a human read: it is the serving check. S-21 adds the subject's own file and the own-variant flag to this endpoint; nothing else serves an image.
+**S-13 also builds the image-serving endpoint, without the subject's file** (D-93). It is `POST /events/{eventId}/media/images` (D-148). It takes a batch of media ids, leaves out any the requester may not see under arch §1's media rule, presigns the public file or public thumbnail from its column, and returns the cache key (D-86). Write its negative test first (HB §11.3), and get it a human read, because it is the serving check. S-21 adds the subject's own file and the own-variant flag to this endpoint; nothing else serves an image.
 
-**S-13's album sorts by `captured_at`, newest first, then by `id`**, in the grid, under every chip and filter, and in its keyset pages. A photo Realtime delivers late takes its place by capture time, not the top. S-13's migration adds the index on `media (event_id, captured_at desc, id desc)` that those pages read (D-147).
+**S-13's album follows the schedule's sections, oldest sub-event first, and sorts each section by `captured_at`, newest first, then by `id`** (D-137, D-147), under every chip and filter and in its keyset pages. A photo Realtime delivers late takes its place by capture time, not the top. S-13's migration adds the index on `media (event_id, sub_event_id, captured_at desc, id desc)` that those pages read, and adds `media` to the `supabase_realtime` publication (D-148).
+
+**S-13 owns Home's pre-event cover state and its empty state** (D-138, D-148). S-31 draws the Album Closed banner and S-28 the download button. S-13's Realtime also feeds My Media's status badges (D-145).
 
 ---
 
@@ -215,7 +217,9 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 
-**S-31 adds the album state to the event response** when it switches the album check on, and moves `waiting_album` photos back to queued through the release S-11 exports once it shows the album open (D-146).
+**S-31 adds the album state to the event response** when it switches the album check on, and moves `waiting_album` photos back to queued through the release S-11 exports once it shows the album open (D-146). It also draws the Album Closed banner on Home, which S-13 leaves out (D-148).
+
+**S-28 has to settle download from a deleted event.** Spec §4.21 and spec §5.6 keep download available for 14 days after the Admin deletes an event, while every event endpoint answers a deleted event 404 `not_found` (hb §5.3, D-118), the image-serving endpoint included (D-148). S-28's read-back proposes the rule.
 
 **S-27 writes `membership.last_viewed_at`** when someone opens an event, because the "new since last visit" dot reads it (arch:membership) and no earlier slice writes it (D-118).
 
