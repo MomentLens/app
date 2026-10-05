@@ -1,7 +1,7 @@
 import { onlineManager, type QueryCacheNotifyEvent } from '@tanstack/react-query';
 import { randomUUID } from 'expo-crypto';
 import { File } from 'expo-file-system';
-import { addNetworkStateListener, getNetworkStateAsync, NetworkStateType } from 'expo-network';
+import { addNetworkStateListener, getNetworkStateAsync } from 'expo-network';
 import { openDatabaseAsync } from 'expo-sqlite';
 import { AppState } from 'react-native';
 import { createMMKV } from 'react-native-mmkv';
@@ -14,7 +14,8 @@ import { useAuthStore } from '@/stores/auth';
 
 import { queueFiles } from './files';
 import { prepareUpload } from './prepare';
-import { UploadRunner, type NetworkGate, type PutResult } from './runner';
+import { gateFor, UploadRunner, type NetworkGate, type PutResult } from './runner';
+import { stallGuard } from './stall';
 import { QueueStore } from './store';
 import type { QueuePatch, QueuePhoto, WaitingState } from './types';
 
@@ -65,19 +66,21 @@ const preferences = createMMKV({ id: 'device-preferences' });
 const MOBILE_DATA_KEY = 'uploadOverMobileData';
 
 async function gate(): Promise<NetworkGate> {
-  if (!onlineManager.isOnline()) return 'offline';
-  if (preferences.getBoolean(MOBILE_DATA_KEY) !== false) return 'open';
+  const online = onlineManager.isOnline();
+  const mobileData = preferences.getBoolean(MOBILE_DATA_KEY) !== false;
+  if (!online || mobileData) return gateFor(online, mobileData, undefined);
   try {
     const { type } = await getNetworkStateAsync();
-    return type === NetworkStateType.CELLULAR ? 'cellular' : 'open';
+    return gateFor(online, mobileData, type);
   } catch {
     // Unknown, with Mobile Data off: wait. The next network change wakes the runner.
     return 'cellular';
   }
 }
 
-// D-146's routine call.
-const PUT_TIMEOUT_MS = 2 * 60_000;
+// D-146's routine call. A PUT with no progress for 2 minutes is cancelled. One that keeps sending
+// runs until the presigned URL expires, 15 minutes after pre-flight.
+const PUT_STALL_MS = 2 * 60_000;
 
 // A queue file goes straight from the phone to R2 on its presigned URL, never through the API
 // (root invariant 5), with only the content type the API signed and never the API's token.
@@ -90,22 +93,19 @@ async function put(
   const file = new File(queueFiles.uri(path));
   if (!file.exists) return 'missing';
   if (signal.aborted) return 'failed';
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PUT_TIMEOUT_MS);
-  const cancel = () => controller.abort();
-  signal.addEventListener('abort', cancel);
+  const guard = stallGuard(signal, PUT_STALL_MS);
   try {
     const result = await file.upload(url, {
       httpMethod: 'PUT',
       headers: { 'Content-Type': contentType },
-      signal: controller.signal,
+      onProgress: guard.progress,
+      signal: guard.signal,
     });
     return result.status >= 200 && result.status < 300 ? 'ok' : 'failed';
   } catch {
     return 'failed';
   } finally {
-    clearTimeout(timer);
-    signal.removeEventListener('abort', cancel);
+    guard.dispose();
   }
 }
 
@@ -163,13 +163,20 @@ function releaseOnFreshEvent(event: QueryCacheNotifyEvent): void {
   }
   const userId = useAuthStore.getState().userId;
   if (userId === null) return;
+  // run(), never retryNow(), which would clear the backoff the release just set.
   void getQueue()
-    .then((store) => store.releaseLostAccess(userId, eventId))
+    .then((store) => store.releaseLostAccess(userId, eventId, Date.now()))
     .then((released) => {
-      if (released) void runner.retryNow();
+      if (released) void runner.run();
     })
     .catch(() => undefined);
 }
+
+// Fast Refresh runs this module again with a new runner, while the old runner and its listeners
+// live on. The teardown sits on globalThis, the one place both copies of the module can reach, so
+// the new start stops the old runner first and one runner moves the queue (D-146).
+const TEARDOWN = '__momentlensStopUploads';
+type Global = typeof globalThis & { [TEARDOWN]?: () => void };
 
 let started = false;
 // Wires the runner to everything that wakes it. The root layout calls this once, after the
@@ -177,31 +184,46 @@ let started = false;
 export function startUploads(): void {
   if (started) return;
   started = true;
+  (globalThis as Global)[TEARDOWN]?.();
   let owner = useAuthStore.getState().userId;
-  useAuthStore.subscribe((state) => {
-    if (state.userId === owner) return;
-    owner = state.userId;
-    void runner.accountChanged();
-  });
+  const unsubscribers: (() => void)[] = [
+    useAuthStore.subscribe((state) => {
+      if (state.userId === owner) return;
+      owner = state.userId;
+      void runner.accountChanged();
+    }),
+  ];
   // Foreground and reconnect retry at once (D-146).
-  AppState.addEventListener('change', (state) => {
+  const appState = AppState.addEventListener('change', (state) => {
     if (state === 'active') void runner.retryNow();
   });
-  onlineManager.subscribe((online) => {
-    if (online) void runner.retryNow();
-  });
+  unsubscribers.push(() => appState.remove());
+  unsubscribers.push(
+    onlineManager.subscribe((online) => {
+      if (online) void runner.retryNow();
+    }),
+  );
   // Joining Wi-Fi from cellular, which onlineManager does not report, lets a photo waiting on
   // Mobile Data go. So does S-29's toggle turning it on.
-  addNetworkStateListener(() => {
+  const network = addNetworkStateListener(() => {
     void runner.run();
   });
-  preferences.addOnValueChangedListener((key) => {
+  unsubscribers.push(() => network.remove());
+  const mobileData = preferences.addOnValueChangedListener((key) => {
     if (key === MOBILE_DATA_KEY) void runner.run();
   });
+  unsubscribers.push(() => mobileData.remove());
   // A photo that drew a 401 waits for the session (arch §4). A sign-in changes the account above.
-  supabase.auth.onAuthStateChange((event) => {
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange((event) => {
     if (event === 'TOKEN_REFRESHED') void runner.retryNow();
   });
-  queryClient.getQueryCache().subscribe(releaseOnFreshEvent);
+  unsubscribers.push(() => subscription.unsubscribe());
+  unsubscribers.push(queryClient.getQueryCache().subscribe(releaseOnFreshEvent));
+  (globalThis as Global)[TEARDOWN] = () => {
+    runner.shutdown();
+    for (const unsubscribe of unsubscribers) unsubscribe();
+  };
   void runner.retryNow();
 }

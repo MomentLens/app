@@ -25,6 +25,19 @@ export type PutResult = 'ok' | 'failed' | 'missing';
 // `cellular` means cellular while "Upload over Mobile Data" is off.
 export type NetworkGate = 'open' | 'offline' | 'cellular';
 
+// While "Upload over Mobile Data" is off, only Wi-Fi and Ethernet are open (D-146). Cellular behind
+// a VPN reports `VPN`, and a network the phone cannot name reports `UNKNOWN` or nothing, so all of
+// them wait. `networkType` is expo-network's NetworkStateType.
+export function gateFor(
+  online: boolean,
+  mobileData: boolean,
+  networkType: string | undefined,
+): NetworkGate {
+  if (!online) return 'offline';
+  if (mobileData) return 'open';
+  return networkType === 'WIFI' || networkType === 'ETHERNET' ? 'open' : 'cellular';
+}
+
 export interface RunnerDeps {
   store(): Promise<QueueStore>;
   // The signed-in account, read again before every write.
@@ -64,11 +77,13 @@ const THUMBNAIL_TYPE = 'image/webp';
 export class UploadRunner {
   private running: Promise<void> | null = null;
   private again = false;
-  // The next pass ignores backoff and tries every photo once: foreground, reconnect, release.
+  // The next pass clears every backoff first, so each photo is tried once now. Foreground,
+  // reconnect and a release ask for one.
   private fresh = false;
-  // Photos this round has tried. A fresh pass sees every photo as due, so without this a photo
-  // that just failed would be picked again at once.
-  private tried = new Set<string>();
+  // Photos whose attempt threw on a queue write this round. Each keeps the state the last write
+  // left, which may still be due, so without this the pass would pick it again at once.
+  private failed = new Set<string>();
+  private stopped = false;
   private owner: string | null = null;
   private pausedUntil = 0;
   private controller: AbortController | null = null;
@@ -78,12 +93,16 @@ export class UploadRunner {
 
   // Starts a pass, or asks the running one for another. Resolves once the runner is idle.
   run(): Promise<void> {
+    if (this.stopped) return Promise.resolve();
     if (this.running) {
       this.again = true;
       return this.running;
     }
     this.running = this.loop().finally(() => {
       this.running = null;
+      // A run() that landed after the loop's last look at `again` found `running` still set.
+      // It gets its pass here, and whoever awaits this promise waits for that pass too.
+      return this.again ? this.run() : undefined;
     });
     return this.running;
   }
@@ -103,21 +122,31 @@ export class UploadRunner {
     return this.retryNow();
   }
 
+  // Stops the runner for good. The current attempt is cancelled as an account change cancels it,
+  // and no pass or timer starts again. queue.ts calls it when Fast Refresh replaces this runner.
+  shutdown(): void {
+    this.stopped = true;
+    this.controller?.abort();
+    this.cancelTimer?.();
+    this.cancelTimer = null;
+  }
+
   private async loop(): Promise<void> {
     for (;;) {
       this.again = false;
       this.cancelTimer?.();
       this.cancelTimer = null;
+      if (this.stopped) return;
       const userId = this.deps.userId();
       if (userId === null) return;
       if (userId !== this.owner) {
         this.owner = userId;
-        this.tried.clear();
+        this.failed.clear();
         this.pausedUntil = 0;
       }
       const fresh = this.fresh;
       this.fresh = false;
-      if (fresh) this.tried.clear();
+      if (fresh) this.failed.clear();
       let pass: Pass;
       if (!fresh && this.deps.now() < this.pausedUntil) {
         pass = 'paused';
@@ -134,7 +163,7 @@ export class UploadRunner {
       }
       if (this.again) continue;
       await this.wakeLater(userId, pass);
-      if (!this.again) return;
+      if (!this.again || this.stopped) return;
     }
   }
 
@@ -149,12 +178,12 @@ export class UploadRunner {
         at = null;
       }
     }
-    if (at === null || this.deps.userId() !== userId) return;
+    if (at === null || this.stopped || this.deps.userId() !== userId) return;
     this.cancelTimer = this.deps.schedule(
       () => {
         this.cancelTimer = null;
-        // Backoffs ended, so the photos they held are due again this round.
-        this.tried.clear();
+        // A new round gives a photo whose queue write failed another try.
+        this.failed.clear();
         void this.run();
       },
       Math.max(0, at - this.deps.now()),
@@ -162,21 +191,24 @@ export class UploadRunner {
   }
 
   private live(userId: string, signal: AbortSignal): boolean {
-    return !signal.aborted && this.deps.userId() === userId;
+    return !signal.aborted && !this.stopped && this.deps.userId() === userId;
   }
 
+  // Every attempt that returns `next` leaves its photo settled or backing off past now, so the
+  // pass never picks it twice without a skip list. Only a thrown queue write needs one.
   private async pass(userId: string, signal: AbortSignal, fresh: boolean): Promise<Pass> {
     const store = await this.deps.store();
     // Nothing is in flight between passes, so a photo still uploading was left by a kill or by an
     // account change.
     await store.recover(userId);
+    // Foreground, reconnect or a release makes every photo due now. Its count keeps the next
+    // failure's backoff where it was (D-146).
+    if (fresh) await store.clearBackoff(userId);
     for (;;) {
       if (!this.live(userId, signal)) return 'idle';
       if ((await this.deps.gate()) !== 'open') return 'blocked';
-      const horizon = fresh ? Number.MAX_SAFE_INTEGER : this.deps.now();
-      const item = await store.nextUpload(userId, horizon, [...this.tried]);
+      const item = await store.nextUpload(userId, this.deps.now(), [...this.failed]);
       if (!item) return 'idle';
-      this.tried.add(item.id);
       let attempt: Attempt;
       try {
         attempt = await this.attempt(store, item, signal);
@@ -184,6 +216,7 @@ export class UploadRunner {
         // A failed queue write. The photo stays as the last write left it, and waits for the
         // next round.
         this.deps.warn?.('An upload attempt failed', error);
+        this.failed.add(item.id);
         continue;
       }
       if (attempt === 'outage') {
@@ -201,6 +234,11 @@ export class UploadRunner {
       const prepared = await this.prepare(store, row);
       if (prepared === null) return 'next';
       row = prepared;
+      // The same photo queued twice hashes the same. While the other copy is in flight holding a
+      // server row, this one waits, and nextUpload leaves it out. Pre-flight now would resume that
+      // row and give My Media two photos for one upload. Once the other uploads, this pre-flight
+      // answers duplicate.
+      if (await store.waitsForTwin(row.userId, row.id)) return 'next';
     }
     if (row.step !== 'complete') {
       const sent = await this.send(store, row, signal);

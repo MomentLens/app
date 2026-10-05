@@ -8,6 +8,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
+  gateFor,
   UploadRunner,
   type NetworkGate,
   type PutResult,
@@ -875,7 +876,7 @@ describe('waiting, backoff and release', () => {
     server.completeScript.push(() => Promise.reject(new AnswerError(403, 'not_member')));
     const runner = createRunner();
     await runner.run();
-    expect(await store.releaseLostAccess('A', EVENT)).toBe(1);
+    expect(await store.releaseLostAccess('A', EVENT, clock)).toBe(1);
     expect(await only()).toMatchObject({
       state: 'uploading',
       step: 'complete',
@@ -891,7 +892,7 @@ describe('waiting, backoff and release', () => {
     server.preflightScript.push(() => Promise.reject(new AnswerError(404, 'not_found')));
     const runner = createRunner();
     await runner.run();
-    expect(await store.releaseLostAccess('A', EVENT)).toBe(1);
+    expect(await store.releaseLostAccess('A', EVENT, clock)).toBe(1);
     expect(await only()).toMatchObject({ state: 'queued', step: 'preflight' });
     await runner.retryNow();
     expect((await only()).state).toBe('uploaded');
@@ -901,7 +902,7 @@ describe('waiting, backoff and release', () => {
     await store.enqueue('A', EVENT, SUB, photo);
     server.preflightScript.push(() => Promise.reject(new AnswerError(422, 'event_full')));
     await createRunner().run();
-    expect(await store.releaseLostAccess('A', EVENT)).toBe(0);
+    expect(await store.releaseLostAccess('A', EVENT, clock)).toBe(0);
     expect((await only()).state).toBe('stopped');
   });
 
@@ -913,5 +914,156 @@ describe('waiting, backoff and release', () => {
     });
     await createRunner().run();
     expect(await only()).toMatchObject({ state: 'stopped', stoppedReason: 'invalid_request' });
+  });
+});
+
+describe('found by the done stage review', () => {
+  it('keeps the backoff through a lost-access release, so a pre-flight refused while the event answers 200 cannot loop', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    for (let i = 0; i < 20; i++) {
+      server.preflightScript.push(() => Promise.reject(new AnswerError(404, 'not_found')));
+    }
+    const releases: Promise<unknown>[] = [];
+    // As queue.ts wires it: the Event shell's fresh 200 releases the photo and wakes the runner.
+    const runner: UploadRunner = createRunner({
+      lostAccess: (eventId) => {
+        releases.push(store.releaseLostAccess('A', eventId, clock).then(() => runner.run()));
+      },
+    });
+    await runner.run();
+    await until(() => releases.length === 1);
+    await Promise.all(releases);
+    expect(server.count('preflight')).toBe(1);
+    expect(await only()).toMatchObject({
+      state: 'queued',
+      step: 'preflight',
+      retryCount: 1,
+      nextRetryAt: clock + 5_000,
+    });
+
+    // Each refusal doubles the wait, as any other failure does.
+    await fireNextTimer(runner);
+    await until(() => releases.length === 2);
+    await Promise.all(releases);
+    expect(server.count('preflight')).toBe(2);
+    expect((await only()).nextRetryAt).toBe(clock + 10_000);
+  });
+
+  // A run() can land after the loop's last look at `again` and before `running` is cleared. Each
+  // case lands it a different number of microtask hops after the last nextWake read.
+  it.each(Array.from({ length: 24 }, (_, hops) => hops))(
+    'starts another pass for a run() that lands %i hops after the last check',
+    async (hops) => {
+      let passes = 0;
+      let armed = true;
+      const fake = {
+        recover: async () => 0,
+        clearBackoff: async () => 0,
+        nextUpload: async () => {
+          passes++;
+          return null;
+        },
+        nextWake: async () => {
+          if (armed) {
+            armed = false;
+            let later = Promise.resolve();
+            for (let i = 0; i < hops; i++) later = later.then(() => undefined);
+            void later.then(() => runner.run());
+          }
+          return null;
+        },
+      } as unknown as QueueStore;
+      const runner: UploadRunner = createRunner({ store: async () => fake });
+      await runner.run();
+      await until(() => passes >= 2);
+    },
+  );
+
+  it('holds a second copy of the same photo while the first is in flight, then drops it as a duplicate', async () => {
+    // One photo added twice on one phone: Stage 1 writes the same bytes for both.
+    const runner = createRunner({
+      prepare: async (item) => {
+        prepares.push(item.id);
+        const photoPath = `${item.userId}/${item.id}/upload.jpg`;
+        const bytes = new TextEncoder().encode('jpeg:same photo');
+        disk.set(photoPath, bytes);
+        return { photoPath, contentHash: sha256(bytes) };
+      },
+    });
+    await store.enqueue('A', EVENT, SUB, photo);
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.completeScript.push(
+      () => Promise.reject(noAnswer()),
+      () => Promise.reject(noAnswer()),
+    );
+    await runner.run(); // item-1's completion gets no answer
+    await fireNextTimer(runner); // nor again, so it backs off 10 seconds
+    await fireNextTimer(runner); // the pause ends, and item-2 is prepared
+    const second = (path: string) => path.startsWith('A/item-2/');
+    expect(prepares).toEqual(['item-1', 'item-2']);
+    expect(server.count('preflight')).toBe(1);
+    expect(puts.filter((put) => second(put.path))).toEqual([]);
+
+    await fireNextTimer(runner); // item-1 completes, and item-2's pre-flight answers duplicate
+    const rows = await store.listForEvent('A', EVENT);
+    expect(rows.map((row) => [row.id, row.state])).toEqual([['item-1', 'uploaded']]);
+    expect(puts.filter((put) => second(put.path))).toEqual([]);
+    expect(server.count('complete')).toBe(3);
+  });
+
+  it('binds no skip list while every attempt settles its photo', async () => {
+    for (let i = 0; i < 3; i++) await store.enqueue('A', EVENT, SUB, photo);
+    const skips: string[][] = [];
+    const nextUpload = store.nextUpload.bind(store);
+    store.nextUpload = async (userId, horizon, skip) => {
+      skips.push([...skip]);
+      return nextUpload(userId, horizon, skip);
+    };
+    const runner = createRunner();
+    await runner.run();
+    await runner.retryNow();
+    expect((await store.listForEvent('A', EVENT)).map((row) => row.state)).toEqual([
+      'uploaded',
+      'uploaded',
+      'uploaded',
+    ]);
+    expect(skips.every((skip) => skip.length === 0)).toBe(true);
+  });
+
+  it('a shut-down runner cancels its PUT, writes nothing more and starts nothing', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    putScript.push(
+      (signal) =>
+        new Promise<PutResult>((resolve) => {
+          signal.addEventListener('abort', () => resolve('failed'));
+        }),
+    );
+    const runner = createRunner();
+    const running = runner.run();
+    await until(() => puts.length === 1);
+    const before = await only();
+
+    runner.shutdown();
+    await running;
+    await runner.run();
+    await runner.retryNow();
+    expect(await only()).toEqual(before);
+    expect(server.calls).toHaveLength(1);
+    expect(timers.filter((timer) => !timer.cancelled)).toEqual([]);
+  });
+});
+
+describe('the network gate (D-146)', () => {
+  it.each<[boolean, boolean, string | undefined, NetworkGate]>([
+    [false, true, 'WIFI', 'offline'],
+    [true, true, 'CELLULAR', 'open'],
+    [true, false, 'WIFI', 'open'],
+    [true, false, 'ETHERNET', 'open'],
+    [true, false, 'CELLULAR', 'cellular'],
+    [true, false, 'VPN', 'cellular'],
+    [true, false, 'UNKNOWN', 'cellular'],
+    [true, false, undefined, 'cellular'],
+  ])('online %s, Mobile Data %s, network %s: %s', (online, mobileData, type, expected) => {
+    expect(gateFor(online, mobileData, type)).toBe(expected);
   });
 });
