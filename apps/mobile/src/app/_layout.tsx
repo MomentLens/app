@@ -12,7 +12,7 @@ import { useColorScheme } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { startSessionSync } from '@/features/auth/session';
-import { initializeQueue } from '@/features/upload-queue/queue';
+import { initializeQueue, startUploads } from '@/features/upload-queue/queue';
 import { persistOptions, queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
 
@@ -39,6 +39,9 @@ void initializeQueue().catch(() => {
   // My Media retries initialization and shows a local-storage error.
   console.warn('The upload queue could not be opened. My Media will retry.');
 });
+// Uploads the signed-in account's queued photos, and moves to the next account's on every switch
+// (D-146).
+startUploads();
 
 // The keys are the family names tailwind.config.js uses, so `font-h1` resolves to Fraunces_600SemiBold.
 // Each weight is imported from its own path, which keeps the package's other font files out of the
