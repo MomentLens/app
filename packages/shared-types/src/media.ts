@@ -185,6 +185,9 @@ export type ListAlbumRequest = z.infer<typeof ListAlbumRequest>;
  * - `width` and `height` are the photo's pixel dimensions, written by the worker (D-22). They
  *   are null until the worker finishes; the album query already filters on `processed_at`, so a
  *   null here would mean a consistency bug, but the schema still allows it to stay forward-safe.
+ * - `variantVersion` is the row's `variant_version`, bumped on every regeneration (D-60). The app
+ *   asks the serving endpoint again for a photo whose version changed, so a retroactive blur
+ *   replaces the tile instead of leaving the pre-blur thumbnail on screen (root invariant 2).
  */
 export const AlbumMediaItem = z.object({
   id: z.uuid(),
@@ -193,6 +196,7 @@ export const AlbumMediaItem = z.object({
   uploaderRole: MembershipRole,
   width: z.int().positive().nullable(),
   height: z.int().positive().nullable(),
+  variantVersion: z.int().nonnegative(),
 });
 export type AlbumMediaItem = z.infer<typeof AlbumMediaItem>;
 
@@ -267,7 +271,7 @@ export type MediaImage = z.infer<typeof MediaImage>;
 /**
  * POST /events/{eventId}/media/images. A 200 with the signed images the caller may see. Each
  * entry is keyed by its media id. An id the caller may not see, or one with no public file yet,
- * is absent from the map — no error, no null, just not there.
+ * is absent from the map, with no error and no null.
  */
 export const MediaImagesResponse = z.object({
   images: z.record(z.uuid(), MediaImage),
