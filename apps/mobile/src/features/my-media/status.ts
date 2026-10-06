@@ -49,3 +49,46 @@ export async function refreshMediaStatus(
     }
   }
 }
+
+// One Realtime change to a `media` row, as My Media needs it (D-145, D-148). A DELETE carries no
+// row: under RLS its old record holds only the id.
+export interface MediaChange {
+  mediaId: string;
+  row: { uploaderUserId: string; processedAt: string | null; deletedAt: string | null } | null;
+}
+
+// Applies one Realtime change to this account's queue, the live counterpart of
+// refreshMediaStatus. Another uploader's row is skipped without reading the queue, since every
+// member's phone hears about every published photo. Each write names the states it may leave, as
+// the runner's do, so it never moves a photo the runner still holds anywhere but published.
+export async function applyMediaChange(
+  store: QueueStore,
+  userId: string,
+  eventId: string,
+  change: MediaChange,
+  isCurrent: () => boolean,
+): Promise<void> {
+  if (change.row !== null && change.row.uploaderUserId.toLowerCase() !== userId.toLowerCase()) {
+    return;
+  }
+  const mediaId = change.mediaId.toLowerCase();
+  const items = (await store.listForEvent(userId, eventId)).filter(
+    (item) => item.mediaId?.toLowerCase() === mediaId,
+  );
+  for (const item of items) {
+    if (!isCurrent()) return;
+    const finished = item.state === 'uploaded' || item.state === 'published';
+    if (change.row === null || change.row.deletedAt !== null) {
+      if (finished) await store.remove(userId, item.id);
+    } else if (change.row.processedAt !== null) {
+      // From uploading too: the worker can finish before completion's answer reaches the phone,
+      // and the runner's own write after it lands only on a photo still uploading.
+      if (item.state !== 'published') {
+        await store.update(userId, item.id, { state: 'published' }, ['uploading', 'uploaded']);
+      }
+    } else if (item.state === 'published') {
+      // The worker unpublished it after a job's third failure (D-108).
+      await store.update(userId, item.id, { state: 'uploaded' }, ['published']);
+    }
+  }
+}
