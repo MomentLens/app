@@ -1,6 +1,6 @@
 import type { AlbumMediaItem, MediaImage } from '@momentlens/shared-types';
 import { Image } from 'expo-image';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { presignedSource } from '@/lib/images';
 
@@ -22,18 +22,18 @@ export function PhotoTile({ media: _media, image, isResolved }: PhotoTileProps) 
   }
 
   if (!image) {
-    return <View className="aspect-square w-full bg-surfaceElevated/60" />;
+    return <View className="aspect-square w-full bg-surfaceMuted" />;
   }
 
   return (
-    <View className="aspect-square w-full overflow-hidden bg-surfaceElevated">
+    <View className="aspect-square w-full overflow-hidden bg-surfaceMuted">
       <Image
         source={presignedSource(image)}
         contentFit="cover"
         transition={150}
         accessibilityRole="image"
         accessibilityLabel="Event photo"
-        className="h-full w-full"
+        style={StyleSheet.absoluteFill}
       />
     </View>
   );
