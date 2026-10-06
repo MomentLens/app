@@ -1,3 +1,4 @@
+import type { MediaImage } from '@momentlens/shared-types';
 import { FlashList } from '@shopify/flash-list';
 import { useCallback } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
@@ -6,11 +7,11 @@ import { formatDay } from '@/features/events/format';
 import { romanNumeral } from '@/features/schedule/schedule';
 import { PhotoTile } from './photo-tile';
 import type { AlbumListItem } from './types';
-import { useThumbnailMap } from './use-album-images';
 
 interface AlbumGridProps {
-  eventId: string;
   items: readonly AlbumListItem[];
+  // Signed thumbnails by media id, from useThumbnailMap.
+  images: Readonly<Record<string, MediaImage>>;
   stickyIndices: readonly number[];
   isFetchingNextPage: boolean;
   onEndReached: () => void;
@@ -22,18 +23,14 @@ interface AlbumGridProps {
 // Sections are flattened into one array with 'header' and 'media' types (hb §16).
 // Uniform square aspect ratio avoids measuring during virtualized scrolling.
 export function AlbumGrid({
-  eventId,
   items,
+  images,
   stickyIndices,
   isFetchingNextPage,
   onEndReached,
   ListHeaderComponent,
   ListEmptyComponent,
 }: AlbumGridProps) {
-  // Extract all media IDs in the current items to resolve thumbnails in batches
-  const mediaIds = items.flatMap((item) => (item.type === 'media' ? [item.media.id] : []));
-  const { images, loadedChunkIds } = useThumbnailMap(eventId, mediaIds);
-
   const renderItem = useCallback(
     ({ item }: { item: AlbumListItem }) => {
       if (item.type === 'header') {
@@ -70,15 +67,11 @@ export function AlbumGrid({
 
       return (
         <View className="p-[0.5px]">
-          <PhotoTile
-            media={item.media}
-            image={images[item.media.id]}
-            isResolved={loadedChunkIds.has(item.media.id)}
-          />
+          <PhotoTile image={images[item.media.id]} />
         </View>
       );
     },
-    [images, loadedChunkIds],
+    [images],
   );
 
   return (

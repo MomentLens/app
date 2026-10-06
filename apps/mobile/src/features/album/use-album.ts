@@ -39,6 +39,33 @@ export function useAlbum(eventId: string, filters: AlbumFilters = {}) {
   });
 }
 
+// Every section's count under the uploader filter alone, for the More sheet. With a chip active,
+// the album's own counts cover that one sub-event, so the sheet reads the first page of the
+// chip-free album instead. It sits under ['album', eventId], so Realtime refreshes it too, and it
+// is only enabled while the sheet needs it.
+export function useSectionCounts(
+  eventId: string,
+  uploaderId: string | undefined,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['album', eventId, 'section-counts', { uploaderId }] as const,
+    queryFn: async ({ signal }) => {
+      try {
+        return await listAlbum(eventId, { uploaderId }, signal);
+      } catch (error) {
+        if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
+          recheckEvent(eventId);
+        }
+        throw error;
+      }
+    },
+    select: (page) => page.sectionCounts ?? [],
+    retry: retryUnlessRefused,
+    enabled,
+  });
+}
+
 // GET /events/{eventId}/media/uploaders for the filter sheet.
 export function useUploaders(eventId: string) {
   return useQuery({
