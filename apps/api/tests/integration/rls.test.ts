@@ -41,7 +41,7 @@ import type {
 import { createServerClient } from '../../src/db/supabase';
 import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
-import { createAlbumStore } from '../../src/services/album';
+import { createAlbumStore, listAlbum } from '../../src/services/album';
 import {
   createEventParams,
   createEventStore,
@@ -4168,6 +4168,137 @@ if (project === null) {
         expect(albumResult.sectionCounts).toEqual([]);
         const uploadersResult = await albumStore.uploaders(event.id);
         expect(uploadersResult).toEqual([]);
+      });
+
+      // The album query against real rows (hb §11.3, D-55, D-148). Pages are read through the
+      // service, so the cursor goes out and back the way the app sends it.
+      it('pages every published row once, in section order, newest capture first, and nothing else', async () => {
+        const [a, g] = await Promise.all([createNamedUser('Admin'), createNamedUser('Guest')]);
+        const event = await createdEvent(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        const schedule = (await subEvents.schedule(event.id)) ?? [];
+        const mehndi = schedule.find((sub) => sub.name === 'Mehndi')!.id;
+        const baraat = schedule.find((sub) => sub.name === 'Baraat')!.id;
+        const other = await createdEvent(a.id);
+        const otherSchedule = (await subEvents.schedule(other.id)) ?? [];
+
+        const minute = (base: number, n: number) => new Date(base + n * 60_000).toISOString();
+        // Microseconds, as now() writes a capture time when pre-flight has none (D-98).
+        const micro = (base: number, n: number, digits: string) =>
+          `${new Date(base + n * 60_000).toISOString().slice(0, 19)}.${digits}+00:00`;
+
+        interface Seed {
+          id: string;
+          eventId: string;
+          subEventId: string;
+          uploader: string;
+          capturedAt: string;
+          uploaded: boolean;
+          processed: boolean;
+          deleted: boolean;
+          version: number;
+        }
+        const seed = (fields: Partial<Seed> & Pick<Seed, 'subEventId' | 'capturedAt'>): Seed => ({
+          id: randomUUID(),
+          eventId: event.id,
+          uploader: a.id,
+          uploaded: true,
+          processed: true,
+          deleted: false,
+          version: 1,
+          ...fields,
+        });
+
+        // 30 Mehndi photos, then 30 Baraat photos, so page one ends inside Baraat. Rows 50 and 51
+        // overall share a millisecond, and only their microseconds order them.
+        const mehndiRows = Array.from({ length: 30 }, (_, k) =>
+          seed({
+            subEventId: mehndi,
+            capturedAt: minute(T0, 60 - k),
+            uploader: k % 3 ? a.id : g.id,
+          }),
+        );
+        const baraatBase = T0 + 25 * HOUR;
+        const baraatRows = Array.from({ length: 30 }, (_, k) =>
+          seed({
+            subEventId: baraat,
+            capturedAt:
+              k === 19
+                ? micro(baraatBase, 10, '123456')
+                : k === 20
+                  ? micro(baraatBase, 10, '123200')
+                  : minute(baraatBase, 29 - k),
+            version: k === 0 ? 2 : 1,
+          }),
+        );
+        const hidden = [
+          seed({ subEventId: mehndi, capturedAt: minute(T0, 90), processed: false }),
+          seed({
+            subEventId: mehndi,
+            capturedAt: minute(T0, 91),
+            uploaded: false,
+            processed: false,
+          }),
+          seed({ subEventId: baraat, capturedAt: minute(baraatBase, 90), deleted: true }),
+          seed({
+            eventId: other.id,
+            subEventId: otherSchedule[0]!.id,
+            capturedAt: minute(T0, 92),
+          }),
+        ];
+
+        const now = new Date().toISOString();
+        const inserted = await admin.from('media').insert(
+          [...mehndiRows, ...baraatRows, ...hidden].map((row) => ({
+            id: row.id,
+            event_id: row.eventId,
+            sub_event_id: row.subEventId,
+            uploader_user_id: row.uploader,
+            uploader_role_at_upload: row.uploader === a.id ? 'admin' : 'guest',
+            captured_at: row.capturedAt,
+            content_hash: randomBytes(32).toString('hex'),
+            size_bytes: row.uploaded ? 100 : null,
+            upload_key: `${row.id}/upload.jpg`,
+            upload_thumb_key: `${row.id}/upload_thumb.webp`,
+            uploaded_at: row.uploaded ? now : null,
+            processed_at: row.processed ? now : null,
+            deleted_at: row.deleted ? now : null,
+            variant_version: row.processed ? row.version : 0,
+            width: row.processed ? 1200 : null,
+            height: row.processed ? 800 : null,
+          })),
+        );
+        expect(inserted.error).toBeNull();
+
+        const pages = [];
+        let cursor: string | undefined;
+        do {
+          const page = await listAlbum(store, albumStore, event.id, g.id, { cursor });
+          pages.push(page);
+          cursor = page.nextCursor ?? undefined;
+        } while (cursor !== undefined && pages.length < 5);
+
+        expect(pages.map((page) => page.media.length)).toEqual([50, 10]);
+        expect(pages[0]!.sectionCounts).toEqual([
+          { subEventId: mehndi, count: 30 },
+          { subEventId: baraat, count: 30 },
+        ]);
+        expect(pages[1]!.sectionCounts).toBeNull();
+        const served = pages.flatMap((page) => page.media);
+        // Within a section the rows were seeded newest first, so the seed order is the album order.
+        expect(served.map((item) => item.id)).toEqual(
+          [...mehndiRows, ...baraatRows].map((r) => r.id),
+        );
+        expect(served.find((item) => item.id === baraatRows[0]!.id)?.variantVersion).toBe(2);
+
+        const guestInMehndi = await listAlbum(store, albumStore, event.id, g.id, {
+          uploaderId: g.id,
+          subEventId: mehndi,
+        });
+        expect(guestInMehndi.media.map((item) => item.id)).toEqual(
+          mehndiRows.filter((row) => row.uploader === g.id).map((row) => row.id),
+        );
+        expect(guestInMehndi.sectionCounts).toEqual([{ subEventId: mehndi, count: 10 }]);
       });
     });
   });
