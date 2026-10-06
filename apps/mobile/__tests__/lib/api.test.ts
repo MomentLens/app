@@ -1411,6 +1411,7 @@ describe('GET /events/{eventId}/media', () => {
           uploaderRole: 'guest',
           width: 1200,
           height: 800,
+          variantVersion: 1,
         },
       ],
       sectionCounts: [{ subEventId, count: 1 }],

@@ -1,6 +1,8 @@
 import { Text, View } from 'react-native';
 
+import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
+import { byPlatform } from '@/lib/copy';
 
 interface EmptyStateProps {
   title: string;
@@ -47,5 +49,27 @@ export function UploaderEmpty({ uploaderName }: { uploaderName: string }) {
       title={`No photos from ${uploaderName} yet`}
       body="Photos uploaded by this contributor will appear here."
     />
+  );
+}
+
+// The album or the schedule its sections come from has never loaded, offline most often, since
+// the album is not saved across a restart (D-148). "No photos yet" there would be a wrong answer.
+export function AlbumLoadFailed({ retrying, onRetry }: { retrying: boolean; onRetry: () => void }) {
+  return (
+    <View className="items-center gap-4 px-8 py-16">
+      <Text accessibilityRole="header" className="text-center font-h2 text-h2 text-textPrimary">
+        The photos could not be loaded
+      </Text>
+      <Text className="text-center font-body text-body text-textSecondary">
+        Check the connection and try again.
+      </Text>
+      <Button
+        label={retrying ? 'Trying again' : byPlatform('Try Again', 'Try again')}
+        variant="secondary"
+        size="small"
+        busy={retrying}
+        onPress={onRetry}
+      />
+    </View>
   );
 }

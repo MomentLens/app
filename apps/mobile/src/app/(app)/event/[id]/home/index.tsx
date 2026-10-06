@@ -1,6 +1,6 @@
 import { currentSubEvent, type SubEvent } from '@momentlens/shared-types';
 import { Redirect, useLocalSearchParams } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, Text, View } from 'react-native';
 
 import { GLYPH } from '@/components/ui/glyph';
@@ -11,13 +11,20 @@ import { useEvent } from '@/features/event-shell/use-event';
 import { formatEventDates } from '@/features/events/format';
 import { ActiveFilterPill } from '@/features/album/active-filter-pill';
 import { AlbumGrid } from '@/features/album/album-grid';
-import { AllEmpty, SubEventEmpty, UploaderEmpty } from '@/features/album/empty-states';
+import {
+  AlbumLoadFailed,
+  AllEmpty,
+  SubEventEmpty,
+  UploaderEmpty,
+} from '@/features/album/empty-states';
 import { MoreSubEventsSheet } from '@/features/album/more-sub-events-sheet';
+import { isPreEvent as beforeFirstStart, nextCountdownChange } from '@/features/album/pre-event';
 import { PreEventView } from '@/features/album/pre-event-view';
 import { buildAlbumListItems } from '@/features/album/sections';
 import { SubEventChips } from '@/features/album/sub-event-chips';
-import { UploaderSheet } from '@/features/album/uploader-sheet';
+import { UploaderSheet, type UploaderFilter } from '@/features/album/uploader-sheet';
 import { useAlbum, useUploaders } from '@/features/album/use-album';
+import { useThumbnailMap } from '@/features/album/use-album-images';
 import { nextStatusChange } from '@/features/schedule/schedule';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useNow } from '@/hooks/use-now';
@@ -56,7 +63,17 @@ function HomeContent({
   const scheduleQuery = useSubEvents(eventId);
   const subEvents = scheduleQuery.data?.subEvents ?? EMPTY_SCHEDULE;
 
-  const nextChange = useCallback((at: Date) => nextStatusChange(subEvents, at), [subEvents]);
+  // Before the first start the countdown moves too, at local midnight and on the day by the hour.
+  const nextChange = useCallback(
+    (at: Date) => {
+      const status = nextStatusChange(subEvents, at);
+      const first = subEvents[0];
+      if (first === undefined || !beforeFirstStart(subEvents, at)) return status;
+      const countdown = nextCountdownChange(new Date(first.startsAt), at);
+      return status === null || countdown < status ? countdown : status;
+    },
+    [subEvents],
+  );
   const now = useNow(nextChange);
   const liveSubEvent = currentSubEvent(subEvents, now);
 
@@ -64,7 +81,8 @@ function HomeContent({
   const [selectedSubEventId, setSelectedSubEventId] = useState<string | null>(
     initialSubEventId ?? null,
   );
-  const [selectedUploaderId, setSelectedUploaderId] = useState<string | undefined>(undefined);
+  const [selectedUploader, setSelectedUploader] = useState<UploaderFilter | undefined>(undefined);
+  const selectedUploaderId = selectedUploader?.id;
 
   // Sheets
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
@@ -105,24 +123,30 @@ function HomeContent({
   }, [sectionCountsMap, allMedia.length]);
 
   // Pre-event check: shown until the first sub-event starts (D-138, D-148)
-  const isPreEvent = useMemo(() => {
-    if (subEvents.length === 0) return false;
-    const firstStart = Date.parse(subEvents[0]!.startsAt);
-    return now.getTime() < firstStart;
-  }, [subEvents, now]);
+  const isPreEvent = beforeFirstStart(subEvents, now);
+
+  // Thumbnails for every loaded photo, signed in batches of 50 (D-148).
+  const thumbnails = useThumbnailMap(eventId, allMedia);
 
   // Build flattened items for FlashList v2
-  const { items, stickyIndices } = useMemo(
+  const { items, stickyIndices, unknownSubEvent } = useMemo(
     () =>
       buildAlbumListItems(
         allMedia,
         subEvents,
         sectionCountsMap,
         liveSubEvent?.id ?? null,
-        selectedSubEventId ?? undefined,
+        thumbnails.omitted,
       ),
-    [allMedia, subEvents, sectionCountsMap, liveSubEvent?.id, selectedSubEventId],
+    [allMedia, subEvents, sectionCountsMap, liveSubEvent?.id, thumbnails.omitted],
   );
+
+  // A photo filed under a sub-event this phone has not loaded yet, one an Admin just added, has
+  // no section to sit in. Fetch the schedule once each time that starts happening.
+  const refetchSchedule = scheduleQuery.refetch;
+  useEffect(() => {
+    if (unknownSubEvent) void refetchSchedule();
+  }, [unknownSubEvent, refetchSchedule]);
 
   const refresh = async () => {
     if (pulling) return;
@@ -135,13 +159,6 @@ function HomeContent({
     setPulling(false);
   };
 
-  // Uploader name for active filter pill
-  const activeUploaderName = useMemo(() => {
-    if (!selectedUploaderId) return undefined;
-    const found = uploadersQuery.data?.uploaders.find((u) => u.userId === selectedUploaderId);
-    return found?.fullName;
-  }, [selectedUploaderId, uploadersQuery.data?.uploaders]);
-
   const selectedSubEvent = useMemo(
     () => subEvents.find((s) => s.id === selectedSubEventId),
     [subEvents, selectedSubEventId],
@@ -153,10 +170,8 @@ function HomeContent({
       if (!event) return undefined;
       return `${formatEventDates(new Date(event.startsAt), new Date(event.endsAt))}`;
     }
-    if (liveSubEvent) {
-      return `${liveSubEvent.name} is live · ${totalPhotosCount} photos`;
-    }
-    return `${totalPhotosCount} ${totalPhotosCount === 1 ? 'photo' : 'photos'}`;
+    const photos = `${totalPhotosCount} ${totalPhotosCount === 1 ? 'photo' : 'photos'}`;
+    return liveSubEvent ? `${liveSubEvent.name} is live · ${photos}` : photos;
   }, [isPreEvent, event, liveSubEvent, totalPhotosCount]);
 
   if (isPreEvent && event) {
@@ -188,8 +203,8 @@ function HomeContent({
         actions={headerActions}
         renderList={({ scroll, header }) => (
           <AlbumGrid
-            eventId={eventId}
             items={items}
+            images={thumbnails.images}
             stickyIndices={stickyIndices}
             isFetchingNextPage={albumQuery.isFetchingNextPage}
             onEndReached={() => {
@@ -219,22 +234,25 @@ function HomeContent({
                   onOpenMore={() => setMoreSheetOpen(true)}
                 />
 
-                {/* Active uploader filter pill */}
-                {activeUploaderName ? (
+                {/* Active uploader filter pill, shown for as long as the filter applies */}
+                {selectedUploader ? (
                   <ActiveFilterPill
-                    label={`Uploader: ${activeUploaderName}`}
-                    onClear={() => setSelectedUploaderId(undefined)}
+                    label={`Uploader: ${selectedUploader.name}`}
+                    onClear={() => setSelectedUploader(undefined)}
                   />
                 ) : null}
               </View>
             }
             ListEmptyComponent={
-              albumQuery.isPending ? (
+              (albumQuery.isError && !albumQuery.data) ||
+              (scheduleQuery.isError && !scheduleQuery.data) ? (
+                <AlbumLoadFailed retrying={pulling} onRetry={() => void refresh()} />
+              ) : albumQuery.isPending || scheduleQuery.isPending ? (
                 <View className="py-20 items-center justify-center">
                   <ActivityIndicator className="text-textSecondary" />
                 </View>
-              ) : activeUploaderName ? (
-                <UploaderEmpty uploaderName={activeUploaderName} />
+              ) : selectedUploader ? (
+                <UploaderEmpty uploaderName={selectedUploader.name} />
               ) : selectedSubEvent ? (
                 <SubEventEmpty subEventName={selectedSubEvent.name} />
               ) : (
@@ -250,15 +268,17 @@ function HomeContent({
         eventId={eventId}
         isOpen={filterSheetOpen}
         selectedUploaderId={selectedUploaderId}
-        onSelect={setSelectedUploaderId}
+        onSelect={setSelectedUploader}
         onClose={() => setFilterSheetOpen(false)}
       />
 
       {/* More sub-events sheet */}
       <MoreSubEventsSheet
+        eventId={eventId}
         subEvents={subEvents}
-        sectionCounts={sectionCountsMap}
-        totalCount={totalPhotosCount}
+        albumCounts={selectedSubEventId === null && albumQuery.data ? sectionCountsMap : null}
+        uploaderId={selectedUploaderId}
+        now={now}
         selectedId={selectedSubEventId}
         liveSubEventId={liveSubEvent?.id ?? null}
         isOpen={moreSheetOpen}

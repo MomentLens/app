@@ -40,6 +40,7 @@ const makePhoto = (id: string, subEventId: string, capturedAt: string): AlbumMed
   uploaderRole: 'guest',
   width: 1200,
   height: 800,
+  variantVersion: 1,
 });
 
 describe('Album sections (D-137, D-147, D-148)', () => {
@@ -101,23 +102,83 @@ describe('Album sections (D-137, D-147, D-148)', () => {
     expect(items[0]).toMatchObject({ type: 'header', subEventId: 'sub-2', isLive: true });
   });
 
-  it('filters to a single sub-event when activeSubEventId is set', () => {
+  it('draws a section only once one of its photos has loaded, whatever its count says', () => {
+    // Page one holds part of sub-1. sub-2 and sub-3 have photos on later pages.
+    const photos = [makePhoto('p1', 'sub-1', '2026-10-01T15:00:00Z')];
+
+    const { items, stickyIndices } = buildAlbumListItems(
+      photos,
+      subEvents,
+      { 'sub-1': 60, 'sub-2': 30, 'sub-3': 5 },
+      null,
+    );
+
+    expect(items.map((item) => item.key)).toEqual(['header-sub-1', 'p1']);
+    expect(items[0]).toMatchObject({ count: 60 });
+    expect(stickyIndices).toEqual([0]);
+  });
+
+  it('leaves the list empty for a chip whose sub-event has no photos, so its empty state shows', () => {
+    const { items } = buildAlbumListItems([], subEvents, {}, 'sub-2');
+    expect(items).toEqual([]);
+  });
+
+  it('keeps the schedule numeral when only one sub-event is loaded, as under its chip', () => {
+    const photos = [makePhoto('p2', 'sub-2', '2026-10-02T16:00:00Z')];
+
+    const { items } = buildAlbumListItems(photos, subEvents, { 'sub-2': 1 }, null);
+
+    expect(items[0]).toMatchObject({ type: 'header', subEventId: 'sub-2', numeral: 2 });
+  });
+
+  it('drops a photo the serving endpoint left out, and a section left with none', () => {
     const photos = [
       makePhoto('p1', 'sub-1', '2026-10-01T15:00:00Z'),
       makePhoto('p2', 'sub-2', '2026-10-02T16:00:00Z'),
+      makePhoto('p3', 'sub-2', '2026-10-02T15:00:00Z'),
     ];
 
-    const { items } = buildAlbumListItems(
+    const { items, stickyIndices } = buildAlbumListItems(
       photos,
       subEvents,
-      { 'sub-1': 1, 'sub-2': 1 },
+      { 'sub-1': 1, 'sub-2': 2 },
       null,
-      'sub-2',
+      new Set(['p1', 'p3']),
     );
 
-    const headers = items.filter((i) => i.type === 'header');
-    expect(headers.length).toBe(1);
-    expect(headers[0]).toMatchObject({ subEventId: 'sub-2', numeral: 2 });
-    expect(items.filter((i) => i.type === 'media').map((i) => i.key)).toEqual(['p2']);
+    expect(items.map((item) => item.key)).toEqual(['header-sub-2', 'p2']);
+    expect(stickyIndices).toEqual([0]);
+  });
+
+  it("orders sections that start together by id, as the album's pages arrive", () => {
+    // The schedule breaks the tie by end, which puts sub-b first. The pages put sub-a first.
+    const tied: SubEvent[] = [
+      { ...subEvents[0]!, id: 'sub-b', endsAt: '2026-10-01T16:00:00Z' },
+      { ...subEvents[0]!, id: 'sub-a', endsAt: '2026-10-01T18:00:00Z' },
+    ];
+    const photos = [
+      makePhoto('pa', 'sub-a', '2026-10-01T15:00:00Z'),
+      makePhoto('pb', 'sub-b', '2026-10-01T15:00:00Z'),
+    ];
+
+    const { items } = buildAlbumListItems(photos, tied, { 'sub-a': 1, 'sub-b': 1 }, null);
+
+    expect(items.map((item) => item.key)).toEqual(['header-sub-a', 'pa', 'header-sub-b', 'pb']);
+    expect(items[0]).toMatchObject({ numeral: 2 });
+  });
+
+  it('flags a photo whose sub-event the loaded schedule does not hold', () => {
+    const photos = [
+      makePhoto('p1', 'sub-1', '2026-10-01T15:00:00Z'),
+      makePhoto('p9', 'sub-new', '2026-10-04T15:00:00Z'),
+    ];
+
+    const result = buildAlbumListItems(photos, subEvents, { 'sub-1': 1, 'sub-new': 1 }, null);
+
+    expect(result.unknownSubEvent).toBe(true);
+    expect(result.items.map((item) => item.key)).toEqual(['header-sub-1', 'p1']);
+    expect(buildAlbumListItems(photos.slice(0, 1), subEvents, {}, null).unknownSubEvent).toBe(
+      false,
+    );
   });
 });
