@@ -1,45 +1,50 @@
 import { describe, expect, it } from '@jest/globals';
 import type { SubEvent } from '@momentlens/shared-types';
 
-const subEvents: SubEvent[] = [
-  {
-    id: 'sub-1',
-    name: 'Dholki',
-    startsAt: '2026-10-01T14:00:00.000Z',
-    endsAt: '2026-10-01T18:00:00.000Z',
-    description: null,
-    verificationRadiusM: 200,
-    venue: { id: 'v1', name: 'Residence DHA', lat: 31.5, lng: 74.3 },
-  },
-  {
-    id: 'sub-2',
-    name: 'Mayun',
-    startsAt: '2026-10-02T14:00:00.000Z',
-    endsAt: '2026-10-02T18:00:00.000Z',
-    description: null,
-    verificationRadiusM: 200,
-    venue: { id: 'v1', name: 'Residence DHA', lat: 31.5, lng: 74.3 },
-  },
+import { countdownText, isPreEvent, nextCountdownChange } from '@/features/album/pre-event';
+
+const subEvents: Pick<SubEvent, 'startsAt'>[] = [
+  { startsAt: '2026-10-01T14:00:00.000Z' },
+  { startsAt: '2026-10-02T14:00:00.000Z' },
 ];
 
-function isPreEvent(subEventsList: readonly SubEvent[], now: Date): boolean {
-  if (subEventsList.length === 0) return false;
-  const firstStart = Date.parse(subEventsList[0]!.startsAt);
-  return now.getTime() < firstStart;
-}
+// Local times, so the calendar-day counts hold in any zone the tests run in.
+const local = (day: number, hour: number, minute = 0) => new Date(2026, 9, day, hour, minute);
 
 describe('Album pre-event state vs grid timing (D-138, D-148)', () => {
   it('shows pre-event state until the first sub-event starts', () => {
-    // 1 hour before first sub-event
-    const beforeFirst = new Date('2026-10-01T13:00:00.000Z');
-    expect(isPreEvent(subEvents, beforeFirst)).toBe(true);
+    expect(isPreEvent(subEvents, new Date('2026-10-01T13:00:00.000Z'))).toBe(true);
+    expect(isPreEvent(subEvents, new Date('2026-10-01T14:00:00.000Z'))).toBe(false);
+    expect(isPreEvent(subEvents, new Date('2026-10-01T15:00:00.000Z'))).toBe(false);
+  });
 
-    // Exact start of first sub-event
-    const atFirst = new Date('2026-10-01T14:00:00.000Z');
-    expect(isPreEvent(subEvents, atFirst)).toBe(false);
+  it('is never pre-event with no schedule', () => {
+    expect(isPreEvent([], new Date('2026-10-01T13:00:00.000Z'))).toBe(false);
+  });
+});
 
-    // During event
-    const during = new Date('2026-10-01T15:00:00.000Z');
-    expect(isPreEvent(subEvents, during)).toBe(false);
+describe('Pre-event countdown', () => {
+  const start = local(10, 18);
+
+  it('counts hours on the day itself, however close', () => {
+    expect(countdownText(start, local(10, 16))).toBe('Starts in 2 hours');
+    expect(countdownText(start, local(10, 17, 30))).toBe('Starts in 1 hour');
+    expect(countdownText(start, local(10, 0, 5))).toBe('Starts in 18 hours');
+  });
+
+  it('says tomorrow for a start after the next midnight, even a few hours away', () => {
+    expect(countdownText(start, local(9, 23))).toBe('Starts tomorrow');
+    expect(countdownText(start, local(9, 1))).toBe('Starts tomorrow');
+  });
+
+  it('counts calendar days further out', () => {
+    expect(countdownText(start, local(8, 20))).toBe('2 days to go');
+    expect(countdownText(start, local(3, 9))).toBe('7 days to go');
+  });
+
+  it('moves on at local midnight, then as each hour runs out on the day', () => {
+    expect(nextCountdownChange(start, local(8, 20))).toEqual(local(9, 0));
+    expect(nextCountdownChange(start, local(10, 15, 20))).toEqual(local(10, 16));
+    expect(nextCountdownChange(start, local(10, 17, 30))).toEqual(start);
   });
 });
