@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import type { QueueStore } from '@/features/upload-queue/store';
 import type { QueueItem } from '@/features/upload-queue/types';
-import { refreshMediaStatus } from '@/features/my-media/status';
+import { applyMediaChange, refreshMediaStatus, type MediaChange } from '@/features/my-media/status';
 
 // The API's ids are UUIDs, answered in lower case.
 const media = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
@@ -146,5 +146,81 @@ describe('publish metadata refresh', () => {
     const read = jest.fn(async () => ({ statuses: [] }));
     await refreshMediaStatus(store, 'A', 'event', false, read, () => true);
     expect(read).not.toHaveBeenCalled();
+  });
+});
+
+describe('Realtime changes to My Media (D-145, D-148)', () => {
+  const row = (fields: Partial<NonNullable<MediaChange['row']>> = {}) => ({
+    uploaderUserId: 'A',
+    processedAt: '2026-10-06T10:00:00+00:00',
+    deletedAt: null,
+    ...fields,
+  });
+
+  it("skips another uploader's photo without reading the queue", async () => {
+    const { store, listForEvent, update } = fake(items(1));
+    await applyMediaChange(
+      store,
+      'A',
+      'event',
+      { mediaId: media(0), row: row({ uploaderUserId: 'B' }) },
+      () => true,
+    );
+    expect(listForEvent).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('publishes only from uploading or uploaded, guarded against the runner', async () => {
+    const { store, update } = fake(items(1));
+    await applyMediaChange(store, 'A', 'event', { mediaId: media(0), row: row() }, () => true);
+    expect(update.mock.calls).toEqual([
+      ['A', 'local-0', { state: 'published' }, ['uploading', 'uploaded']],
+    ]);
+  });
+
+  it('moves a published photo back when the worker unpublishes it (D-108)', async () => {
+    const rows = items(1);
+    rows[0]!.state = 'published';
+    const { store, update } = fake(rows);
+    await applyMediaChange(
+      store,
+      'A',
+      'event',
+      { mediaId: media(0).toUpperCase(), row: row({ processedAt: null }) },
+      () => true,
+    );
+    expect(update.mock.calls).toEqual([['A', 'local-0', { state: 'uploaded' }, ['published']]]);
+  });
+
+  it('removes a finished photo on a soft delete or a DELETE, and nothing still uploading', async () => {
+    const rows = items(2);
+    rows[1]!.mediaId = media(0);
+    rows[1]!.state = 'uploading';
+    const deleted = fake(rows);
+    await applyMediaChange(
+      deleted.store,
+      'A',
+      'event',
+      { mediaId: media(0), row: row({ deletedAt: '2026-10-06T11:00:00+00:00' }) },
+      () => true,
+    );
+    expect(deleted.remove.mock.calls).toEqual([['A', 'local-0']]);
+
+    const cascaded = fake(items(1));
+    await applyMediaChange(
+      cascaded.store,
+      'A',
+      'event',
+      { mediaId: media(0), row: null },
+      () => true,
+    );
+    expect(cascaded.remove.mock.calls).toEqual([['A', 'local-0']]);
+  });
+
+  it('writes nothing once the account has signed out', async () => {
+    const { store, update, remove } = fake(items(1));
+    await applyMediaChange(store, 'A', 'event', { mediaId: media(0), row: row() }, () => false);
+    expect(update).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
   });
 });
