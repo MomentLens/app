@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { FullName, MAX_ALBUM_PAGE, MembershipRole, Timestamp } from '@momentlens/shared-types';
+import { FullName, MAX_ALBUM_PAGE, MembershipRole } from '@momentlens/shared-types';
 import type {
   ListAlbumRequest,
   ListAlbumResponse,
@@ -13,13 +13,19 @@ import { ApiError } from '../middleware/errors';
 import { requireMember, toTimestamp } from './events';
 import type { EventStore } from './events';
 
+// A timestamp exactly as Postgres wrote it, microseconds and offset included. The cursor carries
+// the last row's values unchanged, because list_album compares them with the columns themselves:
+// cut to the API's milliseconds, a row captured later in the same millisecond would fall between
+// two pages, and a sub-event starting part-way through one would restart its section.
+const PgTimestamp = z.iso.datetime({ offset: true });
+
 export const CursorPayload = z.strictObject({
   eventId: z.uuid(),
   subEventId: z.uuid().nullable(),
   uploaderId: z.uuid().nullable(),
-  startsAt: Timestamp,
+  startsAt: PgTimestamp,
   subEventIdRow: z.uuid(),
-  capturedAt: Timestamp,
+  capturedAt: PgTimestamp,
   mediaId: z.uuid(),
 });
 export type CursorPayload = z.infer<typeof CursorPayload>;
@@ -45,6 +51,7 @@ export interface AlbumMediaRow {
   uploaderRole: MembershipRole;
   width: number | null;
   height: number | null;
+  variantVersion: number;
   startsAt: string;
 }
 
@@ -60,18 +67,21 @@ export interface UploaderRecord {
   photoCount: number;
 }
 
+// Where the next page starts: the last row of the page before it, as Postgres wrote it.
+export interface AlbumCursor {
+  startsAt: string;
+  subEventIdRow: string;
+  capturedAt: string;
+  mediaId: string;
+}
+
 export interface AlbumStore {
   query(
     eventId: string,
     options: {
       subEventId?: string;
       uploaderId?: string;
-      cursor?: {
-        startsAt: string;
-        subEventIdRow: string;
-        capturedAt: string;
-        mediaId: string;
-      };
+      cursor?: AlbumCursor;
       limit: number;
     },
   ): Promise<AlbumQueryResult>;
@@ -84,11 +94,12 @@ const ListAlbumRpcResult = z.object({
     z.object({
       id: z.uuid(),
       sub_event_id: z.uuid(),
-      captured_at: z.string(),
+      captured_at: PgTimestamp,
       uploader_role: MembershipRole,
       width: z.number().nullable(),
       height: z.number().nullable(),
-      starts_at: z.string(),
+      variant_version: z.number(),
+      starts_at: PgTimestamp,
     }),
   ),
   section_counts: z
@@ -135,6 +146,7 @@ export function createAlbumStore(supabase: Supabase): AlbumStore {
           uploaderRole: m.uploader_role,
           width: m.width,
           height: m.height,
+          variantVersion: m.variant_version,
           startsAt: m.starts_at,
         })),
         sectionCounts: parsed.section_counts
@@ -210,9 +222,9 @@ export async function listAlbum(
       eventId,
       subEventId: request.subEventId ?? null,
       uploaderId: request.uploaderId ?? null,
-      startsAt: toTimestamp(lastItem.startsAt),
+      startsAt: lastItem.startsAt,
       subEventIdRow: lastItem.subEventId,
-      capturedAt: toTimestamp(lastItem.capturedAt),
+      capturedAt: lastItem.capturedAt,
       mediaId: lastItem.id,
     });
   }
@@ -225,6 +237,7 @@ export async function listAlbum(
       uploaderRole: item.uploaderRole,
       width: item.width,
       height: item.height,
+      variantVersion: item.variantVersion,
     })),
     sectionCounts: result.sectionCounts,
     nextCursor,
