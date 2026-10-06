@@ -7,25 +7,12 @@ import { GLYPH, Glyph } from '@/components/ui/glyph';
 import { formatDay, formatSubEventTimes } from '@/features/events/format';
 import { romanNumeral } from '@/features/schedule/schedule';
 import { presignedSource } from '@/lib/images';
+import { countdownText } from './pre-event';
 
 interface PreEventViewProps {
   event: EventSummary;
   subEvents: readonly SubEvent[];
   now: Date;
-}
-
-function countdownText(startsAt: string, now: Date): string {
-  const start = new Date(startsAt).getTime();
-  const current = now.getTime();
-  const diffMs = start - current;
-
-  if (diffMs <= 0) return 'Starts today';
-  const days = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-  if (days === 1) return 'Starts tomorrow';
-  if (days > 1) return `${days} days to go`;
-
-  const hours = Math.ceil(diffMs / (1000 * 60 * 60));
-  return `Starts in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
 }
 
 // Pre-event state (spec §2.5.2, D-138, D-148):
@@ -34,7 +21,7 @@ function countdownText(startsAt: string, now: Date): string {
 export function PreEventView({ event, subEvents, now }: PreEventViewProps) {
   const router = useRouter();
   const firstSubEvent = subEvents[0];
-  const countdown = firstSubEvent ? countdownText(firstSubEvent.startsAt, now) : null;
+  const countdown = firstSubEvent ? countdownText(new Date(firstSubEvent.startsAt), now) : null;
 
   return (
     <View className="gap-6 px-4 pb-8">
