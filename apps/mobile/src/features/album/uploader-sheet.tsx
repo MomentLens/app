@@ -9,11 +9,18 @@ import { useUploaders } from './use-album';
 
 const IOS = Platform.OS === 'ios';
 
+// The uploader a filter names. The name is kept from the moment it was picked, so the pill can
+// still say whose photos these are after that person leaves the list (D-148).
+export interface UploaderFilter {
+  id: string;
+  name: string;
+}
+
 interface UploaderSheetProps {
   eventId: string;
   isOpen: boolean;
   selectedUploaderId?: string;
-  onSelect: (uploaderId: string | undefined) => void;
+  onSelect: (uploader: UploaderFilter | undefined) => void;
   onClose: () => void;
 }
 
@@ -65,7 +72,7 @@ function UploaderSheetContent({
 }: {
   eventId: string;
   selectedUploaderId?: string;
-  onSelect: (uploaderId: string | undefined) => void;
+  onSelect: (uploader: UploaderFilter | undefined) => void;
   onClose: () => void;
 }) {
   const uploadersQuery = useUploaders(eventId);
@@ -178,7 +185,11 @@ function UploaderSheetContent({
                         accessibilityRole="button"
                         accessibilityLabel={`${uploader.fullName}, ${uploader.photoCount} photos`}
                         onPress={() => {
-                          onSelect(isSelected ? undefined : uploader.userId);
+                          onSelect(
+                            isSelected
+                              ? undefined
+                              : { id: uploader.userId, name: uploader.fullName },
+                          );
                           onClose();
                         }}
                         className={`flex-row items-center justify-between p-3.5 ${
