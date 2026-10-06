@@ -12,7 +12,8 @@ import {
 } from 'react-native';
 
 const IOS = Platform.OS === 'ios';
-const MAX_INLINE_CHIPS = 6;
+// Past this many sub-events the row ends with a "More" chip (D-148).
+const MORE_CHIP_PAST = 6;
 
 interface SubEventChipsProps {
   subEvents: readonly SubEvent[];
@@ -23,9 +24,10 @@ interface SubEventChipsProps {
 }
 
 // Sub-event chip row, directly under the header (spec §2.5.2, D-148).
-// "All" by default. Shows each sub-event in schedule order with a live red dot when in progress.
-// Past 6 sub-events, a "More" chip opens a sheet listing them all (D-148).
-// Scrolls to the in-progress sub-event on mount, focus, and foreground (D-148).
+// "All" by default. The row holds every sub-event's chip in schedule order, with a live red dot on
+// the one in progress. Past 6 sub-events, a "More" chip at its end opens a sheet listing them all.
+// Scrolls to the in-progress chip on mount, focus, and foreground, and to a chip picked from the
+// sheet, which may sit past the screen's edge (D-148).
 // iOS: rounded capsules. Android: Material 3 bordered chips with checkmark on active.
 export function SubEventChips({
   subEvents,
@@ -37,13 +39,22 @@ export function SubEventChips({
   const scrollRef = useRef<ScrollView>(null);
   const chipPositions = useRef<Record<string, number>>({});
 
-  const scrollToLive = useCallback(() => {
-    if (!liveSubEventId) return;
-    const x = chipPositions.current[liveSubEventId];
+  const scrollToChip = useCallback((id: string | null) => {
+    if (!id) return;
+    const x = chipPositions.current[id];
     if (x !== undefined && x > 0) {
       scrollRef.current?.scrollTo({ x: Math.max(0, x - 20), animated: true });
     }
-  }, [liveSubEventId]);
+  }, []);
+  const scrollToLive = useCallback(
+    () => scrollToChip(liveSubEventId),
+    [scrollToChip, liveSubEventId],
+  );
+
+  // A chip picked from the More sheet comes into view.
+  useEffect(() => {
+    scrollToChip(selectedId);
+  }, [scrollToChip, selectedId]);
 
   // Scroll to live chip on focus
   useFocusEffect(
@@ -68,8 +79,7 @@ export function SubEventChips({
     chipPositions.current[id] = event.nativeEvent.layout.x;
   };
 
-  const inlineSubEvents = subEvents.slice(0, MAX_INLINE_CHIPS);
-  const hasMore = subEvents.length > MAX_INLINE_CHIPS;
+  const hasMore = subEvents.length > MORE_CHIP_PAST;
 
   const isAllSelected = selectedId === null;
 
@@ -79,7 +89,7 @@ export function SubEventChips({
         ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: IOS ? 16 : 16, gap: 8 }}>
+        contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
         {/* "All" chip */}
         <Pressable
           accessibilityRole="button"
@@ -108,8 +118,8 @@ export function SubEventChips({
           </Text>
         </Pressable>
 
-        {/* Inline sub-event chips */}
-        {inlineSubEvents.map((subEvent) => {
+        {/* Every sub-event's chip */}
+        {subEvents.map((subEvent) => {
           const isSelected = selectedId === subEvent.id;
           const isLive = liveSubEventId === subEvent.id;
 
