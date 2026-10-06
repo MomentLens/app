@@ -11,6 +11,7 @@ import type { MembershipRole, MembershipStatus } from '@momentlens/shared-types'
 import type { VerifyToken } from '../../src/middleware/auth';
 import type { EventStore, MemberAccess } from '../../src/services/events';
 import type {
+  AlbumCursor,
   AlbumMediaRow,
   AlbumQueryResult,
   AlbumStore,
@@ -88,20 +89,19 @@ class FakeAlbumStore implements AlbumStore {
 
   uploadersList: UploaderRecord[] = [];
 
+  // The cursor each query received, in order, so a test can read what the API decoded.
+  cursors: (AlbumCursor | undefined)[] = [];
+
   query(
     eventId: string,
     options: {
       subEventId?: string;
       uploaderId?: string;
-      cursor?: {
-        startsAt: string;
-        subEventIdRow: string;
-        capturedAt: string;
-        mediaId: string;
-      };
+      cursor?: AlbumCursor;
       limit: number;
     },
   ): Promise<AlbumQueryResult> {
+    this.cursors.push(options.cursor);
     // Filter only published, non-deleted rows for this event
     const visible = this.rows.filter(
       (r) =>
@@ -146,6 +146,7 @@ class FakeAlbumStore implements AlbumStore {
         uploaderRole: r.uploaderRole,
         width: r.width,
         height: r.height,
+        variantVersion: r.variantVersion,
         startsAt: r.startsAt,
       })),
       sectionCounts,
@@ -186,6 +187,7 @@ beforeEach(() => {
   events.events.clear();
   albumStore.rows = [];
   albumStore.uploadersList = [];
+  albumStore.cursors = [];
 
   eventId = randomUUID();
   otherEventId = randomUUID();
@@ -273,6 +275,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         startsAt: '2026-10-06T09:00:00.000Z',
         width: 1920,
         height: 1080,
+        variantVersion: 1,
         uploadedAt: '2026-10-06T10:01:00.000Z',
         processedAt: '2026-10-06T10:02:00.000Z',
         deletedAt: null,
@@ -288,6 +291,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         startsAt: '2026-10-06T09:00:00.000Z',
         width: 1920,
         height: 1080,
+        variantVersion: 1,
         uploadedAt: '2026-10-06T10:01:00.000Z',
         processedAt: '2026-10-06T10:02:00.000Z',
         deletedAt: null,
@@ -303,6 +307,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         startsAt: '2026-10-06T09:00:00.000Z',
         width: null,
         height: null,
+        variantVersion: 1,
         uploadedAt: '2026-10-06T10:01:00.000Z',
         processedAt: null,
         deletedAt: null,
@@ -318,6 +323,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         startsAt: '2026-10-06T09:00:00.000Z',
         width: null,
         height: null,
+        variantVersion: 1,
         uploadedAt: '2026-10-06T10:01:00.000Z',
         processedAt: null,
         deletedAt: null,
@@ -333,6 +339,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         startsAt: '2026-10-06T09:00:00.000Z',
         width: null,
         height: null,
+        variantVersion: 1,
         uploadedAt: null,
         processedAt: null,
         deletedAt: null,
@@ -348,6 +355,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         startsAt: '2026-10-06T09:00:00.000Z',
         width: 1920,
         height: 1080,
+        variantVersion: 1,
         uploadedAt: '2026-10-06T10:01:00.000Z',
         processedAt: '2026-10-06T10:02:00.000Z',
         deletedAt: '2026-10-06T10:05:00.000Z',
@@ -362,6 +370,53 @@ describe('GET /events/:eventId/media (Album)', () => {
     expect(body.media.map((m) => m.id)).toEqual([publishedId]);
     expect(body.sectionCounts).toEqual([{ subEventId: subEventId1, count: 1 }]);
     expect(body.nextCursor).toBeNull();
+  });
+
+  it('hands the next page the last row exactly as Postgres wrote it, microseconds included', async () => {
+    // 51 rows in one section, newest first. The 50th ends page one, and its capture time and its
+    // sub-event's start carry microseconds, as now() writes them when pre-flight has no time.
+    const startsAt = '2026-10-06T09:00:00.000001+00:00';
+    const lastCapturedAt = '2026-10-06T10:00:00.123456+00:00';
+    albumStore.rows = Array.from({ length: 51 }, (_, i) => ({
+      id: randomUUID(),
+      eventId,
+      subEventId: subEventId1,
+      uploaderUserId: GUEST,
+      uploaderRole: 'guest' as const,
+      capturedAt:
+        i === 49 ? lastCapturedAt : `2026-10-06T11:${String(59 - i).padStart(2, '0')}:00+00:00`,
+      startsAt,
+      width: 1920,
+      height: 1080,
+      variantVersion: i === 0 ? 3 : 1,
+      uploadedAt: '2026-10-06T12:00:00+00:00',
+      processedAt: '2026-10-06T12:01:00+00:00',
+      deletedAt: null,
+    }));
+    const last = albumStore.rows[49]!;
+
+    const first = await fetch(`${app.baseUrl}/events/${eventId}/media`, {
+      headers: { Authorization: 'Bearer token-guest' },
+    });
+    expect(first.status).toBe(200);
+    const page = ListAlbumResponse.parse(await first.json());
+    expect(page.media).toHaveLength(50);
+    expect(page.media[0]?.variantVersion).toBe(3);
+    // The response itself keeps the API's millisecond timestamps.
+    expect(page.media[49]?.capturedAt).toBe('2026-10-06T10:00:00.123Z');
+    expect(page.nextCursor).not.toBeNull();
+
+    const second = await fetch(
+      `${app.baseUrl}/events/${eventId}/media?cursor=${encodeURIComponent(page.nextCursor!)}`,
+      { headers: { Authorization: 'Bearer token-guest' } },
+    );
+    expect(second.status).toBe(200);
+    expect(albumStore.cursors[1]).toEqual({
+      startsAt,
+      subEventIdRow: subEventId1,
+      capturedAt: lastCapturedAt,
+      mediaId: last.id,
+    });
   });
 
   it('rejects a tampered or invalid cursor with 400 invalid_request', async () => {
