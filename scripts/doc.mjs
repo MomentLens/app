@@ -546,6 +546,28 @@ verbs.check = () => {
       return null;
     }
   };
+  // The issue template's readiness rows are the Definition of done's labels, which
+  // scripts/readiness.mjs reads from docs/WorkSlices.md. A row the template lacks is one the
+  // done stage never fills, and cleanup refuses every merge until someone notices why.
+  const template = skill('.github/ISSUE_TEMPLATE/slice.md');
+  const dod = readFileSync(join(root, 'docs', 'WorkSlices.md'), 'utf8')
+    .split(/^## Definition of done\s*$/m)[1]
+    ?.split(/^## /m)[0];
+  if (template !== null && dod) {
+    const want = [...dod.matchAll(/^- \[ \] \*\*([^*]+?)\.\*\*/gm)].map((m) => m[1]);
+    const have = [
+      ...(template.split(/^## Readiness\s*$/m)[1] ?? '').matchAll(/^\|\s*([^|]+?)\s*\|/gm),
+    ]
+      .map((m) => m[1])
+      .filter((c) => c !== 'Item' && !/^-+$/.test(c));
+    if (want.join('\n') !== have.join('\n'))
+      e.push({
+        code: 'readiness-rows',
+        file: '.github/ISSUE_TEMPLATE/slice.md',
+        line: 1,
+        msg: `its Readiness rows are "${have.join(', ')}" and the Definition of done's labels are "${want.join(', ')}"; make the rows match, in order`,
+      });
+  }
   const codexAgents = agents('.codex/agents', '.toml');
   if (codexAgents !== null)
     for (const name of new Set([...(agents('.claude/agents', '.md') ?? []), ...codexAgents])) {
