@@ -1,0 +1,14 @@
+## 6. Cleanup
+
+In a fresh session, once the stack is reviewed.
+
+1. `git fetch --prune origin`, then list the slice's PRs: `gh pr list --state all --search "<id> in:title" --json number,title,state,headRefName,baseRefName,headRefOid,reviewDecision`.
+2. **If any PR is still open**, and every open one is approved with green checks (`gh pr checks <n>`), list them top to bottom and offer to merge the stack. For a code owner's own stack, the `/code-review ran` comment on each PR stands in for the approval; a PR without one goes back to the done stage's review step. Merge only after the developer says yes, one PR at a time from the top: `gh pr merge <n> --rebase`, then `gh pr checks <next one down> --watch` until its checks pass, then the next. Folding the stack drops the bottom PR's approval: for anyone else's stack, stop there and ask the developer to get it approved again; for a code owner's, merge it with `gh pr merge <n> --rebase --admin`, which bypasses the review rule on `main` and never the CI rule. If GitHub cannot rebase one, stop and follow Handbook §12's conflict steps. If any open PR is not approved or not green, stop and say which, and what it waits on.
+3. When the bottom PR has merged, check that the issue closed. If it is still open, close it with a comment listing the merged PRs.
+4. **Check before deleting.** For each slice branch that exists locally, keep it and say why if its worktree has uncommitted changes (`git -C <path> status --porcelain`) or its tip is not the PR's `headRefOid`, which means commits that never reached GitHub.
+5. Remove every worktree on a slice branch with `git worktree remove <path>`, never `--force`, then `git worktree prune`. If this session runs inside one of them, leave that one and tell the developer to remove it from their main clone afterwards. List any other worktree whose branch shows `gone` in `git branch -vv`, and offer to remove it the same way.
+6. Delete the local slice branches with `git branch -D <branch>`. It has to be `-D`: Rebase and merge gives every commit a new id, so git cannot see that the branch merged. Step 4 is the check that replaces it.
+7. **Bring `main` up to date** in the developer's main clone. If it is on a slice branch, `git switch main` first, unless Metro is serving it, in which case ask. Then `git pull --ff-only`. If `pnpm-lock.yaml` changed, run `pnpm install`. If `apps/mobile/package.json` or `apps/mobile/app.json` changed, tell the developer the development build may need a rebuild (Handbook §10).
+8. **Put the dev server on `main`** if the stack touched `apps/api/`, `worker/` or `supabase/migrations/`, or its logs say a slice branch was deployed. Offer `ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'` (Handbook §13.4) and run it only on a yes.
+9. Delete `.slices/<id>/`.
+10. Report what was removed, what was kept and why, and what the developer still has to do.
