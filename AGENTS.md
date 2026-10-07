@@ -131,7 +131,7 @@ pnpm check:machine                # scripts/doctor.mjs: toolchain pins, git hook
 pnpm --filter mobile android      # build and install the development build; `ios` on the Mac
 pnpm --filter mobile start        # Metro, serving JS to the installed development build
 pnpm --filter api dev
-pnpm lint && pnpm typecheck && pnpm test
+node scripts/verify.mjs api mobile # what CI runs, for those packages; also docs format packages worker rls worker-sql all
 pnpm docs:check                   # the docs gate, also run by the pre-commit hook and CI
 pnpm --filter api test:rls        # RLS negative tests against the dev project
 cd worker && uv venv --python 3.12 && uv pip install -r requirements-dev.txt   # once, and after either requirements file changes
