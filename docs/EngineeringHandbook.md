@@ -821,7 +821,7 @@ Without this, each agent session re-derives your design from whatever files it h
 
 Context is the scarcest resource in an agent session and most people waste it on the wrong things.
 
-**Give it the interface, not the implementation.** When asking for a screen that calls three endpoints, paste the zod schemas from `packages/shared-types`, not the Express handlers. The schemas are the contract; the handlers are noise. This is a large part of why `shared-types` exists.
+**Give it the interface, not the implementation.** When asking for a screen that calls three endpoints, point it at the zod schemas in `packages/shared-types` by path and exported name, not at the Express handlers, and never paste them (schemas pass by path, §18.8). The schemas are the contract; the handlers are noise. This is a large part of why `shared-types` exists.
 
 **Start a fresh session per task, not per day.** A session that has been running for four hours contains three abandoned approaches, two files you no longer care about, and a bug you already fixed. All of it is competing for attention with your actual question. Finish a task, commit, start clean.
 
@@ -829,9 +829,9 @@ Context is the scarcest resource in an agent session and most people waste it on
 
 **Ask for a plan before code on anything non-trivial.** "Before writing anything, describe how you would structure this and what you would touch." You catch a wrong approach in twenty seconds of reading instead of after reviewing 300 lines. This is also how you learn the reasoning, which is what you will need in the viva.
 
-**Paste real errors, complete.** The whole stack trace, the whole failing test output, `journalctl` lines and all. Summarizing an error strips the detail that identifies it. Agents are unusually good at reading raw output and unusually bad at guessing what you paraphrased away.
+**Give it the real error, not your summary of it.** Save the full output to a file, the stack trace, the failing test output and the `journalctl` lines included, and give the session the failing lines and the file's path. Summarizing an error strips the detail that identifies it, and pasting a whole log fills the session with lines that passed. Agents read raw output well and guess badly at what you paraphrased away.
 
-**When it goes in circles, stop.** Two failed attempts at the same bug means the model is missing context you have not given it. Do not try a third prompt. Work out what it cannot see (a config file, the actual database schema, the real error) and give it that, or debug it yourself.
+**When it goes in circles, stop.** Two failed attempts at the same bug means the model is missing context you have not given it. Do not try a third prompt. Name the cause first: missing information, a wrong assumption, the environment, or a flaky test. Then give it what it cannot see (a config file, the actual database schema, the real error), or debug it yourself.
 
 ### 18.3 What to delegate, and what not to
 
@@ -866,20 +866,22 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 - **One paragraph per line.** No hard wraps in prose, so `grep` and `doc grep` find a whole sentence. Tables and code blocks keep their own line structure.
 - **A numbered heading's depth is its number's depth plus one**: `## 5`, `### 5.2`, `#### 5.2.1`. A section a slice might cite gets a number. The one exception is Handbook `## 16.5`, a sibling of §16 rather than its child. `docs/ARCHITECTURE.md`'s per-table headings are unnumbered by design and cited as `arch:<table>`.
 - **Every cross-document citation carries its prefix**: `spec §4.11`, `hb §7`, `arch §3`. A bare `§7` inherits a prefix written within the previous 60 characters, and otherwise resolves to its own document, then the spec, which can land in the wrong document without an error.
-- **Decisions are `### D-nn: Title`.** Older entries use an em dash where the colon goes; both parse, and neither gets rewritten. Never renumber one. Retire one only by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading; those are the two forms `doc` masks, so any other wording leaves the entry expandable into a brief. Change an entry by appending an "Amended (see D-nn)" line (gated: a `D-nn` heading the parser cannot read fails).
+- **Decisions are `### D-nn: Title`.** Older entries use an em dash where the colon goes; both parse, and neither gets rewritten. Never renumber one. Retire one only by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading; those are the two forms `doc` masks, so any other wording leaves the entry expandable into a brief. A retired entry keeps its heading and its Decision line, and the rest moves to git history behind a `**Removed.**` line naming the commit that still holds it, as the log's "How to use this file" says (D-149). Change an entry by appending an "Amended (see D-nn)" line, and when a new entry's Decision line says it amends `D-x`, give `D-x` that line in the same commit (gated: a `D-nn` heading the parser cannot read fails).
 - **Slice rows are machine-read.** A Phase 0 row has three cells and every other row five. Never put a `|` inside a cell. The "Depends on" cell holds slice ids and nothing else, because the brief prints exactly those rows. Each id names a row above it, so every table reads in build order. A warning note is its own paragraph, opening with the slice id in bold (gated: a note naming no slice fails, and so does a dependency with no row or one listed below its slice).
 - **Cite a section id, never a line number.** `EngineeringHandbook.md:542` went stale in one PR. Ids survive edits and the gate checks them (gated: a dangling citation fails).
 - **Renaming a heading changes its id.** Before renaming one, `doc why` it, or grep for `arch:<slug>` if it is a table heading, and update what cites it.
 - **Say the date on anything that will stop being true**, such as a server that goes away on 2026-10-15, so the next reader can tell a stale line from a current one.
-- **Write plainly.** These apply to `docs/`, the `AGENTS.md` files, `.claude/`, `.agents/`, commit messages and PR descriptions, whoever's agent writes them (D-107). Fix an older line when you touch it; do not rewrite a file just to comply.
+- **Write plainly.** These apply to `docs/`, the `AGENTS.md` files, `.claude/`, `.agents/`, `.codex/`, commit messages, PR descriptions and the slice issue's body and comments, whoever's agent writes them (D-107). Fix an older line when you touch it; do not rewrite a file just to comply.
   - No em dashes. End the sentence or use a comma. Older decision headings keep theirs.
   - None of these words: delve, crucial, pivotal, showcase, tapestry, testament, underscore, landscape used abstractly, leverage, utilize, robust, seamless.
   - No "not just X, but Y". State the point.
-  - No colon joining two halves of a sentence. A colon before a list, a code block or a label is fine.
+  - A colon may introduce a list, an example or an explanation, never a setup phrase such as "Here's the thing:" (D-149).
   - Active voice, with the actor named.
   - No adverb propping up a weak verb. Use the number or a stronger verb.
   - Say what a thing does. A sentence that could sit unchanged in another project's docs says nothing, so cut it.
   - Sentence-case headings, straight quotes, no decorative emoji.
+  - Write for a reader who reads English literally, often as a second language. Every concrete detail must be true and must matter: "a browser with 40 tabs open" becomes "40 tabs", and a time or a place stays only if it is true and changes something. Write the literal meaning instead of an idiom. No memes or in-jokes.
+- **Explain the system to the person reading.** In the slice issue and in chat, answer five questions in plain words. What enters the system, and what can a person see when it works? Which component decides each step, where is progress stored, and what passes work on? What happens on a refusal, an interruption, a retry and two people acting at once? Which safety rules apply, and which checks show they hold? What needs a person's decision, and what does the recommended option cost? At the read-back these describe the plan; the done stage answers them again with the evidence. Name a file, function, column or variable only when the reader needs it to act or to check a claim, and give its path when you do.
 
 ### 18.8 Running a slice with subagents
 
