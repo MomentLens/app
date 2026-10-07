@@ -1,5 +1,9 @@
+# Codex loads this file only once you trust the project (Handbook §9).
+#
+# Root AGENTS.md plus apps/mobile/AGENTS.md pass Codex's default 32 KiB cap on the instruction
+# files it reads, so a session started in apps/mobile/ lost part of them. Start Codex at the
+# repository root anyway; this keeps the files whole when someone does not.
+project_doc_max_bytes = 65536
+
 [shell_environment_policy]
 inherit = "core"
-
-[shell_environment_policy.set]
-CLAUDE_CODE_SUBAGENT_MODEL = "sonnet"

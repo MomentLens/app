@@ -165,6 +165,13 @@ report(
 
 if (run('gh auth status') === null)
   warn('gh', 'missing or not logged in, so /slice asks you instead of checking dependencies');
+// The slice skill asks GitHub whether you are a code owner. A token without org read access
+// fails that call, and the skill then treats a code owner's stack like anyone else's.
+else if (run('gh api orgs/MomentLens/teams/maintainers/members --silent') === null)
+  warn(
+    'gh',
+    'this token cannot read the MomentLens team list; run gh auth refresh -s read:org, and ask Ukasha if it still fails',
+  );
 
 // Claude Code reads AGENTS.md from 2.1.277 on, and only where no CLAUDE.md exists (D-116). An
 // older version, or a CLAUDE.md in the repo or any folder above it, leaves the agent with no
@@ -180,7 +187,41 @@ if (claudeGot)
     `${MIN_CLAUDE} or later`,
     'claude update',
   );
-else warn('claude', `not on PATH; the agent you use must be Claude Code ${MIN_CLAUDE} or later`);
+else
+  warn(
+    'claude',
+    `not on PATH; if you use Claude Code, it must be ${MIN_CLAUDE} or later. Codex is checked below`,
+  );
+
+// Codex loads .codex/config.toml only for a trusted project, and that file raises the size cap
+// that keeps root and apps/mobile AGENTS.md whole. Codex's docs set no minimum version, so this
+// reports the version and checks the trust. Trust is recorded in the user's Codex config, against
+// the main clone's path; a worktree shares it.
+const codexGot = firstVersion(run('codex --version'));
+if (codexGot) {
+  const codexHome = process.env.CODEX_HOME || join(homedir(), '.codex');
+  let userConfig = '';
+  try {
+    userConfig = readFileSync(join(codexHome, 'config.toml'), 'utf8');
+  } catch {
+    // No user config yet, so nothing is trusted.
+  }
+  const common = run('git rev-parse --path-format=absolute --git-common-dir');
+  const paths = [root, common ? dirname(common.split('\n')[0]) : null].filter(Boolean);
+  const trusted = paths.some((p) => {
+    const at = userConfig.indexOf(`[projects."${p}"]`);
+    if (at === -1) return false;
+    const table = userConfig.slice(at).split(/\n\[/)[0];
+    return /^\s*trust_level\s*=\s*"trusted"/m.test(table);
+  });
+  report(
+    trusted,
+    'codex trust',
+    `codex ${codexGot[0]}, ${trusted ? 'trusted' : 'not trusted'}`,
+    'this repo trusted',
+    'Start codex at the repo root and trust the project when it asks (Handbook §9)',
+  );
+}
 
 const shadows = [];
 for (let dir = root, prev = ''; dir !== prev; prev = dir, dir = dirname(dir)) {
