@@ -5,10 +5,10 @@ queue and the real `media` table do: the read order, read_ct, unhiding, the one-
 writes and the lock.
 
 It skips while DATABASE_URL is unset. `--dev-sql` reads DATABASE_URL from the repo root's .env
-when it is unset and fails instead of skipping, which is how CI runs it
-(.github/workflows/worker-sql.yml). Each test makes its own pgmq queue inside the rolled-back
-transaction and never reads `jobs`. The lock test uses a random key, never the worker's, so a
-running dev server worker is not disturbed.
+when it is unset and fails instead of skipping, which is how CI runs it (scripts/verify.mjs, in
+the dev-project job of .github/workflows/ci.yml). Each test makes its own pgmq queue inside the
+rolled-back transaction and never reads `jobs`. The lock test uses a random key, never the
+worker's, so a running dev server worker is not disturbed.
 """
 
 import os

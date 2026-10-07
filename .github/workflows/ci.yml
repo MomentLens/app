@@ -1,12 +1,17 @@
-# Lint, typecheck, test and build on every PR and every push to main (Handbook §11).
-# The worker's job runs Ruff and pytest with Postgres and R2 faked. Its SQL against the dev
-# project runs in worker-sql.yml (D-123).
+# Lint, typecheck, test and build on every PR and every push to main (Handbook §11). Every check
+# runs through scripts/verify.mjs, the same script a developer and slice-verifier run, so CI and
+# local verification cannot drift (D-149). --strict fails a check this job cannot run.
+#
+# The worker's job runs Ruff and pytest with Postgres and R2 faked. The dev-project job runs the
+# RLS negative test (D-106) and the worker's SQL (D-123) against the shared dev project.
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  # Runs the dev-project job whatever changed, as rls.yml and worker-sql.yml could be run by hand.
+  workflow_dispatch:
 
 # A new push to a PR cancels that PR's older run. Runs on main always finish.
 concurrency:
@@ -41,33 +46,27 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Dangling citations, code fences that are unbalanced or indented out of use, a heading
-      # the parser cannot see, a D-nn heading it cannot read, an amendment the older entry does
-      # not record, duplicate slugs, section numbers and ids, a note naming a slice that does
-      # not exist, a spec section nothing points at, a Codex agent copy that drifted, and a
-      # crash in the brief builder. Retrieval never fails the build; only this does. The tests
-      # run each of those rules against a fixture.
-      - name: Check docs cross-references
-        run: |
-          node scripts/doc.mjs check
-          node --test 'scripts/*.test.mjs'
-      - run: pnpm format:check
-      - run: pnpm lint
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm --filter api build
+      # docs is the docs gate and its fixtures: dangling citations, code fences that are
+      # unbalanced or indented out of use, a heading the parser cannot see, a D-nn heading it
+      # cannot read, an amendment the older entry does not record, duplicate slugs, section
+      # numbers and ids, a note naming a slice that does not exist, a spec section nothing points
+      # at, a Codex agent copy that drifted, and a crash in the brief builder. Retrieval never
+      # fails the build; only this does. Then the format check, and lint, typecheck, test and the
+      # API build for every workspace package.
+      - run: node scripts/verify.mjs --strict docs format packages
 
   worker:
     name: Worker, Ruff and pytest
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: worker
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
 
       - uses: actions/setup-python@v7
         with:
@@ -76,7 +75,64 @@ jobs:
           cache-dependency-path: worker/requirements*.txt
 
       - run: pip install --requirement requirements-dev.txt
-      - run: ruff check .
-      - run: ruff format --check .
+        working-directory: worker
+
       # tests/test_dev_sql.py skips here, because this job has no DATABASE_URL.
-      - run: pytest
+      - run: node scripts/verify.mjs --strict worker
+
+  dev-project:
+    # The "main: CI" ruleset requires this one too (D-149), so it has to report on every PR: it
+    # passes at once when nothing it tests changed. A fork gets no secrets, so the job skips there,
+    # which GitHub counts as a pass, as it did for rls.yml. The stable project's secret key is
+    # never stored in GitHub.
+    name: RLS and worker SQL, dev project
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HUSKY: 0
+      BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'origin/main' }}
+      FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+    steps:
+      # The whole history, so the script can compare the PR with the branch it targets.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - id: plan
+        run: node scripts/verify.mjs --plan rls worker-sql --base "$BASE" $FORCE
+
+      - if: steps.plan.outputs.rls == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          cache: true
+
+      - if: steps.plan.outputs.rls == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - if: steps.plan.outputs.worker_sql == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: worker/.python-version
+          cache: pip
+          cache-dependency-path: worker/requirements*.txt
+
+      - if: steps.plan.outputs.worker_sql == 'true'
+        run: pip install --requirement requirements-dev.txt
+        working-directory: worker
+
+      # test:rls sets REQUIRE_SUPABASE and --dev-sql fails without DATABASE_URL, so a missing
+      # secret fails the run instead of skipping. Each SQL test makes its own pgmq queue inside a
+      # transaction that rolls back, so it never reads `jobs`.
+      - name: Run the RLS and worker SQL tests that apply
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_DEV_PUBLISHABLE_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          DATABASE_URL: ${{ secrets.SUPABASE_DEV_DATABASE_URL }}
+        run: node scripts/verify.mjs --strict rls worker-sql --base "$BASE" $FORCE

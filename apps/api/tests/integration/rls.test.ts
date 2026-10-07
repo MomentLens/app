@@ -16,8 +16,8 @@
 //
 // `pnpm --filter api test:rls` loads them from the root .env when it exists and sets
 // REQUIRE_SUPABASE, so a missing value fails there instead of skipping. Plain `pnpm test` skips
-// this file. CI runs test:rls in .github/workflows/rls.yml with the dev project's keys as
-// repository secrets (D-106).
+// this file. CI runs test:rls through scripts/verify.mjs in the dev-project job of
+// .github/workflows/ci.yml, with the dev project's keys as repository secrets (D-106).
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it, jest } from '@jest/globals';
