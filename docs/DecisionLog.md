@@ -550,6 +550,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Why.** Rule 2 exists so the source of truth does not drift with each agent session. An owner deciding every change keeps that property. Typing the text by hand adds nothing to it.
 **Rejected.** Writing the file by hand, which costs the owner's time and protects nothing that the owner's review does not.
 **Cost.** Ukasha reviews every PR that touches the file, which adds to the bottleneck WorkSlices already warns about.
+**Amended (see D-107).** The done stage writes a slice's `docs/ARCHITECTURE.md` change before the stack merges, as its own commit on the top branch, and Ukasha approves it in that PR. "In the same PR" means that commit, made before the merge.
 
 ### D-76: Development runs on the Oracle instance; the M1 demo stack goes up a month before the demo
 **Decision.** Amends D-50 and Handbook §13 and Handbook §14.0 Phase 0. All three developers build against the Oracle instance on the dev Supabase project and the dev R2 bucket. The M1 demo stack (API, worker, Cloudflare named tunnel, stable project and bucket) goes up one month before the demo, at the start of Phase 7. The tunnel leaves Phase 0.
@@ -795,6 +796,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-109).** S-01 adds `@aws-sdk/s3-request-presigner`, with `@aws-sdk/client-s3`, for the avatar function, so S-12 finds both installed.
 **Amended (see D-110).** `packages/shared-types` holds a second function, the one that sorts an event into Active, Upcoming or Past.
 **Amended (see D-121).** The status function is two, `subEventStatus(subEvent, at)` and `currentSubEvent(subEvents, at)`. Both take an instant, so the API can ask at a reading's time.
+**Amended (see D-140).** Account Settings shows Upload over Mobile Data and Camera Starts In under "On This Phone", with Appearance and Storage, and a footer there says these settings stay on this phone.
 
 ### D-106: The RLS negative test runs in CI against the dev project
 **Decision.** Keeps D-73's access model and changes where its test runs. A workflow runs `apps/api`'s `test:rls` against the dev project on every pull request that touches `supabase/` or `apps/api/`, with the dev project's URL, publishable key and secret key as repository secrets. The stable project's secret key never reaches GitHub.
@@ -846,6 +848,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Creating the profile with an API call after `signUp`, which leaves an account with no profile when the app dies in between. `getUser` on every request, a round trip to Auth each time. supabase-js's default global sign-out, which logs out the other device. Hiding a Do Not Publish user's avatar and reference photos from the user too, which protects them from nobody and leaves them managing references they cannot see. `expo-secure-store` for the session, a native package and a rebuild on every machine.
 **Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
 **Amended (see D-129).** The avatar is hidden from everyone but the user only where an event in which their membership has Do Not Publish on shows them.
+**Amended (see D-141).** The profile photo is never a reference, so S-20 sets one with no `profile` reference and no `reference_process` message. A reference photo belongs to one event, its key carries that event, and only its owner gets it presigned.
 
 ### D-110: Event rulings from S-02's read-back
 **Decision.** Amends D-105. Ukasha ruled on each of these on 2026-09-25.
@@ -965,6 +968,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** A Claude Code older than 2.1.277, or one stray `CLAUDE.md`, leaves an agent with no project rules and no error, and the checks catch it only when someone runs them. The dev server runs one branch at a time for all three phones. A migration pushed from an unmerged branch is on the shared database before anyone has reviewed it. Top-down merging reruns CI once per PR in the stack.
 **Reopen if.** An agent is found working without the rules, or two developers need the dev server on different branches in the same week.
 **Amended (see D-117).** The done stage no longer asks for a teammate's review. GitHub requests the code owners', and a code owner's own slice keeps no discussion log.
+**Amended (see D-120).** A code owner's own slice keeps a discussion log after all, and the done stage copies it into the top PR like any other.
 
 ### D-117: Code owners review every PR into main
 **Decision.** Amends D-107 and D-116. Ukasha ruled on 2026-10-01.
@@ -1206,6 +1210,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Reopen if.** Testers turn it on in every event they join, which says they wanted one switch.
 **Amended (see D-143).** Until S-29 supplies event-scoped avatar privacy, S-06 returns no attendee avatar. S-29 replaces that staging rule with this event-scoped rule through the shared presigner.
 **Amended (see D-144).** Reject keeps the row as `removed`, so it keeps the flag too. S-29 makes Cancel Request retain the row with status set to `removed` instead of deleting it.
+**Amended (see D-141).** The accepted reference that turns Do Not Publish on in an event is one the person added to that event, and matching there uses only that event's references.
 
 ### D-130: Only the uploader or the Admin deletes a photo, and nobody restores it
 **Decision.** Amends D-42, D-96 and D-123, and spec §2.5.6, §2.5.7 and §4.21.
