@@ -223,15 +223,22 @@ const headings = (lines) => {
       if (line.includes('-->')) comment = null;
       return;
     }
-    const open = line.lastIndexOf('<!--');
-    if (open !== -1 && !line.slice(open).includes('-->')) {
+    // Only a line that opens with <!-- starts a comment block, as in CommonMark. A <!-- later
+    // in a line, such as in a code span, used to hide every line down to the next -->.
+    if (/^ {0,3}<!--/.test(line) && !line.includes('-->')) {
       code[i] = true;
       comment = i + 1;
       return;
     }
     if (INDENTED_HEADING.test(line)) bad.push({ code: 'indented-heading', line: i + 1 });
-    else if (SETEXT.test(line) && i > 0 && !code[i - 1] && !NOT_PARAGRAPH.test(lines[i - 1]))
-      bad.push({ code: 'setext-heading', line: i + 1 });
+    else if (SETEXT.test(line) && i > 0 && !code[i - 1] && !NOT_PARAGRAPH.test(lines[i - 1])) {
+      // An underline cannot continue a list item or a quote, so a --- under an item's
+      // continuation line is a rule. Find where the block above starts.
+      let j = i - 1;
+      while (j > 0 && !code[j - 1] && lines[j - 1].trim()) j--;
+      if (!/^ {0,3}([-*+]\s|\d+[.)]\s|>)/.test(lines[j]))
+        bad.push({ code: 'setext-heading', line: i + 1 });
+    }
     const h = line.match(HEADING);
     if (h) out.push({ level: h[1].length, title: h[2], line: i + 1 });
   });
@@ -522,7 +529,8 @@ const amendedBy = (c) =>
     .filter(Boolean)
     .flatMap((m) => m[1].match(/\bD-\d+\b/g) ?? []);
 
-const citations = (text) => {
+// `numbered` reads arch:3 forms. Off for code, where `{hb:2}` is an object literal.
+const citations = (text, { numbered = true } = {}) => {
   const clean = text;
   const out = [];
   const secs = [...clean.matchAll(SECTION)].map((m) => ({
@@ -560,7 +568,7 @@ const citations = (text) => {
       slug: `${LABELS.find(([n]) => n === m[1])[1]}/${m[2]}`,
       at: m.index,
     });
-  for (const m of clean.matchAll(NUMREF))
+  for (const m of numbered ? clean.matchAll(NUMREF) : [])
     out.push({
       kind: 'section',
       surface: m[0],
@@ -731,7 +739,7 @@ export const buildIndex = ({ wide = false } = {}) => {
     const abs = join(root, ...rel.split('/'));
     if (!existsSync(abs)) continue;
     const text = readFileSync(abs, 'utf8');
-    for (const cit of citations(text)) {
+    for (const cit of citations(text, { numbered: GATED.has(posix(rel)) })) {
       const to = target(cit, null);
       if (!to) {
         if (GATED.has(posix(rel)))
@@ -757,24 +765,27 @@ export const buildIndex = ({ wide = false } = {}) => {
     if (c.file !== 'dlog' || !c.key) continue;
     const decision = c.selfBody.match(/^\*\*Decision\.\*\*(.*)$/m);
     if (!decision) continue;
-    const first = decision[1].split(/\.(?=\s|$)/)[0];
-    for (const clause of first.matchAll(VERB_CLAUSE)) {
-      const verb = clause[1].toLowerCase();
-      for (const [id] of clause[2].matchAll(/\bD-\d+\b/g)) {
-        const t = chunks.get(byKey.get(id));
-        if (!t || t.flags.includes('superseded')) continue;
-        if (verb === 'amends' && amendedBy(t).includes(c.key)) continue;
-        errors.push({
-          code: 'missing-backlink',
-          file: t.path,
-          line: t.line,
-          msg:
-            verb === 'amends'
-              ? `${c.key} amends ${id}, but ${id} has no "Amended (see ${c.key})" line. Add one saying what ${c.key} changed in ${id}`
-              : `${c.key} ${verb} ${id}, but ${id}'s heading does not say ~~(${verb === 'voids' ? 'VOID, see' : 'SUPERSEDED by'} ${c.key})~~`,
-        });
+    for (const sentence of decision[1].split(/\.(?=\s|$)/))
+      for (const clause of sentence.matchAll(VERB_CLAUSE)) {
+        const verb = clause[1].toLowerCase();
+        for (const [id] of clause[2].matchAll(/\bD-\d+\b/g)) {
+          const t = chunks.get(byKey.get(id));
+          if (!t) continue;
+          if (verb === 'amends' && (t.flags.includes('superseded') || amendedBy(t).includes(c.key)))
+            continue;
+          // A supersede or void has to be the one the old heading names.
+          if (verb !== 'amends' && t.supersededBy === c.key) continue;
+          errors.push({
+            code: 'missing-backlink',
+            file: t.path,
+            line: t.line,
+            msg:
+              verb === 'amends'
+                ? `${c.key} amends ${id}, but ${id} has no "Amended (see ${c.key})" line. Add one saying what ${c.key} changed in ${id}`
+                : `${c.key} ${verb} ${id}, but ${id}'s heading does not say ~~(${verb === 'voids' ? 'VOID, see' : 'SUPERSEDED by'} ${c.key})~~`,
+          });
+        }
       }
-    }
   }
 
   const byAlias = {};

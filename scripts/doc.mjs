@@ -122,12 +122,22 @@ const body = (c, self = false) => {
 // line replaced it. Printed, they come first under one label. The file keeps its order,
 // because the log is append-only.
 const CHANGED = 'Changed since. These lines override the entry below:';
+// Each decision in the printed text is reordered on its own, so a group heading printed whole
+// keeps every amendment under the decision it belongs to.
 const amendedFirst = (c, text) => {
   if (c.file !== 'dlog') return text;
-  const [head, ...rest] = text.split('\n');
-  const changes = rest.filter((l) => AMENDED.test(l));
-  if (!changes.length) return text;
-  return [head, CHANGED, ...changes, ...rest.filter((l) => !AMENDED.test(l))].join('\n');
+  const blocks = [];
+  for (const line of text.split('\n'))
+    if (/^#{1,6}\s+D-\d+\b/.test(line) || !blocks.length) blocks.push([line]);
+    else blocks.at(-1).push(line);
+  return blocks
+    .map(([head, ...rest]) => {
+      const changes = rest.filter((l) => AMENDED.test(l));
+      if (!changes.length || !/^#{1,6}\s+D-\d+\b/.test(head)) return [head, ...rest];
+      return [head, CHANGED, ...changes, ...rest.filter((l) => !AMENDED.test(l))];
+    })
+    .flat()
+    .join('\n');
 };
 
 const out = [];
@@ -191,11 +201,11 @@ const cost = (c) => (menued(c) ? c.selfTokens : c.tokens);
 const gist = (c) =>
   c.flags.includes('superseded') ? `${c.retiredAs} ${c.supersededBy}. ${c.abstract}` : c.abstract;
 
-// Everything a printed chunk cites, its children's citations included when it prints whole.
-// arch §1's child cites D-55 and D-130; reading only the parent's own body left both out of
-// S-01's brief and its one-hop list.
-const citesIn = (c) =>
-  menued(c) ? c.cites : [...c.cites, ...c.children.flatMap((k) => citesIn(C[k]))];
+// Everything a printed chunk cites, every descendant's citations included when it prints whole,
+// since a whole parent prints its whole subtree. arch §1's child cites D-55 and D-130; reading
+// only the parent's own body left both out of S-01's brief and its one-hop list.
+const subtreeCites = (c) => [...c.cites, ...c.children.flatMap((k) => subtreeCites(C[k]))];
+const citesIn = (c) => (menued(c) ? c.cites : subtreeCites(c));
 
 const plan = (slice) => {
   const expand = [slice.slug];
@@ -418,6 +428,7 @@ const mdAgent = (t) => {
   return { name: field('name'), description: field('description'), body: m[2].trim() };
 };
 const tomlAgent = (t) => {
+  // Any other backslash is a TOML escape that would change the text, or one Codex refuses.
   const unescape = (s) => s?.replace(/\\(["\\])/g, '$1');
   const str = (k) =>
     t.match(new RegExp(`^${k}[ \\t]*=[ \\t]*"((?:[^"\\\\]|\\\\.)*)"[ \\t]*$`, 'm'))?.[1];
@@ -439,6 +450,14 @@ const agentDrift = (mdText, tomlText) => {
   const lf = (t) => t.split(/\r\n|\r/).join('\n');
   const md = mdAgent(lf(mdText));
   const toml = tomlAgent(lf(tomlText));
+  const escape = lf(tomlText)
+    .split('\n')
+    .findIndex((l) => /\\(?!["\\])/.test(l.replace(/\\\\/g, '')));
+  if (escape !== -1)
+    return {
+      line: escape + 1,
+      msg: 'holds a backslash TOML reads as an escape, which Codex either changes or refuses; write it as \\\\, or reword the line in both twins',
+    };
   if (!md)
     return { line: 1, msg: 'its .claude/agents/ twin has no frontmatter to compare against' };
   for (const k of ['name', 'description'])
