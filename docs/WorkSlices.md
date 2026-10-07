@@ -293,18 +293,21 @@ TanStack Query for server state, Zustand for UI state only, expo-sqlite for
 the upload queue. NativeWind v4 tokens, no hardcoded hex. No localStorage or
 AsyncStorage anywhere. No Node APIs in the app.
 
-Order of work: follow sections 1 to 6 of .claude/skills/slice/SKILL.md
-exactly, the same stages the /slice command runs, each in a fresh session
-that starts from the slice card in the issue (Handbook §18.8). The slice
-ships as a stack of PRs, each branch cut from the one below; follow "The
-stack" in that file. Keep its "Discussion log" in every stage and post it
-to the issue before the stage ends.
-0. Check that the issue of every slice in "Depends on" is closed. If one is
-   open, stop and say which.
-1. Read the slice back: the seven items in section 2, every one required.
-   Stop. I will either say go or fix the docs first. Then write the card.
-2. Write the zod schema alone and open it as the first code PR of the
-   stack. Do not wait for a merge.
+Order of work: follow .claude/skills/slice/SKILL.md and, for each stage,
+its file in .claude/skills/slice/stages/, exactly, the same stages the
+/slice command runs, each in a fresh session that starts from the slice
+card in the issue (Handbook §18.8). The slice ships as a stack of PRs,
+each branch cut from the one below; follow "The stack" in SKILL.md. Keep
+its "Decision ledger" in every stage and post the stage's entry to the
+issue before the stage ends.
+0. Check that the issue of every slice in "Depends on" is closed, and read
+   its readiness record. If one is open, stop and say which.
+1. Read the slice back: the seven items in stages/readback.md, every one
+   required. Stop. I will either say go or fix the docs first. Then write
+   the explanation and the card into the issue.
+2. Unless the card says the slice has no schema stage, write the zod
+   schema alone and open it as the first code PR of the stack. Do not
+   wait for a merge.
 3. Build one package per session in the order the card sets out, each
    negative test first, each on its own branch and PR. For screens, ask me
    once for designs, and improvise any screen I have none for.
@@ -313,7 +316,7 @@ to the issue before the stage ends.
    list the stack for review.
 5. After the review, and only while the readiness record is current:
    merge the stack from the top down with Rebase and merge, then clean
-   up, as section 6 describes.
+   up, as stages/cleanup.md describes.
 
 The docs are a draft, not a contract. If two sections disagree or one cannot
 work, say so instead of picking one. The numbered invariants in AGENTS.md and

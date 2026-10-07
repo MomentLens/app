@@ -51,7 +51,7 @@ A slice brief opens with its phase's own instructions. Those apply to every slic
 
 Use the command rather than reading by hand. It carries the phase paragraph, the warning paragraph and the superseded flags that hand retrieval drops in silence.
 
-If `scripts/doc.mjs` fails, section 1 of `.claude/skills/slice/SKILL.md` gives the grep fallback.
+If `scripts/doc.mjs` fails, `.claude/skills/slice/stages/readback.md` gives the grep fallback.
 
 Never paste a doc into this file.
 
@@ -113,9 +113,9 @@ packages/shared-types/           zod schemas, the app↔API contract, and the su
 supabase/migrations/
 e2e/             Maestro flows
 docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
-.claude/skills/  /slice, which runs a work slice; .agents/skills/slice is Codex's copy, which the gate keeps identical
-.claude/agents/  slice-auditor and slice-verifier, the subagents /slice calls; .codex/agents holds Codex's copies
-scripts/         doc.mjs (the docs by id), doctor.mjs (check:machine), provision.sh, deploy.sh
+.claude/skills/  /slice, which runs a work slice: SKILL.md routes to one file per stage in stages/; .agents/skills/slice is Codex's copy, which the gate keeps identical
+.claude/agents/  slice-auditor and slice-verifier, the subagents /slice calls; .codex/agents holds Codex's copies, which the gate checks
+scripts/         doc.mjs (the docs by id), verify.mjs (CI's checks), readiness.mjs, doctor.mjs (check:machine), provision.sh, deploy.sh
 .env.example     every variable, no values, committed
 ```
 

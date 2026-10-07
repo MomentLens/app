@@ -887,7 +887,7 @@ Agents read `docs/` through `scripts/doc.mjs`, which addresses every heading by 
 
 ### 18.8 Running a slice with subagents
 
-The procedure is `.claude/skills/slice/SKILL.md`; the two subagents are in `.claude/agents/`. Both are committed, so every developer runs the same ones. This section is why they are shaped that way, and the cheat-sheet.
+The procedure is `.claude/skills/slice/SKILL.md`, a short router holding what every stage shares, and one file per stage in `.claude/skills/slice/stages/`, which a session reads for its own stage only. The two subagents are in `.claude/agents/`. All of it is committed, so every developer runs the same steps. This section is why they are shaped that way, and the cheat-sheet.
 
 **What a session costs before anyone types.** Count it with `tokens()` in `scripts/docindex.mjs`, which leaves out the agent tool's own system prompt and tool definitions. Every session loads root `AGENTS.md`, and a slice session loads the skill too. Claude Code loads a package's `AGENTS.md` when it opens a file in that package with the Read tool, and at no other time. Codex loads the `AGENTS.md` files from the repository root down to the folder it started in and never one below it, so a Codex session reads a package's file itself before working there. `doc toc slices` prints what each slice's brief costs today. Repeated fixed files are served from the prompt cache, so they cost less money than their token count, but they still fill the window.
 
