@@ -1,0 +1,4 @@
+# Codex reads this beside the skill. Claude Code's SKILL.md says disable-model-invocation: true,
+# so neither tool starts a slice unless someone types /slice or $slice.
+policy:
+  allow_implicit_invocation: false
