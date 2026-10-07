@@ -20,7 +20,8 @@ apps/mobile/android/
 apps/api/dist/
 
 # Python / worker
-worker/.venv/
+# No trailing slash, so a symlinked venv in a worktree is ignored as well as a folder.
+worker/.venv
 worker/**/__pycache__/
 *.pyc
 
