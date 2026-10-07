@@ -17,27 +17,34 @@ A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It 
 
 ## The rule that makes parallel work possible
 
-**The first code PR of any slice is the zod schema alone, and every handler and screen is built on a branch cut from it** (D-116).
+**The first code PR of any slice is the zod schema alone, and every handler and screen is built on a branch above it** (D-116).
 
 **The slice that first writes to a table owns its migration**, and its row cites that table's `arch:` heading. The two RLS policies belong to the slices that first need Realtime on them, and each gets a human read (D-68).
 
-Once the schema branch is pushed, the screen and the endpoint can be built at the same time on branches cut from it, against types that can be mocked, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
+Once the schema branch is pushed, each package is built on a branch cut from the one below it in the card's order, so the api branch sits on the schema branch and the mobile branch on the api branch, never beside it (hb §12). The endpoint and the screen compile against the same types, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
 
 ## Definition of done
 
-A slice is not done when the screen renders. It is done when all of these are true. The same list is in `.github/ISSUE_TEMPLATE/slice.md`, so every slice issue carries it as checkboxes.
+A slice is not done when the screen renders. It is done when all of these are true, in two steps (D-149). The done stage checks the first list and writes each item into the readiness record in the slice's issue: its result (met, not met, not applicable with the reason, or an exception), the head commit it applies to, where the evidence is and who or what supplied it. Cleanup checks the second list and refuses to merge while an item is missing, not met or stale, meaning the head moved since. An exception needs Ukasha's decision, recorded in the issue. The issue template carries the same items as the readiness record's rows.
 
-- [ ] zod schema in `packages/shared-types`, in its own PR at the bottom of the slice's code stack (D-116)
+**Ready for review**, the done stage:
+
+- [ ] zod schema in `packages/shared-types`, in its own PR at the bottom of the slice's code stack, unless the card says the slice has no schema stage (D-116, D-146)
 - [ ] RLS policy written, or noted as not applicable. Only `media` and `event` have one; everything else is enforced in the service layer (D-73)
-- [ ] **Read by a human before merging** if the slice touches any RLS policy, the image-serving endpoint's authorization check, the upload queue's state machine, or auth and invite-token handling (D-68)
-- [ ] A negative test for each of those surfaces, and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-73)
+- [ ] A negative test for each human-read surface the slice touches (an RLS policy, the image-serving endpoint's authorization check, the upload queue's state machine, auth and invite-token handling), and a negative authorization test for every new endpoint: another user, another event, the wrong role (D-68, D-73)
 - [ ] Loading, empty, and error states exist, not just the happy path (Handbook §15)
 - [ ] Works on a physical device, not only a simulator, if it touches camera, GPS, or the queue (Handbook §10)
 - [ ] Unit test for any pure logic in it (Handbook §11.2)
 - [ ] Dark mode uses tokens, no hardcoded hex
-- [ ] Every PR in the stack approved by a code owner, or for a code owner's own slice, `/code-review` run on each (Handbook §12, D-117)
-- [ ] Every stage's discussion log is in the top PR, a code owner's slice included (D-116, D-120)
-- [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, written by the done stage as its own commit, with Ukasha reviewing that change (D-75, D-107)
+- [ ] `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, written by the done stage as its own commit and named in that PR for Ukasha's review (D-75, D-107)
+- [ ] Every PR in the stack names the human-read surfaces it touches, or says none, and links to the slice's issue
+- [ ] `scripts/verify.mjs` passes across the whole stack after the last edit, and CI is green on that head (D-149)
+
+**Ready to merge**, cleanup:
+
+- [ ] **Read by a human before merging** if the slice touches a human-read surface (D-68)
+- [ ] Every PR in the stack approved by a code owner, or for a code owner's own slice, `/code-review` run on each, with a comment naming the reviewed head and base (Handbook §12, D-117, D-149)
+- [ ] The readiness record is current: every item above is met or not applicable at the head being merged, or carries an exception Ukasha recorded in the issue (D-149)
 
 ## Ownership
 
@@ -268,7 +275,7 @@ The spec describes these and no slice above owns them. Fold each into a slice or
 
 # The handoff template
 
-In Claude Code, type `/slice S-XX` instead. Use the template below with any other agent tool; it points at the same skill file, so every developer's agent runs the same steps. Fill the blanks from `node scripts/doc.mjs slice S-XX`, which lists the sections to read. Nothing else.
+In Claude Code, type `/slice S-XX` instead, and in Codex `$slice S-XX`, started at the repository root. Use the template below with an agent tool that cannot run skills; it points at the same skill file, so every developer's agent runs the same steps. Fill the blanks from `node scripts/doc.mjs slice S-XX`, which lists the sections to read. Nothing else.
 
 ```
 Building slice S-XX: <name>, from MomentLens.
@@ -302,18 +309,20 @@ to the issue before the stage ends.
 3. Build one package per session in the order the card sets out, each
    negative test first, each on its own branch and PR. For screens, ask me
    once for designs, and improvise any screen I have none for.
-4. Report every Definition of done item with its evidence, put every
-   stage's discussion log in the top PR, and list the stack for review.
-5. After the review: merge the stack from the top down with Rebase and
-   merge, then clean up, as section 6 describes.
+4. Make the last edits, verify the whole stack, answer the explanation
+   in the issue again with evidence, write the readiness record, and
+   list the stack for review.
+5. After the review, and only while the readiness record is current:
+   merge the stack from the top down with Rebase and merge, then clean
+   up, as section 6 describes.
 
 The docs are a draft, not a contract. If two sections disagree or one cannot
 work, say so instead of picking one. The numbered invariants in AGENTS.md and
 the decision log are decisions rather than descriptions: raise those, do not
 route around them.
 
-Done means: every item of the Definition of done in docs/WorkSlices.md, each
-reported as met or not met with its evidence.
+Done means: the readiness record in the issue gives every Definition of done
+item in docs/WorkSlices.md its result, the head commit and the evidence.
 
 [paste screen designs here, if you have any]
 ```
@@ -328,7 +337,7 @@ reported as met or not met with its evidence.
 
 **Use `node scripts/doc.mjs slice <id>`.** `doc toc slices` lists every slice with what its brief costs, so you can see the price before you pay it.
 
-Measured over all 41 slices with `cl100k_base`, counting the tool-call framing as well as the text: a Bash call costs 90 to 112 tokens of envelope before any output (D-80). The briefs have changed since, and no brief holds a menu now; `doc toc slices` prints what each one costs today.
+Measured on 2026-09-21 over the 41 slices there were then, with `cl100k_base`, counting the tool-call framing as well as the text: a Bash call costs 90 to 112 tokens of envelope before any output (D-80). The briefs have changed since, and no brief holds a menu now; `doc toc slices` prints what each one costs today.
 
 | Loading all 41 slices | Tokens | Tool calls |
 |---|---|---|
