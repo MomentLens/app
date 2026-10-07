@@ -803,6 +803,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** The only RLS negative test had run on no machine. `pnpm test` skips it without the keys, and CI had none. An RLS mistake fails silently (root invariant 14).
 **Rejected.** A Definition-of-done line saying someone ran it by hand, which was the rule before and never happened.
 **Cost.** GitHub holds a key that bypasses RLS on the dev project's data. A pull request from a fork gets no secrets, so the job skips there.
+**Amended (see D-149).** The test runs in one CI job on every pull request. The job runs `test:rls` when `supabase/` or `apps/api/` changed and passes at once otherwise, and it is a required check on `main`, so a failing RLS negative test blocks the merge. A fork's pull request still gets no secrets, and the job skips there.
 
 ### D-107: Process rulings from the pre-feature audit
 **Decision.** Amends D-80.
@@ -969,6 +970,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Reopen if.** An agent is found working without the rules, or two developers need the dev server on different branches in the same week.
 **Amended (see D-117).** The done stage no longer asks for a teammate's review. GitHub requests the code owners', and a code owner's own slice keeps no discussion log.
 **Amended (see D-120).** A code owner's own slice keeps a discussion log after all, and the done stage copies it into the top PR like any other.
+**Amended (see D-149).** Each stage posts one decision-ledger entry to the slice's issue in place of a discussion log, and the done stage copies nothing into the top PR. The issue body holds the explanation, the card and the readiness record, and cleanup merges a stack only while that record is current.
 
 ### D-117: Code owners review every PR into main
 **Decision.** Amends D-107 and D-116. Ukasha ruled on 2026-10-01.
@@ -983,6 +985,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** Every PR from outside the maintainers waits on their review. Nobody outside the maintainers reads the maintainers' code in review, and their slices leave no discussion log, so the others learn that code from the docs alone. A stack's bottom PR needs a second approval. A read-back answer that the code owners would have ruled differently is found only in review, after the code exists.
 **Reopen if.** PRs regularly sit waiting for a code-owner review, or read-back answers keep being rebuilt in review.
 **Amended (see D-120).** A code owner's own slice keeps a discussion log like everyone else's.
+**Amended (see D-149).** A stack also needs a current readiness record in its issue before it merges: every Definition of done item met or not applicable at the head being merged, or an exception Ukasha recorded in the issue. The `/code-review ran` comment names the reviewed head and base. "main: CI" also requires the job that runs the RLS and worker SQL tests.
 
 ### D-118: Navigation rulings from S-08's read-back
 **Decision.** Amends D-110 and D-115. Ukasha ruled on each of these on 2026-10-01 and let the routine calls stand.
@@ -1022,6 +1025,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Each stage's log in that stage's own PR instead of the issue, for every developer, which leaves no single record in the top PR and rewrites the done stage. Each log in its own PR and the top PR both, which puts every log in two places.
 **Cost.** A code owner's session spends a few hundred tokens a stage writing the log, and the code owner's top PR gets longer.
 **Reopen if.** Code owners' logs go unread in review, or a top PR's logs pass GitHub's 65,536-character cap on a description.
+**Amended (see D-149).** The logs become decision-ledger entries in the slice's issue, and the done stage no longer copies them into the top PR. A code owner's slice keeps its ledger there like everyone else's.
 
 ### D-121: Sub-event writes, Delay and the schedule read, from S-04's read-back
 **Decision.** Amends D-100 and D-105. Ukasha ruled on each of these on 2026-10-02.
@@ -1476,6 +1480,21 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Newest sub-event first on Home, which reverses D-137. One global capture-time order with a header wherever the sub-event changes, which repeats a section for every photo filed outside its sub-event's hours. A POST search endpoint for the album, which would be the one read in the app with a body. Serving the upload file to its uploader before processing, which adds an unblurred path no screen needs, since My Media shows its local thumbnails (D-145). An Album Closed banner in S-13, which needs the album state D-146 gives S-31.
 **Cost.** A Delay between two page loads can skip or repeat a section until the next refetch. Reading down Home, time runs forward at each header and backward inside a section. The album is empty offline. Nobody can filter to a removed member's photos by name.
 **Reopen if.** Testers read the grid's direction as a bug, or ask to filter to a former member's photos.
+
+### D-149: Rulings from the agent-system audit
+**Decision.** Amends D-106, D-116, D-117 and D-120, the colon bullet of hb §18.7 and this file's rule on retired entries. Ukasha ruled on 2026-10-07, from the audit of commit `cf139da`.
+- The slice issue is where a person reads a slice. Its body holds the explanation, written as the plan at the read-back and answered again with evidence at the done stage, then the card, then the readiness record. Each stage posts one decision-ledger entry to it. PRs carry review evidence and link to the issue. No PR repeats the explanation or the logs, and the done stage no longer copies logs into the top PR.
+- A ledger entry holds the decision, the reason, who made it, the date, the ids it touches and the card revision. Exact quotes stay for instructions that changed direction, answers to decision questions and anything a permission depends on.
+- The readiness record gives each Definition of done item its result, the head commit it applies to, where the evidence is and who supplied it. The done stage writes it after its last edit and a final verification, and a `/code-review ran` comment names the reviewed head and base. Cleanup refuses to merge while an item is missing, not met or stale. An exception needs Ukasha's decision recorded in the issue. The Definition of done splits into ready for review and ready to merge.
+- One script, `scripts/verify.mjs`, runs the checks for local verification and for CI. The RLS and worker SQL tests run in a job on every pull request, which passes at once when their paths did not change, and that job is a required check on `main`.
+- A brief prints what its phase paragraph cites, as it prints the row's own citations.
+- A superseded or void entry keeps its heading and its Decision line. The rest moves to git history, and a line under it names the commit to read it from.
+- hb §18.7 allows a colon before a list, an example or an explanation, never before a setup phrase. It also holds the literal-reader rule and the rule to explain the system in five questions rather than list files.
+- `.claude/settings.json` no longer enables the `expo` plugin. `ARCHITECTURE.md` §4 splits into three numbered parts, and slice rows cite the part they need.
+**Why.** The audit found every log stored twice, with the done stage loading all of them to copy them, and the system narrative written as file lists in the PRs. S-11 merged with its phone checks unmet, because cleanup checked only CI, approval and a review comment that named no commit. A failing RLS negative test, the check behind a human-read surface and root invariant 14, could not block a merge. A phase paragraph's citations reached none of its briefs, S-09's and S-14's among them. Three wordings of the writing rules disagreed on colons. The `expo` plugin entry did nothing on Ukasha's Mac, where the plugin is not installed, and no doc mentioned it. Retired entries held 4,362 tokens of this file that no brief prints, and Ukasha keeps their reasoning without needing it in the working tree.
+**Rejected.** The explanation in the top PR, which made the PR a third copy of the narrative. Word-for-word logs of every exchange. Copying the logs into the top PR as well. Merging on CI and review alone. Leaving the RLS tests optional, and making them required while they run only on some paths, which leaves GitHub waiting on a check that never reports. Listing phase-cited ids one hop out, which hides what the phase paragraph overrides. Keeping retired entries whole, the audit's recommendation. Moving them to a second file, which saves nothing per session and needs a parser change. Deleting retired headings too, which leaves 43 citations pointing at nothing. The colon wordings in hb §18.7 and in Ukasha's Codex file.
+**Cost.** A reviewer follows one link to the issue. The done stage writes the readiness record and cleanup reads it, and a merge can stop until an item has evidence or Ukasha records an exception. Every pull request runs the shared-service job, and those touching `supabase/`, `apps/api/` or `worker/` load the shared dev project. Phase 3 briefs grow by about 250 tokens, S-09's by about 2,000, Phase 2's by about 640. Reading why a retired decision stopped applying takes `git show`.
+**Reopen if.** A review misses something because it was one link away, the readiness record blocks a merge for a check that cannot run before the demo, the shared-service job fails on the dev project for reasons unrelated to the change, or a retired decision's reasoning is needed faster than git history gives it.
 
 ## Open items that are not decisions yet
 
