@@ -75,12 +75,13 @@ const walk = (rel, out = []) => {
 };
 
 // Every file an agent follows as instructions. A dangling citation in any of them sends the
-// agent to a section that is not there.
-const agentFiles = () => {
+// agent to a section that is not there. Codex reads its own copies of the two slice agents,
+// and those had drifted from Claude Code's with nothing checking them.
+const listed = (dir, ext) => {
   try {
-    return readdirSync(join(root, '.claude', 'agents'))
-      .filter((f) => f.endsWith('.md'))
-      .map((f) => `.claude/agents/${f}`);
+    return readdirSync(join(root, ...dir.split('/')))
+      .filter((f) => f.endsWith(ext))
+      .map((f) => `${dir}/${f}`);
   } catch {
     return [];
   }
@@ -93,11 +94,13 @@ const GATED = new Set([
   '.claude/skills/slice/SKILL.md',
   '.github/ISSUE_TEMPLATE/slice.md',
   '.github/pull_request_template.md',
-  ...agentFiles(),
+  ...listed('.claude/agents', '.md'),
+  ...listed('.codex/agents', '.toml'),
 ]);
-// The two retrieval scripts cite D-57 and §4.11 as usage examples, so scanning them puts
-// this tool in the blast radius of decisions it does not depend on.
-const SELF = /^scripts\/doc(index)?\.mjs$/;
+// The two retrieval scripts and their tests cite D-57 and §4.11 as usage examples or
+// fixtures, so scanning them puts this tool in the blast radius of decisions it does not
+// depend on.
+const SELF = /^scripts\/doc(index)?(\.test)?\.mjs$/;
 // Only `doc why` needs the code backlinks, and walking the tree for them costs more than
 // parsing all five docs. Everything else reads only the gated files that route to the docs.
 const sources = (wide) =>
@@ -158,46 +161,81 @@ const sentence = (text, min = 40) => {
   return out.length > 220 ? out.slice(0, 217).trimEnd() + '...' : out;
 };
 
-// Headings, with fence state respected. A shell comment inside a fenced block is exactly what
-// `grep -n '^#'` reads as an H1.
+// Three heading forms a renderer shows as headings and the parser cannot see. Each one either
+// merges a section into the one above it or, inside a comment, invents a section nobody sees.
+const INDENTED_HEADING = /^ {1,3}#{1,6}(\s|$)/;
+const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/;
+// A line a setext underline cannot follow and still make a heading: blank, a heading, a table
+// row, a quote, a list item, an HTML line, or another rule.
+const NOT_PARAGRAPH = /^\s*$|^ {0,3}(#|\||>|[-*+]\s|\d+[.)]\s|<|=+[ \t]*$|-+[ \t]*$)/;
+
+// Headings, with fence and comment state respected. A shell comment inside a fenced block is
+// exactly what `grep -n '^#'` reads as an H1. `code` marks every line inside a fence or an
+// HTML comment, fence lines included, so the slice-row and note scans skip what a reader
+// never sees as prose: a sample row in a fenced example used to become a real slice.
 const headings = (lines) => {
   const out = [];
   const stray = [];
+  const bad = [];
+  const code = new Array(lines.length).fill(false);
   // Fences pair from the top, so one stray fence flips every pair after it and the scan ends
   // on an innocent fence far below. The first block that swallows a numbered heading is
   // where the pairing went wrong.
   let suspect = null;
   let fence = null;
+  let comment = null;
   lines.forEach((line, i) => {
-    const f = line.match(FENCE);
-    if (f) {
-      const indent = f[1].length;
-      const mark = f[2][0];
-      const len = f[2].length;
-      // Four spaces turn a fence into code. Inside an open block a shorter run is ordinary
-      // content, which is how a ``` example sits inside a ````markdown block. Anything else
-      // is a fence someone indented by accident, and it reshapes the document in silence:
-      // an indented opener leaves every `#` in the block looking like a heading.
-      if (indent > 3) {
-        if (fence === null || (mark === fence.mark && len >= fence.len))
-          stray.push({ line: i + 1, indent, openedAt: fence && fence.line });
+    if (comment === null) {
+      const f = line.match(FENCE);
+      if (f) {
+        code[i] = true;
+        const indent = f[1].length;
+        const mark = f[2][0];
+        const len = f[2].length;
+        // Four spaces turn a fence into code. Inside an open block a shorter run is ordinary
+        // content, which is how a ``` example sits inside a ````markdown block. Anything else
+        // is a fence someone indented by accident, and it reshapes the document in silence:
+        // an indented opener leaves every `#` in the block looking like a heading.
+        if (indent > 3) {
+          if (fence === null || (mark === fence.mark && len >= fence.len))
+            stray.push({ line: i + 1, indent, openedAt: fence && fence.line });
+          return;
+        }
+        // A closer is the same character, at least as long, and carries no info string.
+        // A three-long closer ending a four-long opener silently truncates the section.
+        if (fence === null) fence = { mark, len, line: i + 1 };
+        else if (mark === fence.mark && len >= fence.len && !f[3].trim()) fence = null;
         return;
       }
-      // A closer is the same character, at least as long, and carries no info string.
-      // A three-long closer ending a four-long opener silently truncates the section.
-      if (fence === null) fence = { mark, len, line: i + 1 };
-      else if (mark === fence.mark && len >= fence.len && !f[3].trim()) fence = null;
+      if (fence !== null) {
+        code[i] = true;
+        if (!suspect && /^#{1,6}\s+\d+(\.\d+)*\.?\s/.test(line))
+          suspect = { line: fence.line, heading: i + 1 };
+        return;
+      }
+    }
+    // An HTML comment that does not close on its own line hides everything up to its `-->`.
+    // A heading in there used to become a section, splitting the body of the one above it.
+    if (comment !== null) {
+      code[i] = true;
+      if (HEADING.test(line.trimStart()))
+        bad.push({ code: 'heading-in-comment', line: i + 1, openedAt: comment });
+      if (line.includes('-->')) comment = null;
       return;
     }
-    if (fence !== null) {
-      if (!suspect && /^#{1,6}\s+\d+(\.\d+)*\.?\s/.test(line))
-        suspect = { line: fence.line, heading: i + 1 };
+    const open = line.lastIndexOf('<!--');
+    if (open !== -1 && !line.slice(open).includes('-->')) {
+      code[i] = true;
+      comment = i + 1;
       return;
     }
+    if (INDENTED_HEADING.test(line)) bad.push({ code: 'indented-heading', line: i + 1 });
+    else if (SETEXT.test(line) && i > 0 && !code[i - 1] && !NOT_PARAGRAPH.test(lines[i - 1]))
+      bad.push({ code: 'setext-heading', line: i + 1 });
     const h = line.match(HEADING);
     if (h) out.push({ level: h[1].length, title: h[2], line: i + 1 });
   });
-  return { out, open: fence, stray, suspect };
+  return { out, open: fence, stray, suspect, bad, code, comment };
 };
 
 // Derived from the body wherever possible, so almost nothing here is an authoring job.
@@ -226,7 +264,7 @@ const abstractOf = (c) => {
 const parse = (key, text) => {
   const cfg = FILES[key];
   const lines = text.split('\n');
-  const { out: heads, open, stray, suspect } = headings(lines);
+  const { out: heads, open, stray, suspect, bad, code, comment } = headings(lines);
   const chunks = [];
   // A note header naming a slice that does not exist is a typo that drops the note.
   const notesBad = [];
@@ -290,6 +328,7 @@ const parse = (key, text) => {
   if (key === 'slices') {
     const rows = [];
     lines.forEach((line, i) => {
+      if (code[i]) return;
       const m = line.match(ROW);
       if (!m || m[1] === 'ID') return;
       const cells = line.split('|').slice(1, -1);
@@ -347,16 +386,25 @@ const parse = (key, text) => {
     for (const c of rows)
       for (const d of c.deps) {
         const dep = byKey.get(d);
-        if (dep && dep.line > c.line)
+        if (d === c.key)
+          rowsBad.push({
+            line: c.line,
+            msg: `${c.key} depends on itself, so its dependency check waits on its own open issue. Take ${c.key} out of its Depends on cell`,
+          });
+        else if (dep && dep.line > c.line)
           rowsBad.push({
             line: c.line,
             msg: `${c.key} depends on ${d}, which is listed below it at line ${dep.line}. Move ${c.key} below it so the table reads in build order`,
           });
       }
+    // A paragraph that opens with a slice id in anything but bold is not a note, so it stays
+    // in the phase's prose and prints in the brief of every slice in the phase as if it were
+    // an instruction to all of them.
+    const UNBOLD = /^[*_]{0,3}(S-\d+[a-z]?|P0-\d+)\b/;
     let para = null;
     let inBlock = false;
     lines.forEach((line, i) => {
-      if (!line.trim() || line.startsWith('|') || line.startsWith('#')) {
+      if (code[i] || !line.trim() || line.startsWith('|') || line.startsWith('#')) {
         para = null;
         inBlock = false;
         return;
@@ -372,7 +420,15 @@ const parse = (key, text) => {
       if (inBlock) return;
       inBlock = true;
       const m = line.match(NOTE);
-      if (!m) return;
+      if (!m) {
+        const u = line.match(UNBOLD);
+        if (u)
+          rowsBad.push({
+            line: i + 1,
+            msg: `this paragraph opens with ${u[1]} but not in bold, so it is not ${u[1]}'s note and every brief in the phase prints it. Write **${u[1]} in bold, or open the paragraph with another word`,
+          });
+        return;
+      }
       if (!byKey.has(m[1])) return (notesBad.push({ line: i + 1, key: m[1] }), undefined);
       para = { start: i + 1, end: i + 1, lines: [line] };
       const c = byKey.get(m[1]);
@@ -423,7 +479,7 @@ const parse = (key, text) => {
     c.cites = [];
     c.citedBy = [];
   }
-  return { chunks, open, stray, suspect, notesBad, rowsBad, lines };
+  return { chunks, open, stray, suspect, notesBad, rowsBad, bad, comment, lines };
 };
 
 const PREFIXES = Object.entries(FILES).flatMap(([k, c]) => c.prefixes.map((p) => [p, k]));
@@ -435,7 +491,9 @@ const SECTION = new RegExp(
 );
 
 // "Handbook §5 and §7" elides the prefix on the second citation. A bare §n inherits the
-// nearest qualified one within 60 characters, then falls back to its own file, then the spec.
+// nearest qualified one within 60 characters of the same paragraph, then falls back to its own
+// file, then the spec. A blank line ends the inheritance, because a prefix at the end of one
+// paragraph says nothing about a § opening the next.
 // Most § citations in docs/ carry no prefix and resolve by that fallback, so it is
 // convention, not a guess, and the gate does not flag it. Some name a number that exists in
 // more than one document. The limit: in "Handbook §5, plus §2 of the spec" the bare
@@ -447,6 +505,22 @@ const LABELS = Object.entries(FILES).flatMap(([k, f]) =>
   [k, f.label].filter(Boolean).map((n) => [n, k]),
 );
 const SLUGREF = new RegExp(`\\b(${LABELS.map(([n]) => n).join('|')}):([a-z][a-z0-9_-]*)\\b`, 'g');
+// `doc arch:3` reads as arch §3 on the command line, so a doc writing arch:3 means the same.
+// The scanner used to need a letter after the colon and skipped it, so a dangling one passed.
+const NUMREF = new RegExp(`\\b(${LABELS.map(([n]) => n).join('|')}):(\\d+(?:\\.\\d+)*)\\b`, 'g');
+
+// A Decision line names what it changes with a verb, then a list that runs to the next verb,
+// semicolon or sentence end.
+const VERB_CLAUSE =
+  /\b(amends|supersedes|voids)\b(.*?)(?=;|\b(?:amends|supersedes|voids|keeps|replaces|specifies|settles)\b|$)/gi;
+// The ids an entry's "Amended (see D-nn)" lines name. doc.mjs prints these lines first.
+export const AMENDED = /^\*\*Amended \(see ([^)]*)\)\.?\*\*/;
+const amendedBy = (c) =>
+  c.selfBody
+    .split('\n')
+    .map((l) => l.match(AMENDED))
+    .filter(Boolean)
+    .flatMap((m) => m[1].match(/\bD-\d+\b/g) ?? []);
 
 const citations = (text) => {
   const clean = text;
@@ -462,7 +536,8 @@ const citations = (text) => {
     if (!hint)
       for (let j = i - 1; j >= 0; j--) {
         if (!secs[j].hint) continue;
-        if (s.at - secs[j].at <= 60) hint = secs[j].hint;
+        if (s.at - secs[j].at <= 60 && !/\n[ \t]*\n/.test(clean.slice(secs[j].at, s.at)))
+          hint = secs[j].hint;
         break;
       }
     out.push({
@@ -485,6 +560,15 @@ const citations = (text) => {
       slug: `${LABELS.find(([n]) => n === m[1])[1]}/${m[2]}`,
       at: m.index,
     });
+  for (const m of clean.matchAll(NUMREF))
+    out.push({
+      kind: 'section',
+      surface: m[0],
+      number: m[2],
+      hint: LABELS.find(([n]) => n === m[1])[1],
+      at: m.index,
+      explicit: true,
+    });
   return out;
 };
 
@@ -503,6 +587,26 @@ export const buildIndex = ({ wide = false } = {}) => {
     const p = parse(key, text);
     docs[key] = { path: posix(cfg.path), ...p };
     byNumber[key] = {};
+    for (const t of p.bad)
+      errors.push({
+        code: t.code,
+        file: posix(cfg.path),
+        line: t.line,
+        msg: {
+          'heading-in-comment': `this heading sits inside the HTML comment opened at line ${t.openedAt}, so no reader sees it and it splits the section above it; move it out of the comment or drop its #`,
+          'indented-heading':
+            'this heading is indented, so a renderer shows it and the parser does not, and its text joins the section above; take out the leading spaces',
+          'setext-heading':
+            'this line underlines the one above it, which makes that line a heading the parser cannot see; leave a blank line above it, or write the heading with #',
+        }[t.code],
+      });
+    if (p.comment !== null)
+      errors.push({
+        code: 'unclosed-comment',
+        file: posix(cfg.path),
+        line: p.comment,
+        msg: 'this HTML comment never closes, so it hides the rest of the file; close it with -->',
+      });
     for (const t of p.notesBad)
       errors.push({
         code: 'orphan-note',
@@ -641,6 +745,35 @@ export const buildIndex = ({ wide = false } = {}) => {
       }
       const t = chunks.get(to);
       if (t && !t.citedBy.includes(posix(rel))) t.citedBy.push(posix(rel));
+    }
+  }
+
+  // An entry that amends an older one has to say so in the older one too, because a brief
+  // prints the older entry and not the newer. D-141 amended D-109 and D-129 and neither said so,
+  // so S-25's brief printed D-129 with no sign that D-141 had changed it. Only ids after the
+  // verb count: "Supersedes D-50 and D-51 and amends D-38" is two lists, and "keeps D-119's
+  // header" is not an amendment. A retired entry's lines live in git history, so it needs none.
+  for (const c of chunks.values()) {
+    if (c.file !== 'dlog' || !c.key) continue;
+    const decision = c.selfBody.match(/^\*\*Decision\.\*\*(.*)$/m);
+    if (!decision) continue;
+    const first = decision[1].split(/\.(?=\s|$)/)[0];
+    for (const clause of first.matchAll(VERB_CLAUSE)) {
+      const verb = clause[1].toLowerCase();
+      for (const [id] of clause[2].matchAll(/\bD-\d+\b/g)) {
+        const t = chunks.get(byKey.get(id));
+        if (!t || t.flags.includes('superseded')) continue;
+        if (verb === 'amends' && amendedBy(t).includes(c.key)) continue;
+        errors.push({
+          code: 'missing-backlink',
+          file: t.path,
+          line: t.line,
+          msg:
+            verb === 'amends'
+              ? `${c.key} amends ${id}, but ${id} has no "Amended (see ${c.key})" line. Add one saying what ${c.key} changed in ${id}`
+              : `${c.key} ${verb} ${id}, but ${id}'s heading does not say ~~(${verb === 'voids' ? 'VOID, see' : 'SUPERSEDED by'} ${c.key})~~`,
+        });
+      }
     }
   }
 

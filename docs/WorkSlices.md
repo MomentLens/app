@@ -117,7 +117,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 Build this phase **with no verification check** in the pre-flight endpoint (HB §14.3 Phase 3). S-15 writes the check in Phase 4 (D-122).
 
-S-18a is the one worker slice in this phase. Only the worker sets `processed_at`, so S-18a is what lets S-13 show any photo without someone setting it in Express (D-72).
+The one worker slice in this phase is S-18a. Only the worker sets `processed_at`, so S-18a is what lets S-13 show any photo without someone setting it in Express (D-72).
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
