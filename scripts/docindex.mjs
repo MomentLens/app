@@ -92,6 +92,7 @@ const GATED = new Set([
   'apps/mobile/AGENTS.md',
   'worker/AGENTS.md',
   '.claude/skills/slice/SKILL.md',
+  ...listed('.claude/skills/slice/stages', '.md'),
   '.github/ISSUE_TEMPLATE/slice.md',
   '.github/pull_request_template.md',
   ...listed('.claude/agents', '.md'),
