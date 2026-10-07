@@ -41,12 +41,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Dangling citations, code fences that are unbalanced or indented out of use, a D-nn
-      # heading the parser cannot read, duplicate slugs, section numbers and ids, a note
-      # naming a slice that does not exist, a spec section nothing points at, and a crash in
-      # the brief builder. Retrieval never fails the build; only this does.
+      # Dangling citations, code fences that are unbalanced or indented out of use, a heading
+      # the parser cannot see, a D-nn heading it cannot read, an amendment the older entry does
+      # not record, duplicate slugs, section numbers and ids, a note naming a slice that does
+      # not exist, a spec section nothing points at, a Codex agent copy that drifted, and a
+      # crash in the brief builder. Retrieval never fails the build; only this does. The tests
+      # run each of those rules against a fixture.
       - name: Check docs cross-references
-        run: node scripts/doc.mjs check
+        run: |
+          node scripts/doc.mjs check
+          node --test 'scripts/*.test.mjs'
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
