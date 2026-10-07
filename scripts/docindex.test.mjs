@@ -310,3 +310,24 @@ test('P4: a Codex agent copy has to match its Claude Code twin', () => {
     (doc) => failsWith(doc, 'agent-drift', /has no .codex\/agents\/ twin/),
   );
 });
+
+test("the issue template's readiness rows match the Definition of done", () => {
+  const dod =
+    '\n## Definition of done\n\n**Ready for review**\n\n- [ ] **Schema.** zod.\n\n**Ready to merge**\n\n- [ ] **Review.** Approved.\n\n## Phase 1\n';
+  const slices =
+    SLICES_HEAD.replace('# Phase 1 — one', `${dod.replace('## Phase 1', '# Phase 1 — one')}`) +
+    TABLE;
+  const template = (rows) =>
+    `## Readiness\n\n| Item | Result | Head | Evidence | By |\n|---|---|---|---|---|\n${rows.map((r) => `| ${r} | | | | |`).join('\n')}\n`;
+  withCorpus(
+    {
+      'docs/WorkSlices.md': slices,
+      '.github/ISSUE_TEMPLATE/slice.md': template(['Schema', 'Review']),
+    },
+    passes,
+  );
+  withCorpus(
+    { 'docs/WorkSlices.md': slices, '.github/ISSUE_TEMPLATE/slice.md': template(['Schema']) },
+    (doc) => failsWith(doc, 'readiness-rows'),
+  );
+});
