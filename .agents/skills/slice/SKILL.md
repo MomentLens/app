@@ -5,9 +5,7 @@ argument-hint: S-XX [schema|build <package>|done|cleanup]
 disable-model-invocation: true
 ---
 
-Run slice work for: $ARGUMENTS
-
-The first word is the slice id. A second word picks the stage; with none, the stage is the read-back. The build stage takes a third word, the package: `api`, `mobile` or `worker`. If it is missing, ask which package; never pick one.
+The words after the skill name are the slice id, then the stage: `/slice S-12 build api` in Claude Code, `$slice S-12 build api` in Codex. With no stage, the stage is the read-back. The build stage takes a third word, the package: `api`, `mobile` or `worker`. If it is missing, ask which package; never pick one.
 
 | Stage | Command | Reads | Ends at |
 |---|---|---|---|
@@ -23,7 +21,7 @@ The first word is the slice id. A second word picks the stage; with none, the st
 
 **No stage asks anyone to merge anything.** The slice ships as a stack of PRs that nobody merges until the done stage has finished and the stack has been reviewed.
 
-These steps are the same for every developer and every agent. An agent tool that cannot run skills or subagents follows this file through the handoff template in `docs/WorkSlices.md`, doing the subagents' work itself.
+These steps are the same for every developer and every agent. Codex runs this skill as `$slice` from its copy in `.agents/skills/slice/`, reads the same stage files, and has its own copies of the two slice agents in `.codex/agents/`. An agent tool that cannot run skills follows this file through the handoff template in `docs/WorkSlices.md`, doing the subagents' work itself.
 
 Find the slice's issue once and reuse its number: `gh issue list --state all --search "<id> in:title" --json number,title,state`, the one whose title starts with `<id>:`.
 

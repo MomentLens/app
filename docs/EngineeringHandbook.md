@@ -335,6 +335,7 @@ Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differ
   - You can write and test 100% of the Android side locally, on a physical phone.
   - For iOS, **EAS Build compiles iOS binaries in the cloud with no local Mac**. You cannot run the Simulator, but you can build a real iOS app and install it on a physical iPhone via the Custom Dev Client, entirely from Windows. EAS Build's free tier covers a limited number of builds per month, which is enough if you are not rebuilding natively every day (§10 explains why you won't be).
   - For the rare Simulator-only moment, borrow Ukasha's machine.
+- **Codex, if you use it**, runs inside WSL2 too. Start it at the repository root, so it loads root `AGENTS.md`, and trust the project when it asks: Codex loads `.codex/config.toml` only for a trusted project. `pnpm check:machine` checks the trust. Start a slice with `$slice S-12` (§18.8).
 - **Architecture on the Python worker.** The server is x86-64 like your machine (D-78), so a wheel that installs in WSL2 should install on the server too. The M1 is now the machine that differs. If something fails only on the server, SSH in and debug it there.
 
 ---
