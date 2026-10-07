@@ -4,7 +4,7 @@ MomentLens: event photography and media management for South Asian weddings. Rea
 
 **Read every session, so it holds only what is needed every session.** There is an `AGENTS.md` in `apps/mobile/`, `apps/api/` and `worker/` with the rules for that surface. Everything else is behind a pointer, and pointers are meant to be followed before writing code in that area.
 
-**This is the only instruction file, for every agent tool.** Claude Code 2.1.277 or later and Codex both load it at session start. A package's `AGENTS.md` loads in Claude Code when a file there is opened with Read, and in Codex only when Codex started in that folder, so read it yourself before working in a package. **Never create a `CLAUDE.md` or `CLAUDE.local.md` in this repo or in any folder above it.** Claude Code reads `AGENTS.md` only where no `CLAUDE.md` exists, so one stray file switches every rule here off without a warning. `pnpm docs:check` and `pnpm check:machine` both fail on one (D-116).
+**This is the only instruction file, for every agent tool.** Claude Code 2.1.277 or later and Codex both load it at session start. A package's `AGENTS.md` loads in Claude Code when a file there is opened with Read, and in Codex only when Codex started in that folder or below it, so read it yourself before working in a package. **Never create a `CLAUDE.md` or `CLAUDE.local.md` in this repo or in any folder above it.** Claude Code reads `AGENTS.md` only where no `CLAUDE.md` exists, so one stray file switches every rule here off without a warning. `pnpm docs:check` and `pnpm check:machine` both fail on one (D-116).
 
 ---
 

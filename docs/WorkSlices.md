@@ -21,7 +21,7 @@ A Figma frame of "Pending Approvals" gives you a list, rows and two buttons. It 
 
 **The slice that first writes to a table owns its migration**, and its row cites that table's `arch:` heading. The two RLS policies belong to the slices that first need Realtime on them, and each gets a human read (D-68).
 
-Once the schema branch is pushed, each package is built on a branch cut from the one below it in the card's order, so the api branch sits on the schema branch and the mobile branch on the api branch, never beside it (hb §12). The endpoint and the screen compile against the same types, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
+Once the schema branch is pushed, each package is built on a branch cut from the one below it in the card's order: the first package's branch on the schema branch, the next on the first's, never beside it (hb §12). The endpoint and the screen compile against the same types, and no agent can invent a field name the compiler does not know. **An endpoint does not exist until its schema is in `shared-types`.**
 
 ## Definition of done
 
