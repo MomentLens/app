@@ -287,6 +287,86 @@ test('P17: a bare § does not inherit a prefix across a blank line', () =>
     },
   ));
 
+test('review: a group printed whole keeps each amendment under its own decision', () =>
+  withCorpus(
+    {
+      'docs/DecisionLog.md':
+        '# Log\n\n# A. Group\n\n### D-01: First\n**Decision.** One.\n**Amended (see D-02).** Changed.\n\n# B. Other\n\n### D-02: Second\n**Decision.** Amends D-01. Two.\n',
+    },
+    (doc) => {
+      const lines = doc('dlog/a-group').out.split('\n');
+      const at = (p) => lines.findIndex((l) => l.startsWith(p));
+      assert.ok(at('**Amended (see D-02).**') > at('### D-01'));
+      assert.equal(at('Changed since.'), at('### D-01') + 1);
+    },
+  ));
+
+test("review: the one-hop list follows a whole parent's grandchildren", () => {
+  const filler = 'word '.repeat(400);
+  const arch =
+    `# Architecture\n\n## 1. Data\n\nThe tables.\n\n### 1.1 Media\n\nOne row per photo.\n\n` +
+    `#### 1.1.1 Rows\n\n${filler}\n\n#### 1.1.2 Keys\n\n${filler} See D-01.\n`;
+  withCorpus({ 'docs/ARCHITECTURE.md': arch }, (doc) =>
+    assert.match(doc('slice', 'S-02').out, /^one hop out: .*\bD-01\b/m),
+  );
+});
+
+test('review: an amendment in a later sentence of the Decision line is checked', () =>
+  withCorpus(
+    {
+      'docs/DecisionLog.md': BASE['docs/DecisionLog.md'].replace(
+        '**Decision.** Thumbnails are small.',
+        '**Decision.** Ukasha ruled on 2026-10-09. Amends D-01.',
+      ),
+    },
+    (doc) => failsWith(doc, 'missing-backlink', /D-02 amends D-01/),
+  ));
+
+test('review: a supersede must be the one the old heading names', () =>
+  withCorpus(
+    {
+      'docs/DecisionLog.md':
+        '# Log\n\n### D-01: First ~~(SUPERSEDED by D-02)~~\n**Decision.** One.\n\n### D-02: Second\n**Decision.** Two.\n\n### D-03: Third\n**Decision.** Supersedes D-01. Three.\n',
+    },
+    (doc) => failsWith(doc, 'missing-backlink', /D-03 supersedes D-01/),
+  ));
+
+test('review: a rule under a list continuation is not a setext heading', () =>
+  withCorpus(
+    {
+      'docs/EngineeringHandbook.md':
+        BASE['docs/EngineeringHandbook.md'] + '\n- an item\n  its second line\n---\n',
+    },
+    passes,
+  ));
+
+test('review: a <!-- inside a line opens no comment', () =>
+  withCorpus(
+    {
+      'docs/EngineeringHandbook.md':
+        BASE['docs/EngineeringHandbook.md'] +
+        '\nOpen one with `<!--` here.\n\n## 3. Next\n\nA --> B.\n',
+    },
+    (doc) => {
+      passes(doc);
+      assert.match(doc('hb', '§3').out, /^--- hb §3 · /m);
+    },
+  ));
+
+test('review: arch:2 in code is not a citation', () =>
+  withCorpus({ 'apps/demo/x.ts': 'export const at = { hb:2 };\n' }, (doc) =>
+    assert.doesNotMatch(doc('why', 'hb', '§2').out, /apps\/demo/),
+  ));
+
+test('review: a TOML escape in a Codex agent copy fails the gate', () => {
+  const md = "---\nname: helper\ndescription: Helps.\n---\n\nRun grep -E '\\d+' first.\n";
+  const toml =
+    'name = "helper"\ndescription = "Helps."\ndeveloper_instructions = """\nRun grep -E \'\\d+\' first."""\n';
+  withCorpus({ '.claude/agents/helper.md': md, '.codex/agents/helper.toml': toml }, (doc) =>
+    failsWith(doc, 'agent-drift', /backslash TOML reads as an escape/),
+  );
+});
+
 test('P4: a Codex agent copy has to match its Claude Code twin', () => {
   const md =
     '---\nname: helper\ndescription: Helps.\ntools: Read\n---\n\nRead `.claude/skills/slice/SKILL.md` first.\nThen stop.\n';
