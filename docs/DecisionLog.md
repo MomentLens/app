@@ -7,9 +7,9 @@ Every entry records a decision, the reasoning behind it, and **what was rejected
 
 Each entry has a **Reopen if** line. That is not permission to reopen casually. It is the specific condition that would make revisiting rational. If that condition has not occurred, the decision stands and the discussion is over.
 
-**Rules for this file.** Append, do not rewrite. If a decision is reversed, add a new entry that supersedes the old one and mark the old one, rather than editing history. When you make a decision that is not here, add it the same day, while you still remember the alternative you rejected. New entries are headed `### D-nn: Title`. Mark a retired one by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading, the only two forms `doc` masks (Handbook §18.7).
+**Rules for this file.** Append, do not rewrite. If a decision is reversed, add a new entry that supersedes the old one and mark the old one, never rewriting what it decided. When you make a decision that is not here, add it the same day, while you still remember the alternative you rejected. New entries are headed `### D-nn: Title`. Mark a retired one by adding `~~(SUPERSEDED by D-nn)~~` or `~~(VOID, see D-nn)~~` to its heading, the only two forms `doc` masks (Handbook §18.7). When a new entry's Decision line says it amends `D-x`, add an "Amended (see D-nn)" line to `D-x` in the same commit, saying what changed there.
 
-**Superseded and void entries keep their text.** The heading says which entry replaced them, and `doc` never expands one into a brief. Their reasoning is still worth reading, because the reason a decision stopped applying is itself an answer in a viva.
+**A superseded or void entry keeps only its heading and its Decision line** (D-149). The heading says which entry replaced it, and `doc` never expands one into a brief; a brief prints a three-line stub built from the Decision line. The rest of the entry, amendment lines included, moves to git history, and a `**Removed.**` line names the commit to read it from: `git show <commit>:docs/DecisionLog.md`. When you retire an entry, cut it in the same commit, naming the last commit on `main` that touched this file (`git log -1 --format=%h main -- docs/DecisionLog.md`).
 
 Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these cold before your defense; they are the most likely questions.
 
@@ -50,11 +50,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Cost.** ⚠ The most common real-world way wedding photos circulate is unsupported. Combined with D-04, note the tension: the app refuses share links partly on privacy grounds while giving every guest a download button. Be ready to say that the download restriction was never the security boundary; see D-31.
 
 ### D-06 — Pinch-zoom and pan in the photo viewer are deferred ~~(SUPERSEDED by D-59)~~
-> **Superseded.** This decision existed for exactly one reason, and D-57 removed that reason. The viewer supports pinch-zoom and pan in v11. Read on for why it was deferred; the reasoning is correct for the architecture it was written against.
-
 **Decision.** The full-screen viewer supports swipe between photos and tap to toggle metadata. No pinch-zoom.
-**Why.** This is a direct enabler for D-01. Overlaying an unblurred crop onto a static, aspect-fit image is absolute positioning inside a known frame. Keeping that crop welded to the correct pixels through a gesture-driven transform is a materially harder problem.
-**Rejected.** Shipping zoom and solving the transform-tracking problem. Not worth it for a feature no judge will ask about.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ---
 
@@ -83,12 +80,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Cost.** ⚠ The Photographer Link is now a broad grant: anyone holding it can upload to the shared album from anywhere, at full quality, unverified. Mitigation is that the link is revocable and regenerable, and the spec labels it as sensitive.
 
 ### D-11 — Photographers upload at full quality; the worker generates the display variant ~~(SUPERSEDED by D-58)~~
-> **Superseded.** Nobody resizes now, so there is no display variant to generate and no role branch to maintain. The single pipeline in spec §4.8 handles every role identically. D-48, which amended this entry, is void for the same reason.
-
 **Decision.** No client-side 2048px resize for that role. The original is retained in R2, the worker produces a 2048px display variant, the album serves the variant, and download serves the original.
-**Why.** Downsizing a professional's 45MP files to 2048px destroys the reason they would use the app.
-**Cost.** Two client pipelines with a role branch, and a second worker job. Handbook §7 has the table; implement it as one function with a branch and unit-test the branch.
-**Amended (see D-48).** The original wrote "download serves the original" without saying to whom, and since Photographers have no download button, the person pulling a 45MP file would have been a Guest. In v1 every download is the 2048px version. The original is still retained; only the routing changed.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-12 — Album-closed applies to Photographers too
 **Decision.** No role bypasses album state, including Admin and Photographer.
@@ -141,11 +134,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 # D. Capture
 
 ### D-19 — A sub-event stays In Progress until the next one starts ~~(SUPERSEDED by D-88)~~
-> **Superseded.** A sub-event now ends at its scheduled end, and the Admin delays one that runs late. The reasoning below is the risk D-88 accepts.
 **Decision.** Status ignores the sub-event's own scheduled end time. It ends when the next sub-event begins, or when the parent event ends.
-**Why.** The capture FAB is hidden when no sub-event is In Progress (D-20). Under the old rule, a sub-event scheduled 7pm to 8pm auto-completed at 8pm, so if the next started at 10pm and the baraat actually arrived at 9:40, **the camera disappeared for the two most photographed hours of the night**. South Asian events running late is the modal case, not an edge case.
-**Rejected.** Relying on the Admin to pad durations or delay sub-events manually. That works, and it is a one-minute task, but it means the failure mode is silent: nobody discovers it until people are already unable to take photos.
-**Cost.** One extra row read in the status derivation, since it now depends on the next sub-event's start. Nothing else.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-20 — The capture FAB stays hidden when no sub-event is In Progress
 **Decision.** Capture is available only during a live sub-event.
@@ -170,12 +160,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 # E. Face processing and blur
 
 ### D-23 — Manual self-blur is gated by an embedding check, not by Admin approval ~~(SUPERSEDED by D-83)~~
-> **Superseded.** Tap-to-blur is removed. A missed face is fixed with a blur region, which has no embedding check.
 **Decision.** When a user taps their own face to blur it, compare that face to the requester's own reference set. Above a loose threshold, apply with no review. Below it, apply **and** queue the request to the Admin.
-**Amended (see D-52 and D-54).** Two things were undefined here. The action is now available only to users with Do Not Publish active, and the comparison runs against the requester's **curated** references only, never the auto-added ones from D-25.
-**Why.** The concern that drove this was real: without a check, anyone could blur the bride out of every photo. But a genuine missed match lands in the middle similarity band, while someone maliciously blurring another person scores near zero against their own references. Those are not close numbers, and separating them is one cosine comparison against data the system already has.
-**Rejected.** Routing every manual blur to the Admin. That fills the queue with legitimate corrections he has to rubber-stamp, which is the same "Admin juggling a queue during the event" problem that D-07 rejected a staging pool over.
-**Cost.** It contradicts v9.1's rule that no AI uncertainty is ever routed to a human. That rule was rewritten deliberately, not violated by accident.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-24 — The blur applies immediately and the Admin reverts, rather than approving first
 **Decision.** A queued blur request is already applied while it waits. The Admin's actions are Confirm and Revert, not Approve and Reject.
@@ -184,10 +170,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Amended (see D-83).** The principle now governs blur regions: a region applies at once, and the person who drew it or the Admin removes it.
 
 ### D-25 — A confirmed face crop becomes a new reference embedding ~~(SUPERSEDED by D-83)~~
-> **Superseded.** With no tap-to-blur there is no confirmed crop, so no reference is ever added automatically.
 **Decision.** When a user taps their own face, that crop is added to their reference set automatically.
-**Why.** It is a correctly-labeled face from a real event photo in real lighting, which is a substantially better reference than a profile selfie. The match that failed once becomes less likely to fail again, so the correction improves the system rather than just fixing one photo.
-**Amended (see D-54).** As written this was an undamped feedback loop. Crops are now tagged auto-added and are excluded from the abuse check in D-23, which is what stops a drifting reference set from degrading the check that depends on it.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-26 — The self-visible marker is mandatory, not decoration
 **Decision.** When a Do Not Publish user views their own unblurred crop, a lock icon renders on it and the metadata overlay reads "visible only to you."
@@ -203,11 +187,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Amended (see D-83).** A lone subject's variant is byte-identical to the upload only when the photo also has no blur region; a region is applied to every file (root invariant 6).
 
 ### D-28 — Downloads are personalized, so DNP photos leave the public CDN path ~~(SUPERSEDED by D-57)~~
-> **Superseded.** The premise holds: two people must receive two different files. The mechanism does not. Server-side compositing would have routed media bytes through Express, which Handbook §7 forbids on the box the whole system depends on, and neither document ever resolved that contradiction. Pre-generated per-subject variants make the download a presigned URL for a file that already exists.
-
 **Decision.** A Do Not Publish subject downloading their own photo gets a server-composited version with their face unblurred. Any photo containing a DNP face is served on the download path through an authenticated endpoint, never a public R2 URL.
-**Why.** Two people must receive two different files, which a cacheable public URL cannot do.
-**Cost.** That subset loses CDN cacheability on download. Album viewing is unaffected, since everyone sees the same blurred variant there. The implementation trap: wiring the download button to a bucket URL makes personalization silently stop working for exactly the people it exists for.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-29 — One detection pass, with an explicit filter
 **Decision.** Detect faces once, on the original. Build the Recognized Faces list from that pass and filter out faces matched to a Do Not Publish user.
@@ -273,16 +254,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 # H. Infrastructure
 
 ### D-38 — One Oracle Always Free ARM instance, no provider rotation ~~(SUPERSEDED by D-78)~~
-> **Superseded.** Both halves were reversed. D-78 moved development and the demo to a Netcup server, and D-79 made the rotation this entry rejected into the standby plan. The reasons below were correct for a free-tier plan.
-
 **Decision.** A single `VM.Standard.A1.Flex` in Singapore, permanently. One team member's Azure student credit held completely untouched as a standby for demo week.
-**Why.** Of the four options considered, three were not what they appeared. AWS "xLarge" is not a free-tier shape at all. GCP's c2-standard-4 burns a $300 credit in under three months, and the credit expires on the calendar rather than on use. Azure B2ms consumes $100 of student credit in about six weeks. Oracle is the only permanently free option, and even after its allowance was halved to 2 OCPUs and 12 GB in mid-2026, it beats the others on cost by an unbounded margin.
-**Rejected.** The rotation plan, where the team burns each member's credits in turn. Every migration means a new IP, DNS, TLS certificates, secrets, firewall rules, and a fresh install, for a team that has never done it once. Three rotations is a week of buffer spent on infrastructure, and the Supabase keep-alive cron lives on the box that keeps moving.
-**Why Singapore.** ARM capacity is contested and frequently returns "Out of host capacity." Singapore provisions faster than US regions and is closest to Lahore. **The home region is fixed at signup and cannot be changed later**, which is why this is a week-one task.
-**Bonus.** The instance is ARM64 and so is the M1, so local and production architecture match for the Python worker.
-**Amended (see D-50).** The instance is still provisioned in week one and still runs production, for reasons this entry gives that have not changed. The demo itself runs on the M1. Read D-50 before repeating any part of this entry in a viva.
-**Amended (see D-78).** From 2026-10-15 development and the demo run on a rented Netcup server, so the Oracle instance stops being the project's server.
-**Amended (see D-79).** The rotation this entry rejected is now the standby plan. D-67 moved the keep-alive off the box that would be moving, and a VM that exists only for the rehearsal and demo week spends almost none of a credit.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-39 — No Docker; systemd, nginx, and certbot instead
 **Decision.** Express and the worker run as systemd units behind nginx, with TLS from certbot.
@@ -321,12 +294,8 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Amended (see D-77).** Pinch-zoom is core without appearing in any beat, the one named exception to this rule.
 
 ### D-45 — Every AI-generated line must be explainable by a human on the team ~~(SUPERSEDED by D-68)~~
-> **Superseded.** The line-by-line comprehension gate is gone; see D-68. Two clauses survive there in a different form: the dangerous surfaces still get read before merging, and `ARCHITECTURE.md` is still the source of truth.
-
 **Decision.** Nothing merges if none of the three can explain it line by line. RLS policies and blur-pipeline code get a human read regardless. One hand-maintained `docs/ARCHITECTURE.md` is the source of truth rather than any agent session's memory.
-**Why.** The project will be orally examined. "The AI wrote it" is a failing answer even when the code is excellent.
-**The specific danger.** Agents write plausible SQL, and a plausible RLS policy that is subtly too permissive looks identical to a correct one and throws no error. It just returns rows it should not.
-**Amended (see D-57).** This entry originally named the `dnp_crop` policy as the place where that failure exposes a Do Not Publish user's face. That table no longer exists. The danger did not go away, it moved: the equivalent failure is now the **image-serving endpoint's authorization check**, which decides whether a requester gets the public file or a subject's personalized variant. It is application logic rather than SQL, which makes it easier to test and no less dangerous to get wrong. An agent will happily derive "is this the subject" from a client-supplied parameter and it will look completely reasonable.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-46 — The Do Not Publish recognition filter is viewer-scoped, not global
 **Decision.** A face matched to a Do Not Publish user is hidden from the Recognized Faces strip for every viewer except that user, who sees their own face listed normally. Find My Photos works for them as it does for anyone.
@@ -335,19 +304,12 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Implementation note that matters.** Write it as a read predicate parameterized by the requesting user, never as omitting the row at write time. The wrong version throws no error and passes every test written from another viewer's perspective, failing only for the subject.
 
 ### D-47 — The Admin's inability to verify a blur requester's identity is accepted, not solved ⚠ ~~(SUPERSEDED by D-83)~~
-> **Superseded.** There are no blur requests to judge. The Admin restores blur regions instead.
 **Decision.** When a low-confidence manual blur request reaches the Review Queue, the Admin judges it from personal knowledge. There is no in-app reference image, because Do Not Publish hides the requester's profile photo from everyone including the Admin and the disputed face is already blurred. A legitimate requester whose score came back near zero contacts the Admin out of band.
-**Why.** The path is expected to be rare, and it already fails in the safe direction: the blur is applied while the request waits (D-24), so the cost of a slow or wrong decision is a face staying hidden rather than a face being exposed.
-**Rejected.** Surfacing the requester's profile photo to the Admin on this one screen, which would put a hole in the "no exception for anyone, including the Admin" guarantee in §4.2 for a feature almost nobody will use. Also rejected: removing the Admin from the loop entirely, since that is what invites the abuse D-23 exists to catch.
-**Defensible answer if asked.** A rarely-used privacy correction that degrades to a phone call is an acceptable trade at this scale, and the alternative weakens a guarantee that applies to everyone.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-48 — Full-quality download of photographer originals is deferred ~~(VOID, see D-58)~~
-> **Void, not superseded.** This entry described a choice between two files. There is one file per photo now, so there is nothing left to choose between and nothing left to defer.
-
 **Decision.** Every download in v1 serves the 2048px version regardless of who uploaded the photo. The photographer's original stays in R2.
-**Why.** D-11 said "download serves the original" without specifying the recipient, and since Photographers have no download button (D-08), the recipient would have been a Guest. A guest tapping Download and pulling a 45MP file over mobile data is a surprise, and v1's download button should mean one predictable thing.
-**Cost.** None to the demo. Enabling it later is a routing change on the download endpoint plus a size warning in the UI, not a re-upload, because the originals are already retained.
-**Reopen if.** Someone wants professional-quality delivery through the app rather than out of band, which is the same need the deferred web uploader addresses.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ---
 
@@ -363,27 +325,16 @@ Two constraints settled a third of these before any of them were argued individu
 **Reopen if.** Someone decides to cover a real wedding. Nobody has.
 
 ### D-50 — The demo backend runs on the M1; the Oracle instance is provisioned anyway ~~(SUPERSEDED by D-78)~~
-> **Superseded.** D-78 moved development and the demo to one Netcup server, so the M1 no longer runs the demo backend and the Oracle instance goes on 2026-10-15.
 **Decision.** Express and the FastAPI worker run on the team's M1 behind a Cloudflare Tunnel named hostname for the demo. Supabase and R2 are unchanged. The Oracle ARM instance is still provisioned in week one, still runs production, and is still reachable during the defense.
-**Why.** The M1 runs InsightFace 3 to 5 times faster than 2 OCPUs of Ampere, and demo latency is what a panel experiences. Dev and demo become the same environment. Oracle's capacity lottery stops being a demo-day risk.
-**Why the instance stays regardless.** The deployment claim has to survive "show me." It is a fallback that is not sitting in the demo room. It is the shared backend the other two team members develop against, which is also the fix for a bus factor of one on demo morning. And D-38's reason is untouched: the home region is fixed at signup and ARM capacity is contested, so it is a week-one task or it never happens.
-**Rejected.** Claiming a deployment without having one. "We deployed but chose our laptop due to compute costs" invites exactly one follow-up, and a panel that asks for the systemd unit and gets improvisation has learned something about the whole project rather than just about the server. D-45 is the team's own rule; this is that rule pointed at the deployment story.
-**Cost.** ⚠ The laptop moves compute out of the cloud. It does not remove the network dependency: Supabase, R2 and the phones are all still on it. See D-61.
-**The line to use.** Production runs on an Oracle ARM instance. The demo runs the API and worker locally behind a Cloudflare Tunnel because the M1 gives roughly four times the inference throughput of the free tier, and the panel should see real latency rather than free-tier latency.
-**Amended (see D-76).** Development runs on the Oracle instance and the M1 demo stack goes up one month before the demo, so dev and demo are no longer the same environment.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-51 — ngrok is not the tunnel ~~(SUPERSEDED by D-78)~~
-> **Superseded.** D-78 removed the tunnel. The API is served from the Netcup server under `api.momentlens.me`.
 **Decision.** Cloudflare Tunnel with a named hostname.
-**Why.** ngrok's free URLs rotate, which means rebuilding the app or reconfiguring the API base URL on demo morning.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-52 — Tap-to-blur is available only to users with Do Not Publish active ~~(SUPERSEDED by D-83)~~
-> **Superseded.** Tap-to-blur is removed. Blur regions are open to every Guest and the Admin.
 **Decision.** The manual correction affordance renders only for users who have Do Not Publish enabled. Everyone else never sees it.
-**Why.** Spec v10 left this undefined: §4.11 framed the correction path as something a Do Not Publish user does, while demo beat 7 had a team member tapping somebody else's face. The two readings have very different abuse surfaces and the spec chose neither.
-Three reasons for this side of it. It matches what the feature is for, since a user without Do Not Publish has nothing to correct. It collapses the abuse surface, because an attacker must first permanently and irreversibly blur their own face across every event they will ever join. And combined with D-56 it removes the undefined case where a requester has no reference set to compare against.
-**Rejected.** Leaving it open to everyone, which is the more permissive reading and the one that makes "what stops a malicious guest" a harder question than it needs to be.
-**Cost.** Demo beat 7 now needs a second pre-configured account with Do Not Publish enabled. One line on the pre-demo checklist.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-53 — Hash the bytes being uploaded, not a re-encoded thumbnail
 **Decision.** SHA-256 over the exact byte stream the client is about to PUT, after EXIF stripping and HEIC conversion.
@@ -393,10 +344,8 @@ Three reasons for this side of it. It matches what the feature is for, since a u
 **Amended (see D-146).** Stage 1 re-encodes every photo (D-99), so the same photo hashes differently on two phones or after a library update. The case in Rejected, one photo arriving as HEIC on one phone and JPEG on another, does not match either. The dedup catches the same photo added twice on one phone and build, the case D-32 named, and no exact check catches more for less.
 
 ### D-54 — Curated and auto-added references are tracked separately ~~(SUPERSEDED by D-83)~~
-> **Superseded.** With no auto-added references, every reference is one the user uploaded, so there is nothing to split.
 **Decision.** One boolean column. Matching and Find My Photos use curated plus auto-added. The D-23 abuse check uses curated only.
-**Why.** D-25 adds a confirmed tap crop to the reference set automatically with nothing damping it. A user tapping faces that score just above the loose threshold, meaning the sibling-and-cousin population spec §8 already expects to produce false positives, drifts their reference set toward that other person. The drifted set is what the abuse check runs against, so the check degrades exactly as the thing it guards against gets easier.
-**Rejected.** Capping the number of auto-added references, which slows the drift without stopping it, and dropping D-25 entirely, which throws away the best reference data the system ever gets.
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-55 — A media row is not album-visible until processing completes
 **Decision.** The album query filters on `processed_at IS NOT NULL`. Before that the photo is visible only to its uploader in My Media, with a spinner badge.
@@ -512,12 +461,8 @@ Four gaps found by reading the spec, handbook and this log against each other be
 **What still holds.** The drift the original rule prevented, two languages formatting the same key, still cannot happen, because each family has one builder in one language.
 
 ### D-71: Express queries Supabase as the caller ~~(SUPERSEDED by D-73)~~
-> **Superseded.** Writing as the caller needs RLS write policies that the app can also use directly, skipping pre-flight. D-73 moved every API query to the secret key and made RLS deny direct access except the two Realtime reads.
-
 **Decision.** The auth middleware builds a Supabase client from the caller's JWT for each request, so RLS applies to every API query. The secret key, which bypasses RLS, is used by the worker and by one clearly named module in `apps/api/src/db/` for operations that run before the caller has a membership row, such as resolving an invite token.
-**Why.** Handbook §5 justifies RLS as the guard against one buggy Express path leaking data. With the secret key in Express, RLS would skip every API query and guard only Realtime and direct client queries.
-**Rejected.** The secret key for every Express query. Simpler wiring. The team picked it first and switched once the conflict with Handbook §5 was pointed out: every Express permission check would have been the only guard, and the RLS negative tests would have covered no API route.
-**Cost.** Policies now run on every API query, so the membership lookups inside them must stay indexed. Importing the secret-key module in an ordinary route skips RLS and throws nothing, so every call site counts as auth or invite-token handling and gets a human read (D-68).
+**Removed.** The rest of this entry is in git history: `git show 68b8257:docs/DecisionLog.md`.
 
 ### D-72: The `thumbnail_dims` warm-up job ships in Phase 3
 **Decision.** Slice S-18a builds the worker skeleton (pgmq consumer loop, `/health`) and the `thumbnail_dims` job directly after S-12, with no ML dependency. Model loading and all face work stay in Phase 5. S-21 replaces `thumbnail_dims` with `face_process` on upload completion, and the two never run on the same upload.
