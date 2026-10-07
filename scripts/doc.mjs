@@ -2,17 +2,18 @@
 //
 //   doc spec §4.11.4 D-57 arch §3   print those sections
 //   doc slice S-21                  everything that slice cites, plus its warning paragraph
-//   doc why D-57                    what breaks if this decision is reopened
+//   doc why D-57 [D-60...]          what breaks if this decision is reopened
+//   doc why D-57 --refs             the same, with its amendment lines instead of its body
 //   doc grep variant_version        which sections mention a term
 //   doc toc idea|hb|dlog|arch|slices
 //   doc check                       the gate: dangling citations, fences, duplicate ids
 //
 // Retrieval never throws and never exits non-zero. A miss prints a diagnostic, because the
 // first time this crashes an agent falls back to grep and stays there. Only `check` exits 1.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildIndex, FILES, tokens } from './docindex.mjs';
+import { buildIndex, FILES, tokens, AMENDED } from './docindex.mjs';
 
 // Anchored to this file, not the shell's directory, so `node ../../scripts/doc.mjs D-57`
 // works from anywhere in the repo.
@@ -116,6 +117,19 @@ const body = (c, self = false) => {
   return [main, ...c.notes.map((n) => read(c.path, n.start, n.end))].join('\n\n');
 };
 
+// A decision's amendment lines sit below the text they overrule, so a reader acting on the
+// first bullet of D-110 met its single verification radius five paragraphs before D-111's
+// line replaced it. Printed, they come first under one label. The file keeps its order,
+// because the log is append-only.
+const CHANGED = 'Changed since. These lines override the entry below:';
+const amendedFirst = (c, text) => {
+  if (c.file !== 'dlog') return text;
+  const [head, ...rest] = text.split('\n');
+  const changes = rest.filter((l) => AMENDED.test(l));
+  if (!changes.length) return text;
+  return [head, CHANGED, ...changes, ...rest.filter((l) => !AMENDED.test(l))].join('\n');
+};
+
 const out = [];
 const say = (l = '') => out.push(l);
 
@@ -142,7 +156,7 @@ const emit = (c, put = say) => {
     put('');
     return;
   }
-  put(body(c));
+  put(amendedFirst(c, body(c)));
   put('');
 };
 
@@ -177,11 +191,22 @@ const cost = (c) => (menued(c) ? c.selfTokens : c.tokens);
 const gist = (c) =>
   c.flags.includes('superseded') ? `${c.retiredAs} ${c.supersededBy}. ${c.abstract}` : c.abstract;
 
+// Everything a printed chunk cites, its children's citations included when it prints whole.
+// arch §1's child cites D-55 and D-130; reading only the parent's own body left both out of
+// S-01's brief and its one-hop list.
+const citesIn = (c) =>
+  menued(c) ? c.cites : [...c.cites, ...c.children.flatMap((k) => citesIn(C[k]))];
+
 const plan = (slice) => {
   const expand = [slice.slug];
   const next = [];
   const seen = new Set([slice.slug]);
-  for (const id of slice.cites) {
+  const phase = phaseOf(slice);
+  // The phase paragraph overrides the spec sections below it on purpose, so what it cites is
+  // part of the slice. hb §14.3, D-122 and D-72 reached no Phase 3 brief before this. A slice
+  // the phase paragraph names is another slice's business and stays out.
+  const phaseCites = (phase?.cites ?? []).filter((id) => !C[id].flags.includes('row'));
+  for (const id of [...slice.cites, ...phaseCites]) {
     if (seen.has(id)) continue;
     seen.add(id);
     // Never expand a retracted decision into a brief. D-45 reaches S-21 through D-57,
@@ -194,8 +219,8 @@ const plan = (slice) => {
     else expand.push(id);
   }
   for (const id of expand.slice(1))
-    for (const n of C[id].cites) if (!seen.has(n)) (seen.add(n), next.push(n));
-  const prose = phaseProse(phaseOf(slice));
+    for (const n of citesIn(C[id])) if (!seen.has(n)) (seen.add(n), next.push(n));
+  const prose = phaseProse(phase);
   return { expand, next, prose, menus: expand.filter((s) => menued(C[s])).length };
 };
 
@@ -279,24 +304,37 @@ verbs.slice = (ids) => {
 // looking like a successful retrieval.
 verbs.brief = verbs.slice;
 
-verbs.why = ([id]) => {
-  if (!id) return say('which decision? e.g. doc why D-57');
-  const r = resolve(id);
-  if (!r || r.ambiguous) return verbs.print([id]);
-  const c = C[r];
-  say(`=== why ${c.display || r} · ${c.citedBy.length} inbound citations ===`);
-  say(`${c.display || ''} ${c.title}`.trim());
-  say(
-    `${c.path}:${c.span.start}-${c.span.end} · ${c.tokens} tok${c.flags.includes('risk') ? ' · risk accepted' : ''}`,
-  );
-  if (c.flags.includes('superseded')) say(`${c.retiredAs} ${c.supersededBy}`);
-  say('');
-  say('REOPENING THIS BREAKS:');
-  const groups = {};
-  for (const b of c.citedBy) (groups[C[b] ? C[b].file : 'other'] ||= []).push(C[b]?.display || b);
-  for (const [k, v] of Object.entries(groups)) say(`  ${k.padEnd(7)} ${v.join(' ')}`);
-  say('');
-  say(body(c));
+// Every id given gets an answer; `doc why D-57 D-60` used to answer D-57 and drop D-60.
+// `--refs` leaves out the body, which a brief has usually printed already, and keeps what a
+// reader checks it for: who cites it, and the lines that changed it since.
+verbs.why = (list) => {
+  const refs = list.includes('--refs');
+  const ids = list.filter((a) => a !== '--refs');
+  if (!ids.length) return say('which decision? e.g. doc why D-57');
+  ids.forEach((id, i) => {
+    if (i) say('');
+    const r = resolve(id);
+    if (!r || r.ambiguous) return verbs.print([id]);
+    const c = C[r];
+    say(`=== why ${c.display || r} · ${c.citedBy.length} inbound citations ===`);
+    say(`${c.display || ''} ${c.title}`.trim());
+    say(
+      `${c.path}:${c.span.start}-${c.span.end} · ${c.tokens} tok${c.flags.includes('risk') ? ' · risk accepted' : ''}`,
+    );
+    if (c.flags.includes('superseded')) say(`${c.retiredAs} ${c.supersededBy}`);
+    say('');
+    say('REOPENING THIS BREAKS:');
+    const groups = {};
+    for (const b of c.citedBy) (groups[C[b] ? C[b].file : 'other'] ||= []).push(C[b]?.display || b);
+    for (const [k, v] of Object.entries(groups)) say(`  ${k.padEnd(7)} ${v.join(' ')}`);
+    say('');
+    if (!refs) return say(body(c));
+    const changes = body(c)
+      .split('\n')
+      .filter((l) => AMENDED.test(l));
+    say(changes.length ? CHANGED : 'NOT AMENDED');
+    for (const l of changes) say(l);
+  });
 };
 
 verbs.grep = (list) => {
@@ -371,6 +409,58 @@ verbs.toc = ([key]) => {
   }
 };
 
+// The parts of an agent file both tools read: name, description and the instructions. Neither
+// format needs a parser for that much; these TOML basic strings unescape only \" and \\.
+const mdAgent = (t) => {
+  const m = t.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!m) return null;
+  const field = (k) => m[1].match(new RegExp(`^${k}:[ \\t]*(.*)$`, 'm'))?.[1].trim();
+  return { name: field('name'), description: field('description'), body: m[2].trim() };
+};
+const tomlAgent = (t) => {
+  const unescape = (s) => s?.replace(/\\(["\\])/g, '$1');
+  const str = (k) =>
+    t.match(new RegExp(`^${k}[ \\t]*=[ \\t]*"((?:[^"\\\\]|\\\\.)*)"[ \\t]*$`, 'm'))?.[1];
+  const body = t.match(/^developer_instructions[ \t]*=[ \t]*"""\n?([\s\S]*?)"""/m)?.[1];
+  return {
+    name: unescape(str('name')),
+    description: unescape(str('description')),
+    body: unescape(body)?.trim(),
+  };
+};
+const agentDrift = (mdText, tomlText) => {
+  if (mdText === null)
+    return { line: 1, msg: 'has no .claude/agents/ twin; write one, or delete this copy' };
+  if (tomlText === null)
+    return {
+      line: 1,
+      msg: 'has no .codex/agents/ twin; write one with the same name, description and instructions',
+    };
+  const lf = (t) => t.split(/\r\n|\r/).join('\n');
+  const md = mdAgent(lf(mdText));
+  const toml = tomlAgent(lf(tomlText));
+  if (!md)
+    return { line: 1, msg: 'its .claude/agents/ twin has no frontmatter to compare against' };
+  for (const k of ['name', 'description'])
+    if (md[k] !== toml[k])
+      return { line: 1, msg: `its ${k} differs from its .claude/agents/ twin's; copy that over` };
+  const want = md.body
+    .split('.claude/skills/slice/SKILL.md')
+    .join('.agents/skills/slice/SKILL.md')
+    .split('\n');
+  const have = (toml.body ?? '').split('\n');
+  const at = want.findIndex((l, i) => l !== have[i]);
+  if (at === -1 && have.length === want.length) return null;
+  const i = at === -1 ? want.length : at;
+  const start = lf(tomlText)
+    .split('\n')
+    .findIndex((l) => /^developer_instructions\b/.test(l));
+  return {
+    line: start + 2 + i,
+    msg: `developer_instructions differs from its .claude/agents/ twin at line ${i + 1} of the instructions, which there reads "${(want[i] ?? '(the end)').slice(0, 80)}". Copy the body over, with .claude/skills/ swapped for .agents/skills/`,
+  };
+};
+
 verbs.check = () => {
   const e = [...index.errors];
   // Parsing clean is not the same as working. Render every brief, file reads included,
@@ -425,6 +515,31 @@ verbs.check = () => {
       line: 1,
       msg: 'differs from .claude/skills/slice/SKILL.md; copy that file over it',
     });
+  // The same holds for the two slice agents: Codex reads `.codex/agents/<name>.toml`, Claude
+  // Code `.claude/agents/<name>.md`. The auditor's Codex copy lost a sentence with nothing
+  // noticing. The instructions differ only in which copy of the skill they point at.
+  const agents = (dir, ext) => {
+    try {
+      return readdirSync(join(root, ...dir.split('/')))
+        .filter((f) => f.endsWith(ext))
+        .map((f) => f.slice(0, -ext.length));
+    } catch {
+      return null;
+    }
+  };
+  const codexAgents = agents('.codex/agents', '.toml');
+  if (codexAgents !== null)
+    for (const name of new Set([...(agents('.claude/agents', '.md') ?? []), ...codexAgents])) {
+      const toml = skill(`.codex/agents/${name}.toml`);
+      const drift = agentDrift(skill(`.claude/agents/${name}.md`), toml);
+      if (drift)
+        e.push({
+          code: 'agent-drift',
+          file: toml === null ? `.claude/agents/${name}.md` : `.codex/agents/${name}.toml`,
+          line: drift.line,
+          msg: drift.msg,
+        });
+    }
   if (e.length) {
     console.log(`docs:check FAILED, ${e.length} error(s)`);
     for (const x of e) console.log(`  ${x.code}  ${x.file}:${x.line}  ${x.msg}`);
@@ -439,7 +554,7 @@ verbs.check = () => {
 const [head, ...rest] = args;
 if (!head || head === '--help' || head === '-h')
   console.log(
-    'usage: doc <id|§n|D-nn>... | slice S-nn | why D-nn | grep <term> | toc <file> | check',
+    'usage: doc <id|§n|D-nn>... | slice S-nn | why D-nn... [--refs] | grep <term> | toc <file> | check',
   );
 else if (Object.hasOwn(verbs, head)) verbs[head](rest);
 else verbs.print(args);
