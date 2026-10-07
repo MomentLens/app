@@ -15,13 +15,15 @@ The words after the skill name are the slice id, then the stage: `/slice S-12 bu
 | Done | `/slice S-12 done` | `stages/done.md` | the last edits made and verified, the explanation answered with evidence, the readiness record written, the review requested |
 | Cleanup | `/slice S-12 cleanup` | `stages/cleanup.md` | the readiness record checked, the stack merged, the issue closed, the evidence posted, the machine back on an up-to-date `main` |
 
-**Read `.claude/skills/slice/stages/<stage>.md` for the stage the arguments name, and no other stage file.** This file holds what every stage shares; the stage file holds that stage's steps. **After a compaction, read the stage file again** before the next step: a compaction keeps only part of a skill and none of a file read during the session.
+**Read `.claude/skills/slice/stages/<stage>.md` for the stage the arguments name, and no other stage's instructions.** This file holds what every stage shares; the stage file holds that stage's steps. **After a compaction, read the stage file again** before the next step: a compaction keeps only part of a skill and none of a file read during the session.
 
 **Each stage starts in a fresh session** (`/clear`). Two things cross from one stage to the next: the slice card in the slice's GitHub issue, which a person approved, and the stack's branches on GitHub. Never carry a stage's conversation into the next one (Handbook §18.8).
 
 **No stage before cleanup merges anything or asks anyone to.** The slice ships as a stack of PRs that nobody merges until the done stage has finished, the stack has been reviewed and its readiness record is current. Cleanup merges, on the developer's yes.
 
 These steps are the same for every developer and every agent. Codex runs this skill as `$slice` from its copy in `.agents/skills/slice/`, reads the same stage files, and has its own copies of the two slice agents in `.codex/agents/`. An agent tool that cannot run skills follows this file through the handoff template in `docs/WorkSlices.md`, doing the subagents' work itself.
+
+**Keep work inline by default** (D-151). A large brief or log is only a candidate for delegation. Before spawning for an independent audit, interface lookup or verification pass, read `.claude/skills/slice/stages/delegation.md` and establish at least a 30% saving in total raw tokens, including child startup, reasoning, retries and the main agent's dispatch and read-back. When the estimate is uncertain, do the work yourself. The same audit and verification checks apply either way. Schema writing, package implementation, final review, readiness decisions and cleanup stay with the main agent.
 
 Find the slice's issue once and reuse its number: `gh issue list --state all --search "<id> in:title" --json number,title,state`, the one whose title starts with `<id>:`.
 
