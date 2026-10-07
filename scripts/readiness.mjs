@@ -69,20 +69,27 @@ else {
 }
 body = body.split(/\r\n|\r/).join('\n');
 
-// The table under "## Readiness": | Item | Result | Head | Evidence | By |
+// The table under "## Readiness": | Item | Result | Head | Evidence | By |. A pipe inside a
+// cell is written \| in GitHub's tables, a code span included; an unescaped one adds a column
+// there and here, so a row with any other number of cells is reported, never guessed at.
 const rows = new Map();
+const malformed = [];
 const record = body.split(/^## Readiness\s*$/m)[1]?.split(/^## /m)[0];
 if (record)
   for (const line of record.split('\n')) {
-    const cells = line.trim().startsWith('|')
-      ? line
-          .trim()
-          .slice(1, -1)
-          .split('|')
-          .map((c) => c.trim())
-      : null;
-    if (!cells || cells.length < 5 || /^-+$/.test(cells[0]) || cells[0] === 'Item') continue;
-    rows.set(cells[0], { result: cells[1], head: cells[2], evidence: cells[3], by: cells[4] });
+    const t = line.trim();
+    if (!t.startsWith('|')) continue;
+    const cells = t
+      .replace(/^\|/, '')
+      .replace(/(?<!\\)\|$/, '')
+      .split(/(?<!\\)\|/)
+      .map((c) => c.trim().replace(/\\\|/g, '|'));
+    if (/^:?-+:?$/.test(cells[0]) || cells[0] === 'Item') continue;
+    if (cells.length !== 5)
+      malformed.push(
+        `${cells[0]}: the row has ${cells.length} cells, not 5; write a | inside a cell as \\|`,
+      );
+    else rows.set(cells[0], { result: cells[1], head: cells[2], evidence: cells[3], by: cells[4] });
   }
 
 // One patch id per head: the whole diff from the merge base with --base, so two heads holding
@@ -106,7 +113,7 @@ const changes = (commit) => {
 const resolve = (c) => git('rev-parse', '--verify', '--quiet', `${c}^{commit}`)?.trim() ?? null;
 const current = resolve(head);
 
-const problems = [];
+const problems = [...malformed];
 const notes = [];
 if (!record)
   problems.push('the issue has no "## Readiness" section, so every row below is missing');
