@@ -38,8 +38,10 @@ const slice = option('--slice');
 const strict = flag('--strict');
 const force = flag('--force');
 const ci = Boolean(process.env.GITHUB_ACTIONS);
-const optionValues = new Set([option('--base'), option('--slice')]);
-const wanted = argv.filter((a) => !a.startsWith('--') && !optionValues.has(a));
+// Targets are every word that is neither a flag nor the value after --base or --slice.
+const wanted = argv.filter(
+  (a, i) => !a.startsWith('--') && !['--base', '--slice'].includes(argv[i - 1]),
+);
 
 const run = (cmd, args, cwd = root, env = {}) =>
   spawnSync(cmd, args, {
@@ -49,7 +51,11 @@ const run = (cmd, args, cwd = root, env = {}) =>
     maxBuffer: 256e6,
     shell: process.platform === 'win32',
   });
-const has = (cmd) => run(cmd, ['--version']).status === 0;
+const found = new Map();
+const has = (cmd) => {
+  if (!found.has(cmd)) found.set(cmd, run(cmd, ['--version']).status === 0);
+  return found.get(cmd);
+};
 
 // Workspace packages, read from the folders pnpm-workspace.yaml names, so a new package is
 // checked without editing this file. Each runs the scripts it has, as `pnpm -r --if-present`.
