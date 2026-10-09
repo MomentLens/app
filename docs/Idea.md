@@ -105,7 +105,7 @@ There is no Videographer role, because there is no video. There is no Moderator 
    generated automatically:
    ├── Guest Link — joins as Guest
    └── Photographer Link — joins directly as Photographer with the correct
-       permissions from the moment they open the app, no manual role change
+       permissions once admitted through Approval Mode, no manual role change
        needed afterward
 
    Each is a URL plus its own distinct 6-character shortcode. These are two
@@ -114,7 +114,12 @@ There is no Videographer role, because there is no video. There is no Moderator 
 
    ⚠ The Photographer Link is sensitive. Anyone holding it can upload to the
    shared album from any location, with no verification gate (§4.5). Both
-   links can be revoked and regenerated at any time from this screen.
+   links have a confirmed Revoke & Regenerate action, one role at a time.
+   It replaces that role's link and code together; existing members keep
+   their access. Copy code and Copy link are separate actions, and Share
+   includes the role, event name, link and code. These actions need a
+   connection and a fresh read. Archived events show inactive invites and
+   allow replacement, with Copy and Share disabled (D-152).
 
 9. Separately, each venue gets one Venue Check-In QR, the only QR image the
    app produces. It is printed and posted at the venue, and it is the
@@ -377,7 +382,7 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
   - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Delete. Delete is permanent and confirms first (D-130).
   - *Blur regions*, each already applied. The card shows the photo with the region outlined, who drew it and when. Actions: Keep / Remove region; removing restores what was there (D-83).
 - **Attendees**: active memberships only, the Admin included, with search and a role filter. Row → detail sheet (Change Role, Force Verify labelled "Check In Manually", Remove from Event, Block). S-06 enables role changes, removal and blocking for active non-Admin targets, and S-17 adds Check In Manually and the check-in filter. S-06 shows initials until S-29 supplies event-scoped avatar privacy. Actions need connectivity and a matching membership access version; a stale or uncertain result refetches the list before another action. Archived events allow them and deleted events refuse them (D-133, D-143).
-- **Invite**: Guest Link and Photographer Link cards (shortcode prominent, URL secondary, Copy, Share, Revoke & Regenerate), plus one Venue QR per venue (preview, "Download for printing," regenerate).
+- **Invite**: S-05 adds Guest Link and Photographer Link cards, with shortcode prominent and URL secondary, Copy code, Copy link, Share and confirmed Revoke & Regenerate. A stale or uncertain replacement refetches before another action. S-16 adds one Venue QR per venue here, with preview, "Download for printing" and regenerate (D-152).
 - **Sub-events**: deep-links into the Schedule tab rather than duplicating it, since Admin's Delay affordance already lives there.
 - **Event Settings**: edit form (name, description, cover, Approval Mode). The event's dates are its sub-events' span and change only through the Schedule (§4.3, D-88). Venue and verification radius belong to each sub-event and are edited there too (D-111). Switching Approval Mode to auto admits the pending requests the guest cap allows, and asks first when anyone is pending, naming each Photographer (D-142). The form has a visually separated Danger Zone (Delete / Archive) and a required confirm dialog.
 
@@ -515,13 +520,14 @@ A sub-event ends at its scheduled end (D-88). Sub-events are planned across seve
 ---
 
 ### 4.4 Invitation & access control
-- **Guest Link** and **Photographer Link**, each a distinct token carrying its own role assignment, so joining via a given link grants that role immediately with no separate role-change step.
+- **Guest Link** and **Photographer Link**, each a distinct token carrying its own role assignment. Admission follows the event's Approval Mode, with no separate role-change step.
+- The Admin manages both through the Invite screen. Revoke & Regenerate replaces one role's token and shortcode together, in one transaction, and changes no membership or other role invite. Copy and Share need a fresh online read; an archived event allows replacement but disables sharing (D-152, arch:invite).
 - Manual role change remains available on the Attendees screen as a fallback, for someone who joined via the wrong link.
 - Approval Modes: Auto-Approve All, or Approve New Users (manual review).
 - Pending queue, bulk approve/reject, per-user block, revoke access at any time. Remove from Event and Block differ: a removed person can join again through a live invite, and a blocked one cannot (D-102).
 - Every event has exactly one Admin, its creator (D-102).
 - Attendee list: active memberships only, searchable by name and filterable by role. S-17 adds check-in status filtering. Only the Admin reads it; pending requests belong to Pending Approvals, and removed or blocked people leave the list. Role changes, removal and blocking require the target's current access version (D-143).
-- **There is no role-based media visibility rule.** All uploaded photos are visible to all event members regardless of the uploader's role, so a role change has no retroactive effect on any photo (D-13). `uploader_role_at_upload` drives the Uploader filter and nothing else: no access control, no routing.
+- **The uploader's role does not decide media visibility.** The viewer's role still restricts a Photographer to their own media (spec §4.10). The existing membership, publication and privacy checks still apply. Changing an uploader's role does not relabel or change access to their earlier photos (D-13, D-152). The Uploader filter matches `uploader_user_id`; `uploader_role_at_upload` stays display metadata, with no access-control or routing use (D-148).
 
 ---
 
