@@ -1,10 +1,20 @@
 import { z } from 'zod';
 
-import { InviteRole, Membership, MembershipRole, MembershipStatus } from '@momentlens/shared-types';
+import {
+  InviteRole,
+  ListInvitesResponse,
+  ManagedInvite,
+  Membership,
+  MembershipRole,
+  MembershipStatus,
+  Shortcode,
+} from '@momentlens/shared-types';
 import type {
   CancelJoinRequestResponse,
   InviteLookup,
   JoinEventResponse,
+  RegenerateInviteRequest,
+  RegenerateInviteResponse,
   ResolveInviteResponse,
 } from '@momentlens/shared-types';
 
@@ -241,4 +251,90 @@ export async function cancelJoinRequest(
   eventId: string,
 ): Promise<CancelJoinRequestResponse> {
   return { membership: await store.cancelJoinRequest(eventId, userId) };
+}
+
+const ManagementRefusal = z.enum(['not_found', 'not_member', 'wrong_role']);
+const ManagedRow = z
+  .object({
+    id: ManagedInvite.shape.id,
+    role: InviteRole,
+    token: ManagedInvite.shape.token,
+    shortcode: Shortcode,
+  })
+  .transform(({ shortcode, ...invite }) => ({ ...invite, code: shortcode }));
+const ManagedListRow = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('listed'), invites: z.array(ManagedRow) }),
+  z.object({ outcome: ManagementRefusal.or(z.literal('internal_error')) }),
+]);
+const RegeneratedRow = z.discriminatedUnion('outcome', [
+  z.object({ outcome: z.literal('regenerated'), invite: ManagedRow }),
+  z.object({ outcome: ManagementRefusal.or(z.enum(['invalid_request', 'invite_changed'])) }),
+]);
+
+export type ManagedListResult =
+  | { outcome: 'listed'; invites: ManagedInvite[] }
+  | { outcome: z.infer<typeof ManagementRefusal> | 'internal_error' };
+export type RegeneratedInviteResult = z.infer<typeof RegeneratedRow>;
+
+// Each RPC checks the event and authenticated actor itself. The read uses one snapshot;
+// replacement checks the displayed invite under joining's event lock (D-152).
+export interface InviteManagementStore {
+  list(eventId: string, actorId: string): Promise<ManagedListResult>;
+  regenerate(
+    eventId: string,
+    actorId: string,
+    request: RegenerateInviteRequest,
+  ): Promise<RegeneratedInviteResult>;
+}
+
+export function createInviteManagementStore(supabase: Supabase): InviteManagementStore {
+  return {
+    async list(eventId, actorId) {
+      const result = await supabase.rpc('list_event_invites', {
+        p_event_id: eventId,
+        p_actor_id: actorId,
+      });
+      if (result.error) throw result.error;
+      const row = ManagedListRow.parse(result.data as unknown);
+      if (row.outcome !== 'listed') return row;
+      // Validate both roles before any credentials leave the service. A GET never repairs data.
+      return { outcome: 'listed', invites: ListInvitesResponse.parse(row).invites };
+    },
+    async regenerate(eventId, actorId, request) {
+      const result = await supabase.rpc('regenerate_event_invite', {
+        p_event_id: eventId,
+        p_actor_id: actorId,
+        p_role: request.role,
+        p_expected_invite_id: request.expectedInviteId,
+      });
+      if (result.error) throw result.error;
+      const row = RegeneratedRow.parse(result.data as unknown);
+      if (row.outcome === 'regenerated' && row.invite.role !== request.role) {
+        throw new Error('regenerate_event_invite returned the wrong role');
+      }
+      return row;
+    },
+  };
+}
+
+export async function listEventInvites(
+  store: InviteManagementStore,
+  eventId: string,
+  actorId: string,
+): Promise<ListInvitesResponse> {
+  const result = await store.list(eventId, actorId);
+  if (result.outcome !== 'listed') throw new ApiError(result.outcome, 'Invite list refused');
+  return { invites: result.invites };
+}
+
+export async function regenerateEventInvite(
+  store: InviteManagementStore,
+  eventId: string,
+  actorId: string,
+  request: RegenerateInviteRequest,
+): Promise<RegenerateInviteResponse> {
+  const result = await store.regenerate(eventId, actorId, request);
+  if (result.outcome !== 'regenerated')
+    throw new ApiError(result.outcome, 'Invite replacement refused');
+  return { invite: result.invite };
 }
