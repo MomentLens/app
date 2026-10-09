@@ -23,6 +23,8 @@ import {
 import {
   cancelJoinRequestController,
   joinEventController,
+  listEventInvitesController,
+  regenerateEventInviteController,
   resolveInviteController,
 } from './controllers/invites';
 import {
@@ -56,7 +58,7 @@ import type { AlbumStore } from './services/album';
 import type { AttendeeStore } from './services/attendees';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
-import type { InviteStore } from './services/invites';
+import type { InviteManagementStore, InviteStore } from './services/invites';
 import type { JoinRequestStore } from './services/join-requests';
 import type { MediaStore } from './services/media';
 import type { MediaImagesStore } from './services/media-images';
@@ -74,6 +76,7 @@ export interface AppDeps {
   attendees: AttendeeStore;
   joinRequests: JoinRequestStore;
   invites: InviteStore;
+  inviteManagement: InviteManagementStore;
   subEvents: SubEventStore;
   media: MediaStore;
   album: AlbumStore;
@@ -157,6 +160,8 @@ export function createApp(deps: AppDeps): Express {
     invitesRouter(optionalAuth(deps.verifyToken), auth, {
       resolve: resolveInviteController(deps.invites, deps.presignGet),
       join: joinEventController(deps.invites),
+      list: listEventInvitesController(deps.inviteManagement),
+      regenerate: regenerateEventInviteController(deps.inviteManagement),
     }),
   );
   app.use(notFound);

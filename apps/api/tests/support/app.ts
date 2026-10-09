@@ -86,6 +86,10 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
       act: () => Promise.reject(new Error('no join request store in this test')),
     },
     invites: noInvites,
+    inviteManagement: {
+      list: () => Promise.reject(new Error('no invite management store in this test')),
+      regenerate: () => Promise.reject(new Error('no invite management store in this test')),
+    },
     subEvents: noSubEvents,
     media: noMedia,
     album: noAlbum,
