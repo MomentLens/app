@@ -10,8 +10,7 @@ import { byPlatform } from '@/lib/copy';
 
 const IOS = Platform.OS === 'ios';
 
-// A row a later slice builds: dimmed, announced as a dimmed button, and doing nothing yet. S-05,
-// S-06, S-07 and S-24 each give their own row a target (D-142).
+// S-24 enables Review Queue. Until then its row announces that it is disabled (D-142).
 const LATER = {
   disabled: true,
   onPress: () => undefined,
@@ -70,9 +69,12 @@ export function ManageHub({ eventId }: { eventId: string }) {
         />
         <Row
           title="Invite"
-          {...detail('Links and QR codes')}
+          {...detail('Links and codes')}
           leading={<HubGlyph name={GLYPH.invite} />}
-          {...LATER}
+          chevron
+          onPress={() =>
+            router.push({ pathname: '/event/[id]/manage/invite', params: { id: eventId } })
+          }
         />
       </Section>
       <SectionGap />
