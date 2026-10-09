@@ -9,7 +9,7 @@ import { createAlbumStore } from './services/album';
 import { createAttendeeStore } from './services/attendees';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
-import { createInviteStore } from './services/invites';
+import { createInviteManagementStore, createInviteStore } from './services/invites';
 import { createJoinRequestStore } from './services/join-requests';
 import { createMediaStore } from './services/media';
 import { createMediaImagesStore } from './services/media-images';
@@ -61,6 +61,7 @@ createApp({
   attendees: createAttendeeStore(supabase),
   joinRequests: createJoinRequestStore(supabase),
   invites: createInviteStore(supabase),
+  inviteManagement: createInviteManagementStore(supabase),
   subEvents: createSubEventStore(supabase),
   media: createMediaStore(supabase),
   album: createAlbumStore(supabase),
