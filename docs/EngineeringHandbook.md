@@ -232,7 +232,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 - **Errors** have one body, `{ "error": { "code": "album_closed", "message": "..." } }`. Its schema is `ErrorResponse` in `packages/shared-types`, written in S-01's schema PR. The app switches on `code`, which is snake_case. `message` is for logs and is never shown to a user as it stands.
 - **A 403 `not_member` on an event** is how the app learns its user was removed or blocked, and it shows Access Removed (spec §4.1). A 403 `wrong_role` means the role changed (D-102), so the app refetches the event and the Event shell redraws its tabs (D-118). `not_uploader` fails only the action that drew it. A join answers a blocked person 403 `blocked` instead, and the app shows Join Blocked, never Access Removed (D-115).
 - **A 409 `membership_changed`** on an attendee or a join-request action means a target is no longer in the state the action needs, `active` on Attendees and `pending` on Pending Approvals, or its loaded access version is stale. One such target refuses a whole batch. The app refetches that list before another action. It also refetches after an uncertain mutation result. It never queues one of these mutations or retries one whose result is uncertain; the one resend after a 401 and an Auth refresh still applies, because the API refused before the handler ran (D-143, D-144).
-- **Planned for S-05.** A 409 `invite_changed` means `expectedInviteId` no longer names the current invite for the event and role, and the rotation wrote nothing. The app refetches before another explicit action and after an uncertain rotation result, never queues it and never retries an uncertain result. The existing resend after a 401 and Auth refresh still applies (D-152).
+- **A 409 `invite_changed`** means `expectedInviteId` no longer names the current invite for the event and role, and the rotation wrote nothing. The app refetches before another explicit action and after an uncertain rotation result, never queues it and never retries an uncertain result. The existing resend after a 401 and Auth refresh still applies (D-152).
 - A failure no other row covers is a 500 with `internal_error`, which Sentry reports. Its `message` names no cause, because the cause goes to Sentry and the logs.
 
 | Status | Means | `code` values so far |
@@ -242,7 +242,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 | 401 | No session, or it expired | `no_session` |
 | 403 | Not an active member of this event, blocked from joining it, or the wrong role | `not_member`, `wrong_role`, `not_uploader`, `blocked` |
 | 404 | Not found, or soft-deleted | `not_found` |
-| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media`, `sub_event_missing`, `membership_changed` |
+| 409 | A state conflict | `duplicate`, `album_closed`, `unverified`, `upload_missing`, `last_sub_event`, `sub_event_has_media`, `sub_event_missing`, `membership_changed`, `invite_changed` |
 | 422 | A limit reached | `event_full`, `too_many_unfinished`, `too_many_references`, `too_many_sub_events`, `event_too_long` |
 | 500 | Anything else, including a dependency the API could not reach | `internal_error` |
 | 503 | A dependency is down | `GET /health` only, with its own body |
