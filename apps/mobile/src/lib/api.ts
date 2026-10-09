@@ -16,6 +16,7 @@ import {
   ListAlbumResponse,
   ListEventsResponse,
   ListAttendeesResponse,
+  ListInvitesResponse,
   ListSubEventsResponse,
   ListUploadersResponse,
   MediaImagesResponse,
@@ -23,6 +24,7 @@ import {
   MediaStatusResponse,
   CompleteUploadResponse,
   PreflightUploadResponse,
+  RegenerateInviteResponse,
   ResolveInviteResponse,
   RemoveAttendeeResponse,
   SetEventCoverResponse,
@@ -43,6 +45,7 @@ import {
   type MediaStatusRequest,
   type PreflightUploadRequest,
   type RemoveAttendeeRequest,
+  type RegenerateInviteRequest,
   type ResolveInviteRequest,
   type UpdateEventSettingsRequest,
   type UpdateSubEventRequest,
@@ -377,6 +380,40 @@ export async function getEventSettings(
     throw await errorFrom('GET /events/{eventId}/settings', response);
   }
   return parseBody('GET /events/{eventId}/settings', response, GetEventSettingsResponse);
+}
+
+// Managed credentials stay bound to the account that opened Invite (D-152).
+export async function listInvites(
+  owner: string,
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<ListInvitesResponse> {
+  const response = await authenticatedRequest(
+    `/events/${encodeURIComponent(eventId)}/invites`,
+    { signal },
+    owner,
+  );
+  if (response.status !== 200) throw await errorFrom('GET event invites', response);
+  return parseBody('GET event invites', response, ListInvitesResponse);
+}
+
+// The API replaces the displayed id atomically. Only a refused 401 permits a resend.
+export async function regenerateInvite(
+  owner: string,
+  eventId: string,
+  body: RegenerateInviteRequest,
+): Promise<RegenerateInviteResponse> {
+  const response = await authenticatedRequest(
+    `/events/${encodeURIComponent(eventId)}/invites/regenerate`,
+    { method: 'POST', body },
+    owner,
+  );
+  if (response.status !== 200) throw await errorFrom('POST regenerate invite', response);
+  const result = await parseBody('POST regenerate invite', response, RegenerateInviteResponse);
+  if (result.invite.role !== body.role || result.invite.id === body.expectedInviteId) {
+    throw new ApiError('The invite replacement does not match the requested role or id.', 200);
+  }
+  return result;
 }
 
 // Changes the fields the body carries and nothing else, and answers with the settings after the
