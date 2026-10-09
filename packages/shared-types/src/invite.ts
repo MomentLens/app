@@ -148,3 +148,50 @@ export const CancelJoinRequestResponse = z.object({
   membership: Membership.nullable(),
 });
 export type CancelJoinRequestResponse = z.infer<typeof CancelJoinRequestResponse>;
+
+/** The active Admin's current credentials for one role (D-152, arch:invite). */
+export const ManagedInvite = z.object({
+  id: z.uuid(),
+  role: InviteRole,
+  token: InviteToken,
+  code: Shortcode,
+});
+export type ManagedInvite = z.infer<typeof ManagedInvite>;
+
+/**
+ * GET /events/{eventId}/invites, with no request body. The active Admin receives one current
+ * invite per role. A missing role or extra current row is 500 `internal_error`; the read issues
+ * no credential. Unknown or deleted events return 404 `not_found`, inactive or absent members
+ * return 403 `not_member`, and other active roles return 403 `wrong_role` (D-152, hb §5.3).
+ * Archived events permit management, while the app disables Copy and Share.
+ */
+export const ListInvitesResponse = z.object({
+  invites: z
+    .array(ManagedInvite)
+    .length(2)
+    .refine((invites) => new Set(invites.map((invite) => invite.role)).size === 2, {
+      message: 'Expected one Guest invite and one Photographer invite',
+    }),
+});
+export type ListInvitesResponse = z.infer<typeof ListInvitesResponse>;
+
+/**
+ * POST /events/{eventId}/invites/regenerate. The Admin sends the id currently displayed for the
+ * chosen role. A stale, revoked or cross-event id returns 409 `invite_changed` without a write.
+ * The app refetches before another explicit action and never retries an uncertain result (D-152).
+ */
+export const RegenerateInviteRequest = z.strictObject({
+  role: InviteRole,
+  expectedInviteId: z.uuid(),
+});
+export type RegenerateInviteRequest = z.infer<typeof RegenerateInviteRequest>;
+
+/**
+ * The replacement after the transaction commits. Both management responses use no-store.
+ * The old token and code die together; memberships and the other role's invite stay unchanged.
+ * Issuance failure rolls back revocation. Access refusals match ListInvitesResponse (D-152).
+ */
+export const RegenerateInviteResponse = z.object({
+  invite: ManagedInvite,
+});
+export type RegenerateInviteResponse = z.infer<typeof RegenerateInviteResponse>;

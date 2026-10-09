@@ -26,6 +26,7 @@ export const ErrorCode = z.enum([
   'sub_event_has_media',
   'sub_event_missing',
   'membership_changed',
+  'invite_changed',
   // 422
   'event_full',
   'too_many_unfinished',
