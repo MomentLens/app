@@ -57,6 +57,7 @@ import { createDatabaseCheck } from '../../src/services/health';
 import { createJoinRequestStore, requestTargetsParam } from '../../src/services/join-requests';
 import type { RequestTarget } from '../../src/services/join-requests';
 import {
+  createInviteManagementStore,
   createInviteStore,
   joinEventParams,
   resolveInviteParams,
@@ -1198,6 +1199,226 @@ if (project === null) {
         expect(result.error).toBeNull();
         return result.count;
       }
+
+      describe('S-05 invite management', () => {
+        const management = createInviteManagementStore(admin);
+
+        it('refuses another Admin, wrong roles and inactive or absent members without writes', async () => {
+          const owner = await createNamedUser();
+          const outsider = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          await createdEvent(outsider.id);
+          const before = await liveInvites(event.id);
+          for (const [role, status, outcome] of [
+            ['guest', 'active', 'wrong_role'],
+            ['photographer', 'active', 'wrong_role'],
+            ['guest', 'pending', 'not_member'],
+            ['guest', 'blocked', 'not_member'],
+            ['guest', 'removed', 'not_member'],
+          ] as const) {
+            const actor = await createNamedUser();
+            const inserted = await admin
+              .from('membership')
+              .insert({ event_id: event.id, user_id: actor.id, role, status });
+            expect(inserted.error).toBeNull();
+            await expect(management.list(event.id, actor.id)).resolves.toEqual({ outcome });
+            await expect(
+              management.regenerate(event.id, actor.id, {
+                role: 'guest',
+                expectedInviteId: before.guest.id,
+              }),
+            ).resolves.toEqual({ outcome });
+          }
+          for (const actor of [outsider.id, randomUUID()]) {
+            await expect(management.list(event.id, actor)).resolves.toEqual({
+              outcome: 'not_member',
+            });
+            await expect(
+              management.regenerate(event.id, actor, {
+                role: 'guest',
+                expectedInviteId: before.guest.id,
+              }),
+            ).resolves.toEqual({ outcome: 'not_member' });
+          }
+          expect(await liveInvites(event.id)).toEqual(before);
+        });
+
+        it('refuses direct management RPCs and invite reads for anon and authenticated clients', async () => {
+          const owner = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          const before = await liveInvites(event.id);
+          for (const client of [
+            createServerClient(project.url, project.publishableKey),
+            await signedInClient(owner),
+          ]) {
+            for (const [name, params] of [
+              ['list_event_invites', { p_event_id: event.id, p_actor_id: owner.id }],
+              [
+                'regenerate_event_invite',
+                {
+                  p_event_id: event.id,
+                  p_actor_id: owner.id,
+                  p_role: 'guest',
+                  p_expected_invite_id: before.guest.id,
+                },
+              ],
+            ] as const) {
+              const result = await client.rpc(name, params);
+              expect(result.error?.code).toBe('42501');
+            }
+            const read = await client.from('invite').select('*').eq('event_id', event.id);
+            expect(read.error).toBeNull();
+            expect(read.data).toEqual([]);
+          }
+          expect(await liveInvites(event.id)).toEqual(before);
+        });
+
+        it('refuses stale, cross-event and cross-role expected ids without replacing anything', async () => {
+          const owner = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          const other = await createdEvent(owner.id);
+          const before = await liveInvites(event.id);
+          const foreign = await liveInvites(other.id);
+          for (const id of [randomUUID(), foreign.guest.id, before.photographer.id]) {
+            await expect(
+              management.regenerate(event.id, owner.id, { role: 'guest', expectedInviteId: id }),
+            ).resolves.toEqual({ outcome: 'invite_changed' });
+          }
+          expect(await liveInvites(event.id)).toEqual(before);
+          expect(await liveInvites(other.id)).toEqual(foreign);
+        });
+
+        it('replaces token and code together, preserves memberships and the other role, and kills old credentials', async () => {
+          const owner = await createNamedUser();
+          const joiner = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          const before = await liveInvites(event.id);
+          const membership = await membershipRow(event.id, owner.id);
+          const result = await management.regenerate(event.id, owner.id, {
+            role: 'guest',
+            expectedInviteId: before.guest.id,
+          });
+          expect(result.outcome).toBe('regenerated');
+          const after = await liveInvites(event.id);
+          expect(after.guest.id).not.toBe(before.guest.id);
+          expect(after.guest.token).not.toBe(before.guest.token);
+          expect(after.guest.shortcode).not.toBe(before.guest.shortcode);
+          expect(after.photographer).toEqual(before.photographer);
+          expect(await membershipRow(event.id, owner.id)).toEqual(membership);
+          await expect(
+            management.regenerate(event.id, owner.id, {
+              role: 'guest',
+              expectedInviteId: before.guest.id,
+            }),
+          ).resolves.toEqual({ outcome: 'invite_changed' });
+          for (const lookup of [{ token: before.guest.token }, { code: before.guest.shortcode }]) {
+            await expect(invites.resolve(lookup, null)).resolves.toBeNull();
+            await expect(invites.join(joiner.id, lookup, MAX_ACTIVE_GUESTS)).resolves.toEqual({
+              outcome: 'dead',
+            });
+          }
+          await expect(
+            invites.join(joiner.id, { token: after.guest.token }, MAX_ACTIVE_GUESTS),
+          ).resolves.toMatchObject({
+            outcome: 'created',
+            membership: { role: 'guest', status: 'active' },
+          });
+        });
+
+        it('gives concurrent rotations one winner and permits independent role rotations', async () => {
+          const owner = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          const before = await liveInvites(event.id);
+          const results = await Promise.all(
+            [0, 1].map(() =>
+              management.regenerate(event.id, owner.id, {
+                role: 'guest',
+                expectedInviteId: before.guest.id,
+              }),
+            ),
+          );
+          expect(results.map((r) => r.outcome).sort()).toEqual(['invite_changed', 'regenerated']);
+          const current = await liveInvites(event.id);
+          const independent = await Promise.all(
+            ['guest', 'photographer'].map((role) =>
+              management.regenerate(event.id, owner.id, {
+                role: role as 'guest' | 'photographer',
+                expectedInviteId: current[role as 'guest' | 'photographer'].id,
+              }),
+            ),
+          );
+          expect(independent.map((r) => r.outcome)).toEqual(['regenerated', 'regenerated']);
+        });
+
+        it('serializes rotation with joining and keeps a join that won the lock', async () => {
+          const owner = await createNamedUser();
+          const joiner = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          const before = await liveInvites(event.id);
+          const [rotation, join] = await Promise.all([
+            management.regenerate(event.id, owner.id, {
+              role: 'guest',
+              expectedInviteId: before.guest.id,
+            }),
+            invites.join(joiner.id, { token: before.guest.token }, MAX_ACTIVE_GUESTS),
+          ]);
+          expect(rotation.outcome).toBe('regenerated');
+          expect(['dead', 'created']).toContain(join.outcome);
+          expect(await membershipRow(event.id, joiner.id)).toEqual(
+            join.outcome === 'dead'
+              ? null
+              : expect.objectContaining({ role: 'guest', status: 'active' }),
+          );
+          await expect(
+            invites.join(joiner.id, { code: before.guest.shortcode }, MAX_ACTIVE_GUESTS),
+          ).resolves.toEqual({ outcome: 'dead' });
+        });
+
+        it('allows archived management, refuses archived joins and deleted management, and never repairs missing invites', async () => {
+          const owner = await createNamedUser();
+          const event = await createdEvent(owner.id);
+          const before = await liveInvites(event.id);
+          await setEvent(event.id, { archived_at: new Date().toISOString() });
+          expect((await management.list(event.id, owner.id)).outcome).toBe('listed');
+          const result = await management.regenerate(event.id, owner.id, {
+            role: 'guest',
+            expectedInviteId: before.guest.id,
+          });
+          if (result.outcome !== 'regenerated') throw new Error('Expected archived replacement');
+          await expect(invites.resolve({ token: result.invite.token }, null)).resolves.toBeNull();
+          await expect(
+            invites.join(owner.id, { code: result.invite.code }, MAX_ACTIVE_GUESTS),
+          ).resolves.toEqual({ outcome: 'dead' });
+          expect(
+            (await admin.from('invite').delete().eq('id', before.photographer.id)).error,
+          ).toBeNull();
+          await expect(management.list(event.id, owner.id)).resolves.toEqual({
+            outcome: 'internal_error',
+          });
+          const missing = await admin
+            .from('invite')
+            .select('id')
+            .eq('event_id', event.id)
+            .is('revoked_at', null);
+          expect(missing.error).toBeNull();
+          expect(missing.data).toHaveLength(1);
+          // Restore this fixture before the existing backfill test checks every event's roles.
+          expect(
+            (await admin.rpc('issue_invite', { p_event_id: event.id, p_role: 'photographer' }))
+              .error,
+          ).toBeNull();
+          await setEvent(event.id, { deleted_at: new Date().toISOString() });
+          for (const id of [event.id, randomUUID()]) {
+            await expect(management.list(id, owner.id)).resolves.toEqual({ outcome: 'not_found' });
+            await expect(
+              management.regenerate(id, owner.id, {
+                role: 'guest',
+                expectedInviteId: result.invite.id,
+              }),
+            ).resolves.toEqual({ outcome: 'not_found' });
+          }
+        });
+      });
 
       it('gives each new event one live Guest and one Photographer invite, and a repeat adds none', async () => {
         const a = await createNamedUser();
