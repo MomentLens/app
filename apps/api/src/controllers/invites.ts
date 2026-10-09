@@ -4,6 +4,9 @@ import {
   CancelJoinRequestResponse,
   JoinEventRequest,
   JoinEventResponse,
+  ListInvitesResponse,
+  RegenerateInviteRequest,
+  RegenerateInviteResponse,
   ResolveInviteRequest,
   ResolveInviteResponse,
 } from '@momentlens/shared-types';
@@ -11,8 +14,14 @@ import {
 import type { PresignGet } from '../lib/r2';
 import { authenticatedUser, sessionUser } from '../middleware/auth';
 import { parseInput, PathId } from '../middleware/body';
-import { cancelJoinRequest, joinEvent, resolveInvite } from '../services/invites';
-import type { InviteStore } from '../services/invites';
+import {
+  cancelJoinRequest,
+  joinEvent,
+  listEventInvites,
+  regenerateEventInvite,
+  resolveInvite,
+} from '../services/invites';
+import type { InviteManagementStore, InviteStore } from '../services/invites';
 
 // Every response is parsed with its contract before sending, as in controllers/events.ts, and none
 // may be cached: the preview carries a URL signed for this caller, and each answer depends on who
@@ -49,5 +58,24 @@ export function cancelJoinRequestController(invites: InviteStore) {
     const eventId = parseInput(PathId, req.params.eventId);
     const result = await cancelJoinRequest(invites, id, eventId);
     res.set('Cache-Control', 'no-store').json(CancelJoinRequestResponse.parse(result));
+  };
+}
+
+export function listEventInvitesController(invites: InviteManagementStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const result = await listEventInvites(invites, eventId, id);
+    res.json(ListInvitesResponse.parse(result));
+  };
+}
+
+export function regenerateEventInviteController(invites: InviteManagementStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const request = parseInput(RegenerateInviteRequest, req.body);
+    const result = await regenerateEventInvite(invites, eventId, id, request);
+    res.json(RegenerateInviteResponse.parse(result));
   };
 }
