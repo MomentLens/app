@@ -96,13 +96,15 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | S-08 | Two-tier navigation shell, role-based tab sets, persistent header, and `GET /events/{eventId}` | §2.5.1, §2.2, §4.10, HB §16.5, HB §4, D-118 | C | S-03 |
 | S-04 | Sub-events CRUD, Schedule screen, **status computation**, the Admin's Delay action | §4.3, §4.6, §2.5.5, §4.10, spec §4.17, arch:sub_event, D-121 | U | S-02, S-08 |
 | S-07a | Manage hub screen and the Event Settings edit form, without its Danger Zone | §2.5.7 Manage, §4.3, spec §4.17, arch:event, arch §3, D-110, D-114, D-142 | B | S-02, S-04, S-08 |
-| S-05 | Invite links and shortcodes, both roles, revoke and regenerate | §4.4, §2.1.3 Phase C | C | S-03, S-07a |
+| S-05 | Admin Invite cards for both roles, copy and share, atomic revoke and regenerate | §4.4, §2.1.3 Phase C, spec §2.5.7, spec §5.1, spec §4.17, arch:who-may-see-what, arch:invite, arch:membership, hb §5.3, D-101, D-115, D-152 | C | S-03, S-07a |
 | S-06 | Attendees: search, filter by role, role change, block, remove | §4.4, §2.5.7 Manage, spec §4.17, arch:membership, hb §5.3, D-35, D-102, D-114, D-143 | B | S-07a |
 | S-07 | Pending Approvals queue, per-row and bulk actions | §4.4, §2.5.7 Manage, D-35, spec §4.17, arch:membership, hb §5.3, D-139, D-142, D-143, D-144 | B | S-06 |
 
 **S-08 is infrastructure everyone builds on.** Do it early and do not let it drift.
 
 **S-07a is the hub the other Manage screens hang off.** Invite (S-05), Attendees (S-06), Pending Approvals (S-07), the Review Queue (S-24) and the live status card (S-31) are rows on it (spec §2.5.7), so every one of those slices comes after it. Until each ships, S-07a shows its row disabled, and the slice enables its own row. The status card has no placeholder and arrives with S-31 (D-142).
+
+**S-05 builds links and codes only.** S-03 already issued both role invites with the event. S-05 needs a schema stage for the management contracts and SQL functions, then API and mobile builds. The replacement shares `join_event`'s event lock and checks `expectedInviteId`, so a stale request cannot revoke a newer credential. Copy and Share require a fresh online read; managed credentials are not persisted. Archived events allow replacement with sharing disabled. S-16 adds the Venue QR section to this screen. S-05's OpenAPI-generation exception adds no dependency (D-152).
 
 **S-06 filters by role only.** Nothing writes a verification row until Phase 4, so S-17 adds the filter by check-in status and Check In Manually. It lists active attendees only, with initials until S-29 supplies event-scoped avatar privacy, and adds the Admin update guard and access-version precondition for every action (D-143).
 
