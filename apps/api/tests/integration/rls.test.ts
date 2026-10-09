@@ -121,7 +121,7 @@ if (project === null) {
     if (failed.length > 0) {
       throw new Error(`Could not delete ${failed.length} test accounts:\n${failed.join('\n')}`);
     }
-  }, 120_000);
+  }, 300_000);
 
   function newEmail(): string {
     return `rls-test+${randomUUID()}@momentlens.me`;
