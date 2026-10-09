@@ -25,6 +25,133 @@ jest.mock('@/lib/supabase', () => ({ supabase: { auth: mockAuth } }));
 const BASE_URL = 'https://api.example.test/';
 const originalFetch = globalThis.fetch;
 
+describe('Admin invite management endpoints (D-152)', () => {
+  const owner = 'admin-a';
+  const eventId = '11111111-1111-4111-8111-111111111111';
+  const guest = {
+    id: '22222222-2222-4222-8222-222222222222',
+    role: 'guest',
+    token: 'a'.repeat(43),
+    code: 'K7Q2XP',
+  };
+  const photographer = {
+    ...guest,
+    id: '33333333-3333-4333-8333-333333333333',
+    role: 'photographer',
+    token: 'b'.repeat(43),
+    code: 'M4T8RW',
+  };
+  const body = { role: 'guest' as const, expectedInviteId: guest.id };
+  const replacement = { ...guest, id: '44444444-4444-4444-8444-444444444444' };
+  function signIn(id = owner, token = 'token') {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: token, user: { id } } } as SessionResult['data'],
+      error: null,
+    });
+  }
+
+  it('reads both roles through the authenticated event endpoint', async () => {
+    signIn();
+    const fetched = answers(200, { invites: [guest, photographer] });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).listInvites(owner, eventId)).resolves.toEqual({
+      invites: [guest, photographer],
+    });
+    expect(fetched.mock.calls[0]?.[0]).toBe(`https://api.example.test/events/${eventId}/invites`);
+    expect(fetched.mock.calls[0]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer token' });
+  });
+
+  it.each([
+    { invites: [guest] },
+    { invites: [guest, guest] },
+    { invites: [guest, photographer, guest] },
+    { invites: [{ ...guest, token: 'bad' }, photographer] },
+  ])('refuses missing or duplicate roles and malformed credentials', async (response) => {
+    signIn();
+    globalThis.fetch = answers(200, response);
+    const api = loadApi(BASE_URL);
+    await expect(api.listInvites(owner, eventId)).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('sends the role and displayed invite id in the POST body, without tokens in the path', async () => {
+    signIn();
+    const fetched = answers(200, { invite: replacement });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).regenerateInvite(owner, eventId, body)).resolves.toEqual({
+      invite: replacement,
+    });
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/invites/regenerate`,
+    );
+    expect(fetched.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(fetched.mock.calls[0]?.[1]?.body as string)).toEqual(body);
+  });
+
+  it('refuses a malformed or wrong-role replacement', async () => {
+    signIn();
+    globalThis.fetch = answers(200, { invite: photographer });
+    const api = loadApi(BASE_URL);
+    await expect(api.regenerateInvite(owner, eventId, body)).rejects.toBeInstanceOf(api.ApiError);
+    globalThis.fetch = answers(200, { invite: { ...replacement, code: 'INVALID' } });
+    await expect(api.regenerateInvite(owner, eventId, body)).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('preserves invite_changed for the caller and never retries a conflict', async () => {
+    signIn();
+    const fetched = answers(409, { error: { code: 'invite_changed', message: 'changed' } });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).regenerateInvite(owner, eventId, body)).rejects.toMatchObject({
+      code: 'invite_changed',
+      status: 409,
+    });
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+
+  it('never retries a replacement timeout', async () => {
+    jest.useFakeTimers();
+    signIn();
+    const fetched = neverAnswers();
+    globalThis.fetch = fetched;
+    const outcome = loadApi(BASE_URL)
+      .regenerateInvite(owner, eventId, body)
+      .catch((error: unknown) => error);
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(await outcome).toMatchObject({ timedOut: true });
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses both calls without a session or under another account', async () => {
+    const fetched = answers(200, { invites: [guest, photographer] });
+    globalThis.fetch = fetched;
+    const api = loadApi(BASE_URL);
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    await expect(api.listInvites(owner, eventId)).rejects.toMatchObject({ code: 'no_session' });
+    await expect(api.regenerateInvite(owner, eventId, body)).rejects.toMatchObject({
+      code: 'no_session',
+    });
+    signIn('admin-b');
+    await expect(api.listInvites(owner, eventId)).rejects.toBeInstanceOf(api.AccountChangedError);
+    await expect(api.regenerateInvite(owner, eventId, body)).rejects.toBeInstanceOf(
+      api.AccountChangedError,
+    );
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it('allows one resend after a refused 401, with the same expected id', async () => {
+    signIn();
+    mockAuth.refreshSession.mockResolvedValue({
+      data: { session: { access_token: 'fresh', user: { id: owner } } } as SessionResult['data'],
+      error: null,
+    });
+    const fetched = answers(200, { invite: replacement });
+    fetched.mockResolvedValueOnce({ status: 401 } as Response);
+    globalThis.fetch = fetched;
+    await loadApi(BASE_URL).regenerateInvite(owner, eventId, body);
+    expect(fetched).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetched.mock.calls[1]?.[1]?.body as string)).toEqual(body);
+  });
+});
+
 // api.ts reads EXPO_PUBLIC_API_URL once, when the module loads, so each test loads its own copy
 // with the environment it needs. It loads through jest.requireActual inside isolateModules rather
 // than a dynamic import(), which babel-preset-expo leaves untransformed and Jest's CommonJS
