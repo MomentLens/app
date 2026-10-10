@@ -38,11 +38,18 @@ export function captureController(take: () => Promise<string>) {
       await (await getCaptures()).handoff(owner, id);
       void runUploads();
     },
-    discardTemporary: async (uri) => {
-      const file = new File(uri);
-      if (file.exists) file.delete();
-    },
+    discardTemporary: async (uri) => discardCameraPhoto(uri),
   });
+}
+// Removes the camera's file for a shot that no draft keeps. A file that will not delete stays until
+// the OS clears the camera cache, so the failure is ignored.
+export function discardCameraPhoto(uri: string): void {
+  try {
+    const file = new File(uri);
+    if (file.exists) file.delete();
+  } catch {
+    /* The OS clears the camera cache. */
+  }
 }
 export async function retryCapture(draft: CaptureDraft): Promise<void> {
   if (useAuthStore.getState().userId !== draft.userId) return;

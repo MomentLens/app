@@ -41,6 +41,7 @@ import { CameraReadiness } from './camera-readiness';
 import { useCaptureMode } from './mode-store';
 import {
   captureController,
+  discardCameraPhoto,
   getCaptures,
   hasLocalNotice,
   readStartingMode,
@@ -216,10 +217,13 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
       const photo = await selectedCamera.takePictureAsync({ quality: 1, exif: true });
       if (!photo) throw new Error('The camera could not take the photo.');
       if (mounted.current) setShots((count) => count + 1);
-      if (!matchesShape(selectedSize, photo.width, photo.height))
+      if (!matchesShape(selectedSize, photo.width, photo.height)) {
+        // No draft keeps this shot, so its camera file goes before the error.
+        discardCameraPhoto(photo.uri);
         throw new Error(
           `This camera output (${photo.width}x${photo.height}) does not match its preview bounds (${selectedSize}). Please report these dimensions.`,
         );
+      }
       return photo.uri;
     });
   }, [owner]);
