@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Glyph, GLYPH } from '@/components/ui/glyph';
-import { PreviewArea, Shutter } from './camera-controls';
+import { FLIP, PreviewArea, Shutter } from './camera-controls';
 import type { CaptureMode } from './context';
 import { SessionStack, type SessionPhoto } from './session-stack';
 
@@ -21,10 +21,6 @@ export interface ViewfinderProps {
   onFlip: () => void;
   onMode: (mode: CaptureMode) => void;
 }
-export const FLIP = {
-  ios: 'arrow.triangle.2.circlepath.camera',
-  android: 'flip_camera_android',
-} as const;
 // Pixel Camera's layout (D-134): close and the name at the top, the preview under them, flip
 // leading and the session stack trailing the shutter, and the Public / Local Only pill below.
 export default function Viewfinder(p: ViewfinderProps) {
