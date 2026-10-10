@@ -1,4 +1,9 @@
-import { currentSubEvent, type SubEvent } from '@momentlens/shared-types';
+import {
+  currentSubEvent,
+  type GetEventResponse,
+  type ListSubEventsResponse,
+  type SubEvent,
+} from '@momentlens/shared-types';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -18,9 +23,10 @@ import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cameraStillSize } from '../../../modules/local-media';
 import { Glyph } from '@/components/ui/glyph';
-import { lostAccess, useEvent } from '@/features/event-shell/use-event';
+import { eventQueryKey, lostAccess, useEvent } from '@/features/event-shell/use-event';
 import { nextStatusChange } from '@/features/schedule/schedule';
-import { useSubEvents } from '@/features/schedule/use-sub-events';
+import { subEventsQueryKey, useSubEvents } from '@/features/schedule/use-sub-events';
+import { queryClient } from '@/lib/query-client';
 import { useNow } from '@/hooks/use-now';
 import { useAuthStore } from '@/stores/auth';
 import { admitShot, fitPreview, nativePictureSize, type CaptureMode } from './context';
@@ -67,9 +73,16 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   const mounted = useRef(true);
   const shooting = useRef(false);
   const cameraGeneration = useRef(0);
+  const lastCaptureSubEvent = useRef<string | null>(null);
   const close = useCallback(() => {
-    router.dismissTo({ pathname: '/event/[id]/media', params: { id: eventId } });
-  }, [router, eventId]);
+    router.dismissTo({
+      pathname: '/event/[id]/media',
+      params: {
+        id: eventId,
+        captureSubEventId: live?.id ?? lastCaptureSubEvent.current ?? undefined,
+      },
+    });
+  }, [router, eventId, live?.id]);
   useFocusEffect(
     useCallback(() => {
       setFocused(true);
@@ -160,14 +173,24 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   }, []);
   async function shutter() {
     if (shooting.current || !ready || !focused || !active || !controller.current) return;
+    if (useAuthStore.getState().userId !== owner) return;
     // Re-read account and schedule for admission. The controller retains this shot's context.
+    const scheduleKey = subEventsQueryKey(eventId);
+    const eventKey = eventQueryKey(eventId);
+    const currentSchedule =
+      queryClient.getQueryData<ListSubEventsResponse>(scheduleKey)?.subEvents ?? [];
+    const currentEvent = queryClient.getQueryData<GetEventResponse>(eventKey);
+    const accessibleNow =
+      currentEvent?.event.id === eventId &&
+      !lostAccess(queryClient.getQueryState(eventKey)?.error) &&
+      !lostAccess(queryClient.getQueryState(scheduleKey)?.error);
     const shot = admitShot(
       useAuthStore.getState().userId,
       eventId,
-      subs,
+      currentSchedule,
       useCaptureMode.getState().mode,
       new Date(),
-      accessible,
+      accessibleNow,
     );
     if (!shot) {
       close();
@@ -182,6 +205,7 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
     setProblem(undefined);
     try {
       const result = await controller.current!.capture(shot);
+      lastCaptureSubEvent.current = shot.subEventId;
       if (!mounted.current || useAuthStore.getState().userId !== owner) return;
       const uri = await (
         await getCaptures()

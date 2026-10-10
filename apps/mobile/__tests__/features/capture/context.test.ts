@@ -25,13 +25,15 @@ describe('shutter context', () => {
     ).toBe('b');
   });
   it('freezes the mode and sub-event for one shot without changing the next', () => {
-    const shot = admitShot('A', 'event', [first], 'public', new Date(first.startsAt), true)!;
-    first.name = 'Changed name';
+    const cached = [{ ...first }];
+    const shot = admitShot('A', 'event', cached, 'public', new Date(first.startsAt), true)!;
+    cached[0] = { ...first, id: 'changed' };
     expect(Object.isFrozen(shot)).toBe(true);
     expect(shot.mode).toBe('public');
+    expect(shot.subEventId).toBe('a');
     expect(
-      admitShot('A', 'event', [first], 'local_only', new Date(first.startsAt), true)?.mode,
-    ).toBe('local_only');
+      admitShot('A', 'event', cached, 'local_only', new Date(first.startsAt), true),
+    ).toMatchObject({ mode: 'local_only', subEventId: 'changed' });
   });
   it('selects the largest supported output and fits it without cropping', () => {
     expect(nativePictureSize(['1920x1080', '4000x3000', '640x480'])).toBe('4000x3000');
