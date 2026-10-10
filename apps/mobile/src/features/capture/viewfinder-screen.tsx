@@ -5,6 +5,7 @@ import {
   type SubEvent,
 } from '@momentlens/shared-types';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { isDevice } from 'expo-device';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -42,6 +43,7 @@ import type { SessionPhoto } from './session-stack';
 import Viewfinder from './viewfinder';
 
 const EMPTY: SubEvent[] = [];
+const IOS_SIMULATOR = Platform.OS === 'ios' && !isDevice;
 export function ViewfinderScreen({ eventId }: { eventId: string }) {
   const owner = useAuthStore((state) => state.userId);
   return <CameraSession key={`${owner}/${eventId}`} owner={owner} eventId={eventId} />;
@@ -262,7 +264,16 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
     <View
       className="h-full w-full items-center justify-center"
       onLayout={(e) => setBounds(e.nativeEvent.layout)}>
-      {permission?.granted && focused && active && accessible && schedule.data ? (
+      {IOS_SIMULATOR ? (
+        <View className="items-center gap-3 px-8">
+          <Glyph name={{ ios: 'camera', android: 'photo_camera' }} tone="onPhoto" size={32} />
+          <Text className="text-center font-h2 text-h2 text-onPhoto">Use a physical iPhone</Text>
+          <Text className="text-center font-body text-body text-onPhoto">
+            The iOS Simulator has no camera. You can inspect the controls here, but photo capture
+            and framing need a physical iPhone.
+          </Text>
+        </View>
+      ) : permission?.granted && focused && active && accessible && schedule.data ? (
         <GestureDetector gesture={swipe}>
           <View style={frame}>
             <CameraView
