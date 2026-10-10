@@ -1,5 +1,8 @@
 import type { SubEvent } from '@momentlens/shared-types';
 import type { QueueItem, StoppedReason } from '@/features/upload-queue/types';
+import type { CaptureDraft } from '@/features/capture/capture-store';
+
+export type MyMediaItem = QueueItem | CaptureDraft;
 
 type SectionEvent = Pick<SubEvent, 'id' | 'name' | 'startsAt' | 'endsAt'>;
 export interface MediaSection {
@@ -7,15 +10,15 @@ export interface MediaSection {
   name: string;
   number: number | null;
   subEvent: SectionEvent | null;
-  items: QueueItem[];
+  items: MyMediaItem[];
   canAdd: boolean;
 }
 export function mediaSections(
   schedule: readonly SectionEvent[],
-  rows: readonly QueueItem[],
+  rows: readonly MyMediaItem[],
   now: Date,
 ): MediaSection[] {
-  const byId = new Map<string, QueueItem[]>();
+  const byId = new Map<string, MyMediaItem[]>();
   for (const item of rows) {
     const list = byId.get(item.subEventId);
     if (list) list.push(item);
@@ -66,11 +69,23 @@ const REASONS: Record<StoppedReason, string> = {
   not_member: 'Your access was removed',
   not_found: 'This event is no longer available',
 };
-export function tileStatus(item: QueueItem): {
+export function tileStatus(item: MyMediaItem): {
   kind: 'clock' | 'spinner' | 'check' | 'phone' | 'reason';
   label: string;
 } {
   switch (item.state) {
+    case 'capture_draft':
+      return {
+        kind: 'reason',
+        label:
+          item.galleryState === 'saving'
+            ? 'Saving to gallery'
+            : item.galleryState === 'saved'
+              ? 'Ready to queue. Tap to retry.'
+              : item.galleryState === 'uncertain'
+                ? 'Gallery save interrupted. Tap to retry.'
+                : 'Gallery save needed. Tap to retry.',
+      };
     case 'stopped':
       return { kind: 'reason', label: REASONS[item.stoppedReason ?? 'invalid_request'] };
     case 'uploaded':
@@ -92,13 +107,14 @@ export function tileStatus(item: QueueItem): {
 // Delete removes only the phone's copy of a photo the queue has not sent (D-145). An uploading
 // photo may already be finished on the server, so deleting it would hide a photo that still
 // publishes, and Local Only belongs to S-30.
-export function canDeleteLocally(item: QueueItem, removed: boolean): boolean {
+export function canDeleteLocally(item: MyMediaItem, removed: boolean): boolean {
+  if (item.state === 'capture_draft') return item.galleryState !== 'saving';
   if (item.state === 'uploading' || item.state === 'local_only') return false;
   return removed || (item.state !== 'uploaded' && item.state !== 'published');
 }
 export type MediaListItem =
   | { type: 'header'; key: string; section: MediaSection }
-  | { type: 'photos'; key: string; items: QueueItem[]; removed: boolean }
+  | { type: 'photos'; key: string; items: MyMediaItem[]; removed: boolean }
   | { type: 'empty'; key: string };
 export function mediaListItems(sections: readonly MediaSection[]): MediaListItem[] {
   return sections.flatMap((section) => {

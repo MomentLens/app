@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import { canDeleteLocally, mediaSections, tileStatus } from '@/features/my-media/sections';
 import type { QueueItem } from '@/features/upload-queue/types';
+import type { CaptureDraft } from '@/features/capture/capture-store';
 
 const schedule = [
   { id: 'old', name: 'Mehndi', startsAt: '2026-10-03T12:00:00Z', endsAt: '2026-10-03T14:00:00Z' },
@@ -17,6 +18,17 @@ const item = (subEventId: string) =>
   ({ id: subEventId, subEventId, state: 'queued', createdAt: 1 }) as QueueItem;
 
 describe('My Media sections', () => {
+  it('shows Public drafts in their capture section and preserves Local Only badges', () => {
+    const draft = {
+      ...item('live'),
+      state: 'capture_draft',
+      galleryState: 'uncertain',
+    } as CaptureDraft;
+    expect(mediaSections(schedule, [draft], now)[0]?.items).toEqual([draft]);
+    expect(tileStatus(draft)).toMatchObject({ kind: 'reason' });
+    expect(canDeleteLocally({ ...draft, galleryState: 'saving' }, false)).toBe(false);
+    expect(tileStatus({ ...item('live'), state: 'local_only' }).kind).toBe('phone');
+  });
   it('omits an Upcoming sub-event with no items', () => {
     expect(mediaSections(schedule, [], now).map((s) => s.key)).toEqual(['live', 'old']);
   });

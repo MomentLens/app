@@ -52,6 +52,10 @@ export default function AppLayout() {
         options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
       />
       <Stack.Screen name="event/[id]" />
+      <Stack.Screen
+        name="capture/[eventId]"
+        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+      />
       <Stack.Screen name="join/confirm" />
       <Stack.Screen name="join/pending/[eventId]" />
       {/* Sheets that fit their content, over the whole Event shell. A formSheet draws inside the
