@@ -237,9 +237,9 @@ This asymmetry is deliberate and should be stated plainly when asked: the *contr
 
 8. Location verification acts as a gate on uploading, never on capturing.
    While the app is open, it periodically reads GPS and compares it against
-   the active sub-event's cached coordinates and radius, on-device. A match
-   flips the local queue to ready, keeps that one reading for the server,
-   and the queue starts flushing (§4.5).
+   the cached coordinates and radius of every sub-event In Progress, on-device.
+   A match flips that sub-event's photos to ready, keeps that one reading for
+   the server, and the queue starts flushing (§4.5, D-155).
 
 9. If GPS fails or is unreliable, the Guest taps "Scan Venue QR" in My
    Media and scans the Venue Check-In QR printed at the venue. This works
@@ -538,13 +538,14 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 
 - **Granularity: per sub-event.** A verification record is scoped to one user and one sub-event. Verifying at the mehndi does not verify you for the nikkah.
 - **The queue gate.** If a user is not verified for the sub-event a photo is tagged to, that photo sits in the local SQLite queue and does not upload.
-- **On-device GPS check.** While the app is open, it periodically reads GPS and compares it against the active sub-event's cached coordinates and radius **locally**, without needing the network. A match flips the local queue to ready. Wedding venue connectivity is unreliable enough that requiring a round-trip before a guest can even start queueing would fail most of the time.
+- **On-device GPS check.** While the app is open, it reads GPS on foreground, when an event opens, and every 60 seconds while an In Progress sub-event is still not checked in, and compares each reading against every sub-event In Progress at the reading's time, with its cached coordinates and radius, **locally**, without needing the network. A reading matches when it is within the radius and its reported accuracy is no worse than the radius. A match flips that sub-event's photos to ready. The app asks for location permission the first time the check needs to run (D-155). Wedding venue connectivity is unreliable enough that requiring a round-trip before a guest can even start queueing would fail most of the time.
 - **The server records, the client does not decide.** The client's local check is optimistic. When it passes, the device keeps that one reading with its time and sends it with the next pre-flight request (§4.8). The server checks it against the venue and the sub-event In Progress at that time, then writes the `VenueVerification` row. A tampered client can bypass the local gate, but it cannot manufacture a server-side verification record.
 - **Photos carry no location.** Verification belongs to the person, so a photo taken with location off, or added from the gallery, uploads once its sub-event is verified (D-89).
 - **Venue Check-In QR override.** If GPS is unreliable indoors, a Guest scans the QR printed at the venue, from the "Scan Venue QR" button in My Media (§2.5.3, D-131). **This works offline**: the payload and the scan time are written to local SQLite and travel with the next pre-flight request. The payload names the venue, not a sub-event. The server checks the venue's secret and verifies the sub-event that was In Progress at that venue at the scan time, so a QR shared by the mehndi and the nikkah verifies only the one being held (D-85). Nothing is pre-cached; you cannot hold the secret of a QR you have not scanned.
 - **Admin override.** Force Verify on the Attendee list, labelled "Check In Manually" (D-133), sets `admin_verified_at` on that user's membership row, and the pre-flight check (§4.8.2) accepts it for every sub-event in the event, past and future. This is deliberately blunt: the Admin should be able to say "this person is fine, stop asking" once, not per session.
-- **The device learns what the server decided.** The event response carries the user's verification state: `admin_verified_at` and the sub-events they hold a verification row for. The queue unlocks on either the local check or that state, and the app refetches it on foreground and on reconnect. Without this, a Force Verify, or a verification made on the user's other device, never reaches a queue the local check keeps shut.
+- **The device learns what the server decided.** The event response carries the user's verification state: whether every sub-event passes, because of `admin_verified_at` or an exempt role, and the sub-events they hold a verification row for (D-155). The queue unlocks on either the local check or that state, and the app refetches it on foreground and on reconnect. Without this, a Force Verify, or a verification made on the user's other device, never reaches a queue the local check keeps shut.
 - **Photographers are exempt from the gate entirely.** They upload from home, hours after the event, by design (§2.2). A role-linked invite already establishes who they are. Requiring the Admin to remember a Force Verify tap at 2am in order to receive his own wedding photos is a worse trade than the risk this gate mitigates.
+- **The Admin is exempt too.** The host often adds photos from their own gallery after the event, and no one can check the Admin in, so the gate would hold the host's photos for good (D-155).
 
 ---
 
@@ -589,7 +590,7 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 - **Membership and album state.** The caller must be an active member, the event must not be deleted, and the album must be open (§4.9). A closed album leaves the photo in the local queue, and the queue retries once the album opens (D-82).
 - **Exact duplicate** (identical SHA-256 to a finished photo in the event that has not been deleted) is silently rejected, with no upload and no user-facing prompt (D-96, D-130). This is one indexed lookup, not a distance computation. There is no near-duplicate detection of any kind; anything that isn't byte-identical after processing uploads. **The one exception is the caller's own unfinished upload.** A row with this hash that the same user created and never completed gets fresh upload URLs for its existing keys, so a photo whose app was killed mid-upload resumes instead of vanishing (D-82).
 - **Another user's unfinished upload of the same photo is not a duplicate.** Both upload, the first to complete wins, and the second completion is answered as a duplicate (D-96). Every phone re-encodes (D-146), so two accounts send the same hash only from one phone and app build, such as a phone handed around. Two guests on two phones each publish their own copy.
-- **Verification and cap, for a new row.** `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role = 'photographer')`. If verification fails, the upload is rejected and the photo waits in the local queue. Then the event must be under its 2,000-photo cap (§4.17), counted with the event row locked so two uploads at 1,999 cannot both pass (D-95). A resumed upload already passed both.
+- **Verification and cap, for a new row.** `(VenueVerification row exists for this user and sub-event) OR (membership.admin_verified_at IS NOT NULL) OR (role IN ('admin', 'photographer'))` (D-155). If verification fails, the upload is rejected and the photo waits in the local queue. Then the event must be under its 2,000-photo cap (§4.17), counted with the event row locked so two uploads at 1,999 cannot both pass (D-95). A resumed upload already passed both.
 - If every check passes, Express names the upload keys and issues presigned R2 upload URLs for the photo and its thumbnail, which live 15 minutes (D-70, D-105).
 
 #### 4.8.3 Stage 3 — upload
@@ -789,7 +790,7 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
   - **Face detection and processing**, stated accurately: every face in every uploaded photo is detected and converted into an embedding, including faces belonging to people who are not app users, in order to support Find My Photos and Do Not Publish blurring.
   - The permanent, non-reversible nature of Do Not Publish, set separately in each event.
 - Consent version tracking: if the Privacy Policy materially changes, all active sessions are paused on next launch until the new version is accepted.
-- **Accurate metadata statement.** GPS, camera model, and device serial are stripped from the image file before it leaves the device. One GPS reading per sub-event, taken when the device's check passes, travels to the server for verification only, is checked against the venue, and is stored nowhere. Photos carry none (D-89). Never claim that GPS does not reach the network (D-36).
+- **Accurate metadata statement.** GPS, camera model, and device serial are stripped from the image file before it leaves the device. One GPS reading per sub-event, taken when the device's check passes, stays on the phone until the next upload sends it to the server for verification, is checked against the venue there, and the server stores no coordinates (D-155). Photos carry none (D-89). Never claim that GPS does not reach the network (D-36).
 - Blur transparency: a user viewing a blurred face can tap a small info icon explaining why ("This person has requested privacy"), which reduces confusion about whether the image is simply failing to load.
 - The full "My Data" dashboard remains Future Work.
 

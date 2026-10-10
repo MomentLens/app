@@ -112,6 +112,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** A `VenueVerification` row is scoped to one user and one sub-event. Force Verify sets `admin_verified_at` on the membership row, and the pre-flight check is `(per-sub-event row) OR (admin_verified_at IS NOT NULL) OR (role = 'photographer')`.
 **Why.** v9.1 said three different things in three places, which is why this is written down once and referenced everywhere. Per sub-event is the honest reading of "were you actually there for this part." The override is deliberately blunt because the Admin should be able to say "this person is fine, stop asking" once, not per session.
 **Rejected.** Per-event verification, which would let someone verify at the mehndi and upload from home during the nikkah. Also rejected: writing N verification rows on Force Verify, which does the same job with more state.
+**Amended (see D-155).** The Admin is exempt too, as a Photographer is. The check passes for a row, for `admin_verified_at IS NOT NULL`, or for `role IN ('admin', 'photographer')`, and `start_upload` reads the role and `admin_verified_at` from the membership row under the event lock.
 
 ### D-16 — GPS verification runs on-device; the server re-validates
 **Decision.** The client compares GPS against cached sub-event coordinates locally and optimistically unlocks the queue. Each queued photo carries its capture-time GPS reading, the pre-flight submits it, and only the server writes the `VenueVerification` row.
@@ -129,6 +130,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Decision.** No flow where a user asks the Admin to verify them for a sub-event that already passed.
 **Why.** It was proposed and then withdrawn, because it needs a new screen, a request table, a notification channel, and an Admin queue. That is strictly more Admin work than the flag model D-14 rejected for creating Admin work.
 **Replacement.** The stuck-queue banner reads "Ask the organizer to verify you," and the Admin taps Force Verify once from the existing Attendees screen. Zero new screens.
+**Amended (see D-155).** The banner uses D-133's copy, "Ask the organizer to check you in."
 
 ---
 
@@ -847,6 +849,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** The radius on `venue`, which makes the sheet's slider change it for every sub-event at that venue. Keeping `event.venue_id` as the first sub-event's venue, which nothing reads. Approval Mode in the sub-event sheet, where the draft puts it, since the mode applies to the whole event.
 **Cost.** A `manual` event created before S-07 lands leaves its joiners pending with no Approve button. That hits dev builds only. The S-02 migration had already run on the dev project, so its four tables and two functions are dropped there and the edited migration pushed again. An event has no single place to show on a map.
 **Amended (see D-112).** From iOS 26 the "+" is the round button at the tab bar's trailing end. Android keeps it bottom right, as Material 3's FAB.
+**Amended (see D-155).** The GPS check compares a reading against every sub-event In Progress at the reading's time, each with its own venue and radius, and a reading counts only when its reported accuracy is no worse than that radius.
 
 ### D-112: Platform conventions set sizes, and Create Event joins the iOS tab bar
 **Decision.** Amends D-111. Ukasha ruled on each of these on 2026-09-29, after S-02's build.
@@ -1039,6 +1042,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 - A resume that loses to another user's finished copy spends one upload for nothing.
 - An account with photos cannot be deleted until support removes its photos by hand.
 **Reopen if.** A tester's event fills with unfinished rows, or the build moves to a public deployment, where the PUT window and the missing size limit stop being acceptable.
+**Amended (see D-155).** When a pre-flight carries verification records, the API reads the event's schedule once to judge them and passes the sub-events they check in to `start_upload`. `start_upload` writes those rows right after it takes the event lock, before its checks. S-15's check passes for a row, for `admin_verified_at`, or for `role IN ('admin', 'photographer')`.
 
 ### D-123: Worker skeleton, from S-18a's read-back
 **Decision.** Amends D-72, D-103 and D-108. Ukasha ruled on each of these on 2026-10-02.
@@ -1400,6 +1404,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Writing the timestamp back with a JavaScript EXIF library, a new dependency for a field nothing reads. A completion that checks the album, which needs a new queue state for a photo whose files are already in R2. S-29 adding the Mobile Data check to the loop, which would make S-29 change a human-read surface.
 **Cost.** A downloaded photo carries no capture date in its file, though `media.captured_at` keeps it. Dedup catches the same photo added twice on one phone and nothing across phones (D-53). A photo pre-flighted a moment before the album closes still publishes. S-15 and S-31 each make one call into the queue.
 **Reopen if.** Testers' downloaded photos sort under the download date in their gallery and they mind.
+**Amended (see D-155).** S-15's release moves the `waiting_verification` photos of the sub-events it names and leaves other photos' backoff alone. The phone also moves a photo to `waiting_verification` before pre-flight, with no request, when its cached event response says the person is not checked in for the photo's sub-event and it holds no reading for it.
 
 ### D-147: The album sorts by capture time
 **Decision.** Amends D-98 and spec §4.9. Ukasha ruled on 2026-10-05, at S-11's read-back.
@@ -1506,6 +1511,26 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** A pnpm patch to Expo Camera that captures the full sensor: its preview would still be 4:3, so the photo would hold width the person never saw. A patch that reads the bound size back from CameraX: it produces the same 4:3 photo and adds a patch and a native rebuild on three machines.
 **Cost.** A camera whose sensor is wider than 4:3 produces a narrower photo than its sensor allows. The Pixel front camera loses 176 of its 3440 columns, 5% of the width. A phone where CameraX binds a shape other than the requested one still fails the shutter check, and the error names both sizes.
 **Reopen if.** A supported Android phone fails the shutter check, or a later Expo Camera version lets the app bind a non-4:3 shape together with a matching preview.
+
+### D-155: Location verification rulings from S-15's read-back
+**Decision.** Amends D-15, D-18, D-111, D-122 and D-146, spec §2.3.3, §4.5, §4.8.2 and §4.18, hb §7, `docs/ARCHITECTURE.md` §4.1, §4.3 and `venue_verification`, and the scope of S-15. Ukasha answered "go with your recommendations on all five" on 2026-10-10, at S-15's read-back, and let the routine calls stand.
+- The Admin is exempt from the gate, as a Photographer is. The pre-flight check passes for a `venue_verification` row for this user and sub-event, for `admin_verified_at IS NOT NULL`, or for `role IN ('admin', 'photographer')`. `start_upload` reads the role and `admin_verified_at` from the caller's membership row under the event lock, never from the API's argument.
+- The phone compares each GPS reading against every sub-event In Progress at the reading's time, each with its own venue and radius. It keeps one reading for each sub-event it matches, and the reading names that sub-event. Two sub-events at two venues can overlap (spec §4.3), and `currentSubEvent` alone would leave a guest at the venue of the one that started first with no way to check in by GPS.
+- A reading matches a sub-event when the sub-event is In Progress at the reading's time, the reading is within the sub-event's radius of its venue, and the reading's reported accuracy is no worse than that radius. `distanceM` and `readingMatches` in `packages/shared-types` decide it on the phone and on the server, so the two use one formula. The time is the location fix's own, and the server sets no bound against its own clock (D-85). The phone refuses a reading Android marks as mocked.
+- The API judges the readings. When a pre-flight carries any, the API reads the event's schedule once, after the membership and album checks, keeps the readings that match, and passes their sub-events to `start_upload`. `start_upload` writes a `venue_verification` row for each that is still a sub-event of the event, right after it takes the event lock and before its checks, so a pre-flight that answers `duplicate` or `event_full` still records the check-in. A repeat writes nothing. That read is the one lookup the API makes beyond its membership check (D-122). S-16's Venue QR scans take the same path.
+- `GET /events/{eventId}` carries `verification.everySubEvent`, true when `admin_verified_at` is set or the role is exempt, and `verification.subEventIds`, the sub-events the caller holds a row for. The server computes both, so the upload queue never branches on role (D-58).
+- The phone holds a photo back before pre-flight when its cached event response says the person is not checked in for the photo's sub-event and the phone holds no reading for that sub-event. The photo moves to `waiting_verification` with no request. When the cache has no verification state, from the Events list's seed or a cache older than S-15, the pre-flight decides.
+- A held reading travels with the next pre-flight in its event, under its own account only (spec §4.1). The phone deletes it after an answer that shows `start_upload` ran: 201, 200, 409 `unverified`, `duplicate` or `sub_event_missing`, or a 422. It keeps it after no answer, 401, 403, 404 and 409 `album_closed`. After a pre-flight that carried a reading, the event and the schedule refetch.
+- S-15's release moves only the `waiting_verification` photos of the sub-events it names, and wakes the runner without clearing other photos' backoff. S-15 releases a sub-event when the phone stores a reading for it, when a fresh event response covers it, and at startup for every sub-event the phone already covers, which catches a kill between storing a reading and releasing. S-31's album release stays per event.
+- The app asks for foreground location permission the first time the check needs to run: a member who is not exempt opens an event with an In Progress sub-event they are not checked in for. It shows the system prompt only, and S-15 never asks again. A phone whose event response says `everySubEvent` never asks and never reads GPS for that event.
+- The phone reads GPS on foreground, when an event opens, and every 60 seconds while the app is open and an In Progress sub-event is still not checked in. It stops once each is checked in.
+- `venue_verification.verified_at` is the time the server wrote the row. The server stores neither the reading's coordinates nor its time. `user_id` cascades on account deletion. A removal and a rejoin keep the person's rows; `join_event` clears only `admin_verified_at`.
+- At one venue, GPS checks a person in to every overlapping sub-event the reading matches, while a Venue QR scan checks in only the one `currentSubEvent` picks (D-85).
+- D-18's banner uses D-133's copy, "Ask the organizer to check you in."
+**Why.** S-15's read-back found that an Admin who adds gallery photos after the event had no way through the gate, since the attendee functions refuse an Admin target (`docs/ARCHITECTURE.md` `membership`). Spec §4.5 compared a reading against one sub-event while spec §4.3 lets two overlap at two venues. D-122 and hb §7 said the API makes no lookup of its own, while the `sub_event` entry in `docs/ARCHITECTURE.md` has the API judge a QR scan with `currentSubEvent`. The event response left out the Photographer exemption, so a phone that holds photos back would have to branch on role. `docs/ARCHITECTURE.md` §4.3 had no row for a photo held back before pre-flight, the release moved every sub-event's photos at once, and no document said when the phone deletes a reading or what accuracy counts.
+**Rejected.** Letting S-17 check the Admin in manually, which needs an Admin target the attendee functions refuse. The distance computed in SQL inside `start_upload`, which gives the phone and the server two formulas that can disagree at the edge of the radius. Ignoring a reading's accuracy, which lets a coarse reading pass or fail by chance. A screen of explanation before the system prompt. Reading GPS for as long as the app is open.
+**Cost.** An Admin uploads from anywhere, as a Photographer does. A pre-flight that carries a reading costs one more read. A phone on approximate location, Android's approximate or iOS with Precise Location off, never checks in by GPS, and a 50 m radius indoors may fail; both need the Venue QR. A server that keeps refusing a reading the phone accepts costs one pre-flight a minute. A Force Verify reaches a phone that stays in the foreground only on its next event fetch.
+**Reopen if.** Testers on approximate location cannot check in, or the rehearsal shows indoor accuracy worse than the demo event's radius.
 
 ## Open items that are not decisions yet
 
