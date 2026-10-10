@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+
 import { describe, expect, it } from '@jest/globals';
 
 import {
@@ -197,4 +199,59 @@ describe('GetEventResponse verification', () => {
       }).success,
     ).toBe(false);
   });
+});
+
+describe('GPS request privacy', () => {
+  it('does not attach a preflight body to a captured Sentry error', () => {
+    // A separate process loads the production preload before Express. beforeSend records the
+    // event and returns null, so the SDK makes no outbound request.
+    const child = spawnSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        '--import',
+        './src/instrument.ts',
+        '--input-type=module',
+        '-e',
+        `
+        import * as Sentry from '@sentry/node';
+        const client = Sentry.getClient();
+        let captured;
+        client.getOptions().beforeSend = (event) => { captured = event; return null; };
+        const { default: express } = await import('express');
+        const app = express();
+        app.post('/events/test/media/preflight', express.json(), () => { throw new Error('GPS privacy test'); });
+        Sentry.setupExpressErrorHandler(app);
+        app.use((error, request, response, next) => { response.status(500).end(); });
+        const server = app.listen(0, '127.0.0.1');
+        await new Promise(resolve => server.once('listening', resolve));
+        await fetch('http://127.0.0.1:' + server.address().port + '/events/test/media/preflight', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ verifications: [{ kind: 'gps', lat: 24.86, lng: 67.01, accuracyM: 20, recordedAt: '2026-12-10T15:00:00.000Z' }] }),
+        });
+        await Sentry.flush(2000);
+        server.closeAllConnections();
+        await new Promise(resolve => server.close(resolve));
+        await Sentry.close(2000);
+        process.stdout.write(JSON.stringify(captured ?? null));
+      `,
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: { ...process.env, SENTRY_DSN: 'https://public@ingest.invalid/1' },
+      },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status).toBe(0);
+    const event = JSON.parse(child.stdout) as {
+      request?: { method?: string; data?: unknown };
+    } | null;
+    expect(event?.request?.method).toBe('POST');
+    expect(event?.request?.data).toBeUndefined();
+    expect(child.stdout).not.toContain('accuracyM');
+    expect(child.stdout).not.toContain('recordedAt');
+  }, 15_000);
 });
