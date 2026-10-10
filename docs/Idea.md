@@ -356,6 +356,7 @@ Home and Album are one screen, not two, and not per-sub-event folders. Every sub
 - FAB (camera icon, bottom-right) renders on My Media for Guest and Admin. Photographers see it too; the pipeline is identical, they simply rarely use it.
 - **The FAB is hidden when no sub-event is currently In Progress.** There is no capture path that can produce an ambiguous-sub-event photo. A sub-event ends at its scheduled end (§4.3), so the FAB is also hidden between sub-events, and the Admin delays one that runs late. Photos taken meanwhile with the phone's own camera can still be added through "+ Add Media".
 - Tapping the FAB opens the Viewfinder as a full-screen modal, hiding the tab bar, and drops straight into the currently live sub-event's capture context. No sub-event picker at capture time.
+- Each shutter press recomputes the live sub-event from the cached schedule. It freezes the account, event, sub-event, mode and capture time for that shot. A boundary or schedule refetch changes the next shot, never one already admitted. If no sub-event remains live, the Viewfinder returns to My Media (D-153).
 - Viewfinder components, laid out as each platform's own camera lays them out (D-134): live preview at the camera's native aspect ratio with no forced crop, the close button and the live sub-event's name at the top, the large shutter button, front/back flip, the Public / Local Only switch below the shutter where iOS and Pixel Camera put Photo and Video (changeable mid-session, with a "Local Only" pill on the preview while it is on), and the session's captures as a stack with their count in the slot the system camera gives its gallery button (D-135). Tapping the stack exits to My Media. On iOS the stack is at the leading end and flip at the trailing end; on Android flip leads and the stack trails. No lens zoom control (§7), no flash and no gallery picker; gallery access is exclusively the "+ Add Media" button per sub-event section in My Media. Exit (X) dismisses the modal and lands on My Media, with new captures appearing at the top of the relevant section immediately via optimistic UI.
 
 #### 2.5.5 Schedule
@@ -555,15 +556,17 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 ---
 
 ### 4.7 Media capture (viewfinder)
-- A custom in-app camera Viewfinder, not the OS native camera. Full-screen live preview.
+- A custom in-app camera Viewfinder, presented full screen. The live preview fits the selected camera output's native bounds without cropping to fill the screen; controls or empty space may surround it (D-21, D-153).
 - **Native aspect ratio.** Capture is not cropped to any fixed ratio; the photo keeps whatever the device sensor produces, and the preview matches the capture bounds so what is framed is what is captured.
 - Public / Local Only switch always visible below the shutter, setting the mode for the next capture, changeable at any point mid-session. While Local Only is on, a "Local Only" pill stays at the top of the preview (D-134).
 - **A Public capture is also saved to the phone's gallery**, as the camera took it; the copy that uploads is the stripped one (§4.8.1). A Local Only capture is not saved there (§4.12, D-90).
+- Public capture requires gallery write access. If a gallery save fails, the app retains a durable draft in My Media and withholds upload until the gallery save succeeds. An interrupted gallery write with an unknown result requires an explicit retry, warning that it may create another gallery copy (D-153).
 - Tap to capture, repeatable. A single Viewfinder session can capture multiple photos in a row without leaving the screen, stacking them with their count in the gallery button's slot (D-135).
 - **No gallery picker in the Viewfinder.** Adding existing photos is done exclusively via "+ Add Media" per sub-event section in My Media (§2.5).
 - Exiting always lands on My Media for review.
 - No caption field anywhere in the capture flow (§6.1).
 - Sub-event tagging is automatic: a capture tags to whichever sub-event is In Progress per §4.3. Overlapping sub-events tag to the most recently started one.
+- Shutter admission freezes the account, event, live sub-event, mode and capture time before starting the shot. A later mode switch, schedule change or session change cannot retag it or transfer it to another account. The next press checks the current context again; when no sub-event remains live, the Viewfinder returns to My Media (D-153).
 - **The FAB is hidden when no sub-event is In Progress**, so there is no capture path that can produce an ambiguous-sub-event photo. This gate is on *time*, not on verification; an unverified user can still capture freely, their photos simply queue (§4.5).
 - **Photo only. There is no video capture mode.**
 
@@ -712,12 +715,13 @@ The count is linear, never combinatorial, because no viewer ever needs two diffe
 Renamed from "Private mode," which saved to the camera roll, the most publicly synced place on the phone (D-34).
 
 - Local Only is a device-local sandbox for media captured with the Viewfinder's toggle set to Local Only, and for public queued uploads the user cancels before completion.
-- Files are written to the **app's own sandboxed storage**, its document directory through `expo-file-system`, not the camera roll. That package's API changed in SDK 54, so build from the SDK 57 page rather than the `FileSystem.documentDirectory` name in D-34. This is not indexed by MediaStore on Android or the Photos library on iOS, and the do-not-backup flag is set on iOS so it does not sync to iCloud.
+- Files are written to the **app's own sandboxed storage**, its document directory through `expo-file-system`, not the camera roll. That package's API changed in SDK 54, so build from the SDK 57 page rather than the `FileSystem.documentDirectory` name in D-34. MediaStore on Android and the Photos library on iOS do not index it. S-09 excludes local media files and their databases from cloud backup and device transfer on both platforms, using a local iOS native helper and Android config-plugin rules; a sandbox path alone does not exclude backup (D-153).
 - The tradeoff, which must be stated in the UI at the moment of first use: these files do not appear in the device gallery, and they are deleted if the app is uninstalled.
 - My Media acts as the viewer for these files, so the user doesn't have to leave the app to see what they took.
 - Local Only captures never touch the network, deduplication, or location verification. They are still subject to the time-based FAB rule (§4.7), because that gate is on the capture entry point, not on the mode.
 - A Local Only file cannot be converted to Public. It lives in the app sandbox, so the device image picker behind "+ Add Media" cannot see it either. The first-use notice says so.
 - Local Only files belong to the account that captured them (§4.1), and My Media shows each account only its own.
+- S-09 persists captures directly as `local_only` and shows the first-use notice, remembered per account on this phone. The notice explains gallery absence, loss on uninstall and the lack of conversion to Public. S-30 adds the full viewer, local deletion and conversion of queued Public photos; it reuses S-09's persistence and backup exclusions (D-153).
 
 ---
 
@@ -795,7 +799,7 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
 - **Account:** update profile photo, request account deletion (contacts support; no automated workflow yet), change password, log out.
 - **Appearance:** theme (Light / Dark / System Default).
 - **Notifications:** push toggles for **Approval Alerts** and **Album Lifecycle**, stored with the profile so the server checks them before sending (D-105). These are the only two channels that exist (§4.16); earlier versions of this document listed four toggles for two features.
-- **Upload:** "Upload over Mobile Data" toggle (default on, D-146); default Viewfinder mode (start Public vs. start Local Only). Both live on the phone, since only the phone acts on them (D-105).
+- **Upload:** "Upload over Mobile Data" toggle (default on, D-146); default Viewfinder mode (start Public vs. start Local Only). Both live on the phone, since only the phone acts on them (D-105). S-09 reads MMKV store `device-preferences`, key `cameraStartsIn`, whose values are `public` and `local_only`, with Public as the default. Changing the mode during a camera session does not rewrite the starting preference; S-29's Camera Starts In control writes it (D-153).
 - **Privacy:** none here. Reference photos and Do Not Publish are set per event in Event Preferences (§2.5.11, D-129, D-141).
 - **Grouping** (D-140): the account row; Notifications; "On This Phone", holding Upload over Mobile Data, Camera Starts In, Appearance and Storage, with a footer saying they stay on this phone (D-105); Account, holding Change Password, About and Legal and Delete My Account; then Log Out.
 - **Storage:** clear local image cache; storage usage breakdown (app size vs. cache vs. Local Only files).

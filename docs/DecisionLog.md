@@ -143,11 +143,13 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** It guarantees no photo can ever have an ambiguous sub-event tag, which removes an entire class of data problem and makes "Move to..." reassignment optional rather than required.
 **Rejected.** Making the sub-event a default tag with an "Unsorted" bucket and always-available capture. Argued for on the grounds that a gate is riskier than a tag. Declined, and D-19 removes most of the risk that argument rested on. The gate is on *time*, not on verification: an unverified user can still capture freely.
 **Amended (see D-88).** Sub-events end at their scheduled time, so the FAB is also hidden in the gaps between them, and D-19 no longer covers a sub-event that runs late.
+**Amended (see D-153).** Each shutter press checks the live sub-event again. A shot already admitted retains its context, and the Viewfinder returns to My Media when none remains live.
 
 ### D-21 — Capture keeps the camera's native aspect ratio
 **Decision.** No forced 4:3 or any other crop.
 **Why.** A fixed ratio can only bind in-app capture anyway. Gallery imports are whatever the phone shot, and photographer files are almost always 3:2. Cropping a professional's framing to fit a grid is destroying the work.
 **Related.** Album grid thumbnails are center-cropped to square for grid uniformity across mixed-aspect sources; full-screen view always renders native aspect. This is a display decision, not a storage one; the stored file is never cropped.
+**Amended (see D-153).** The full-screen Viewfinder fits its preview to the camera output's native bounds without cropping to fill the screen.
 
 ### D-22 — FlashList grid, not masonry, but store dimensions anyway
 **Decision.** Square-cropped uniform grid. The worker writes `width` and `height` onto every media row regardless.
@@ -233,6 +235,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** The old design saved to `DCIM/MomentLens_Private`, which is Android-only path thinking and, worse, the most publicly synced location on the phone. Files there reach iCloud and Google Photos. Calling that "Private" is a naming lie.
 **Cost.** These files do not appear in the device gallery and are deleted on uninstall. That is the honest price of actually being local, and the UI states it at first use.
 **Amended (see D-90).** A Public capture is also saved to the phone's gallery. Only Local Only stays out of it.
+**Amended (see D-153).** S-09 persists Local Only captures and excludes local media files and their databases from cloud backup and device transfer on both platforms. S-30 reuses that storage for its full viewer, local deletion and queued-Public conversion.
 
 ### D-35 — Do Not Publish hides the profile photo, not the name
 **Decision.** The image is replaced by a name-initial placeholder everywhere, including for the Admin. The name still appears where a workflow requires it, such as Pending Approvals and the Attendees list.
@@ -626,6 +629,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Guests expect photos from a camera to appear in their camera roll.
 **Rejected.** Keeping Public captures out of the gallery.
 **Cost.** The gallery copy keeps its EXIF, location included, and syncs wherever the phone syncs its gallery, like any camera app's photo. The app needs write access to the gallery, which `expo-media-library` already provides for downloads.
+**Amended (see D-153).** Public capture requires gallery write access, and a durable draft waits for gallery success before upload. An interrupted gallery write with an unknown result requires an explicit retry warning about a possible extra copy.
 
 ### D-91: A reference photo must show exactly one face
 **Decision.** Amends D-56 and D-87. The API records a new reference photo as `pending`. `reference_process` accepts it with its embedding when it finds exactly one face, and otherwise rejects it as `no_face` or `multiple_faces`. The app waits for that status and shows the reason, for several faces: "Multiple faces detected. Please upload a solo photo where only your face is visible." A profile photo with no face or several is still the avatar, but it is not used as a reference. Only accepted references count toward activation and the last-reference rule.
@@ -743,6 +747,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-110).** `packages/shared-types` holds a second function, the one that sorts an event into Active, Upcoming or Past.
 **Amended (see D-121).** The status function is two, `subEventStatus(subEvent, at)` and `currentSubEvent(subEvents, at)`. Both take an instant, so the API can ask at a reading's time.
 **Amended (see D-140).** Account Settings shows Upload over Mobile Data and Camera Starts In under "On This Phone", with Appearance and Storage, and a footer there says these settings stay on this phone.
+**Amended (see D-153).** S-09 reads `cameraStartsIn` from MMKV store `device-preferences`, values `public` and `local_only`, default Public. S-29 writes it; switching a running camera session's mode does not.
 
 ### D-106: The RLS negative test runs in CI against the dev project
 **Decision.** Keeps D-73's access model and changes where its test runs. A workflow runs `apps/api`'s `test:rls` against the dev project on every pull request that touches `supabase/` or `apps/api/`, with the dev project's URL, publishable key and secret key as repository secrets. The stable project's secret key never reaches GitHub.
@@ -1365,6 +1370,8 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** One endpoint and an API PR in S-10's stack, and S-10 now depends on S-12. A photo uploaded from another phone or before a reinstall is missing from My Media. The phone keeps a 300px thumbnail of every photo it uploaded. That thumbnail is unblurred, so the uploader's My Media still shows a face the worker later blurs, the same pixels the phone's gallery already holds (D-90); it is a local file, never served to anyone (root invariant 13). An Admin's delete of a published photo, and the worker clearing `processed_at` after a job's third failure (D-108), reach My Media only on a pull to refresh until S-13's Realtime, so its check badge can outlast the photo's place in the album.
 **Reopen if.** Testers look in My Media for photos from their other phone, or Photographers find 50 per pick too few.
 
+**Amended (see D-153).** S-09 owns Local Only capture persistence and the first-use notice; S-30 keeps the full viewer, local deletion and queued-Public conversion. My Media also retains Public drafts whose gallery save has not succeeded.
+
 ### D-146: S-11's upload loop, from its read-back
 **Decision.** Amends D-53, D-58, D-99, the queue table in `docs/ARCHITECTURE.md` §4, and the scopes of S-14, S-15, S-29 and S-31. Ukasha ruled on each of these on 2026-10-05, at S-11's read-back, and let the routine calls stand.
 - Stage 1 strips every EXIF field, the timestamp included. `expo-image-manipulator` writes none when it saves, and pre-flight carries the capture time (D-98).
@@ -1476,6 +1483,20 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Separate revoke and issue calls, a revoke-only state, unconditional regeneration retries, disk persistence or offline sharing of managed credentials, Venue QR work in S-05, and adding the project-wide OpenAPI generator in this slice.
 **Cost.** One migration for the management functions, a schema stage, two endpoints, one conflict code and an extra read before Copy or Share. Archived credentials cannot admit anyone until the event becomes joinable. Another device can rotate an invite after the fresh read or after it was shared, so the recipient may still get S-03's dead-invite screen. S-05 publishes no OpenAPI artifact under the recorded exception.
 **Reopen if.** Admins need a role invite disabled without a replacement, offline sharing proves necessary, concurrent rotation makes shared codes unreliable, or an API consumer requires OpenAPI before the separate tooling ships.
+
+### D-153: Viewfinder rulings from S-09's read-back
+**Decision.** Amends D-20, D-21, D-34, D-90, D-105 and D-145, spec §2.5.4, §4.7, §4.12 and §4.19, and the scopes of S-09 and S-30. Ukasha answered "approved" to all six recommendations on 2026-10-10, at S-09's read-back.
+- S-09 persists Local Only captures directly into `queue_item` as `local_only`, with no temporary queued state, and shows the first-use notice. Originals and thumbnails belong to the account that captured them. Local Only calls no gallery save, upload, hash, deduplication or location-verification operation. S-30 adds the full viewer, local deletion and conversion of queued Public photos, reusing S-09's persistence. A Local Only capture still cannot become Public (spec §4.12).
+- S-09 excludes local media files and their databases from cloud backup and device transfer on both platforms. A local iOS native helper applies and checks exclusion; an Android config plugin supplies the backup and transfer rules. A sandbox path alone does not meet the promise. No external dependency is added, but the team must rebuild the native apps. Physical iOS and Android checks must verify the exclusions.
+- Each shutter press recomputes `currentSubEvent` from the cached schedule and freezes the account, event, sub-event, mode and capture time before starting the shot. The existing overlap tie-break applies (D-121). A later schedule update, time boundary or mode switch changes the next shot, never one already admitted, and an account change never transfers the shot. When no sub-event remains live, the Viewfinder returns to My Media. The person can still capture offline from the cached schedule (spec §4.14).
+- Public capture requires gallery write access. Denied access blocks Public capture while Local Only remains available. S-09 writes a durable Public draft that retains the camera's original while its gallery save is pending or failed, and shows that draft in My Media. Upload waits for gallery success. A stable capture id and one SQLite transaction for the queue handoff prevent a restart from enqueueing that capture twice. No shared schema stage is needed; the local SQLite migration belongs to the mobile stage (arch §4.2).
+- An interrupted gallery write whose result is unknown requires an explicit retry warning that another gallery copy may be created. The app never retries an uncertain gallery write automatically. Earlier committed captures survive later file or thumbnail failures; the app reports success only after durable persistence. A kill before durable persistence can lose that shot.
+- A new camera session reads MMKV store `device-preferences`, key `cameraStartsIn`, values `public` and `local_only`, default Public. Switching the mode during a session does not rewrite that preference. S-29's Camera Starts In control writes it. The first-use Local Only notice is remembered per account on this phone and explains gallery absence, loss on uninstall and the lack of conversion to Public.
+- The Viewfinder is full screen, with the preview fitted to the selected camera output's native bounds. It never crops to fill the screen, so controls or empty space may surround it. Physical front/back and orientation checks on iOS and Android must confirm that the framed bounds match the captured image. D-134's platform layouts and D-135's newest-three session stack remain in force; S-09's slice row says stack rather than strip.
+**Why.** S-09 offered Local Only before S-30 supplied its storage. An enqueue followed by a state change could let S-11 upload it first. The open Viewfinder had no rule for a sub-event ending, gallery failure had no durable recovery path, and a queue completion could delete the original before its gallery copy existed. Android's generated manifest enabled backup, while the installed Expo file API exposed no backup-exclusion operation. Filling the preview to the screen could hide part of the uncropped capture. The device preference had no key or default.
+**Rejected.** Deferring Local Only persistence until S-30, marking a photo local only after enqueue, treating a sandbox path as backup exclusion, cropping the preview to fill the screen, uploading before gallery success, and automatically replaying an uncertain gallery write.
+**Cost.** One local SQLite migration and capture journal, recovery UI in My Media, a local iOS native helper, Android config-plugin rules and native rebuilds. No server migration, endpoint, job, R2 key or external dependency is added. An explicit retry after an interrupted gallery save can create another gallery copy. A camera session uses the phone's clock and cached schedule, so an offline phone can keep an older schedule until reconnect. The full Local Only viewer and deletion remain unavailable until S-30.
+**Reopen if.** Gallery failures block Public capture during rehearsal, backup exclusion fails on a supported phone, testers object to possible extra gallery copies after an interrupted save, or native preview and capture bounds cannot be matched on a supported camera.
 
 ## Open items that are not decisions yet
 
