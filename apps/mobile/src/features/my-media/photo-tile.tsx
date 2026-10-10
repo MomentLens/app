@@ -5,8 +5,7 @@ import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native
 import type { MenuAnchor } from '@/components/ui/anchored-menu';
 import { Glyph, GLYPH } from '@/components/ui/glyph';
 import { Icon } from '@/components/ui/icon';
-import { canDeleteLocally, tileStatus } from './sections';
-import type { QueueItem } from '@/features/upload-queue/types';
+import { canDeleteLocally, tileStatus, type MyMediaItem } from './sections';
 
 export function PhotoTile({
   item,
@@ -14,12 +13,14 @@ export function PhotoTile({
   onDelete,
   onMenu,
   removed,
+  onRetry,
 }: {
-  item: QueueItem;
+  item: MyMediaItem;
   eventId: string;
   onDelete: () => void;
   onMenu: (anchor: MenuAnchor) => void;
   removed: boolean;
+  onRetry: () => void;
 }) {
   const ref = useRef<View>(null);
   const status = tileStatus(item);
@@ -35,6 +36,11 @@ export function PhotoTile({
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'delete') onDelete();
       }}
+      onPress={
+        item.state === 'capture_draft' && item.galleryState !== 'saving' && !removed
+          ? onRetry
+          : undefined
+      }
       onLongPress={
         Platform.OS !== 'ios' && deletable
           ? () =>
