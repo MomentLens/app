@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { Glyph, GLYPH } from '@/components/ui/glyph';
+import { PreviewArea, Shutter } from './camera-controls';
 import type { CaptureMode } from './context';
 import { SessionStack, type SessionPhoto } from './session-stack';
 
@@ -9,6 +10,8 @@ export interface ViewfinderProps {
   preview: ReactNode;
   mode: CaptureMode;
   photos: SessionPhoto[];
+  // Counts the photos the camera has taken this session, so the preview blinks on each one.
+  shots: number;
   busy: boolean;
   ready: boolean;
   top: number;
@@ -22,6 +25,8 @@ export const FLIP = {
   ios: 'arrow.triangle.2.circlepath.camera',
   android: 'flip_camera_android',
 } as const;
+// Pixel Camera's layout (D-134): close and the name at the top, the preview under them, flip
+// leading and the session stack trailing the shutter, and the Public / Local Only pill below.
 export default function Viewfinder(p: ViewfinderProps) {
   return (
     <View className="flex-1 bg-scrim" style={{ paddingTop: p.top, paddingBottom: p.bottom }}>
@@ -37,7 +42,7 @@ export default function Viewfinder(p: ViewfinderProps) {
           {p.name}
         </Text>
       </View>
-      <View className="flex-1 items-center justify-center">{p.preview}</View>
+      <PreviewArea preview={p.preview} shots={p.shots} />
       <View className="h-28 flex-row items-center justify-between px-8">
         <Pressable
           disabled={p.busy || !p.ready}
@@ -52,55 +57,34 @@ export default function Viewfinder(p: ViewfinderProps) {
       </View>
       <View className="h-20 items-center justify-center">
         <View className="flex-row rounded-full bg-onPhoto/10 p-1">
-          {(['public', 'local_only'] as const).map((mode) => (
-            <Pressable
-              key={mode}
-              accessibilityRole="button"
-              accessibilityState={{ selected: p.mode === mode }}
-              accessibilityLabel={mode === 'public' ? 'Public' : 'Local Only'}
-              onPress={() => p.onMode(mode)}
-              className={`min-h-12 flex-row items-center gap-2 rounded-full px-5 ${p.mode === mode ? 'bg-accentTint' : ''}`}>
-              <Glyph
-                name={
-                  mode === 'public'
-                    ? { ios: 'camera.fill', android: 'photo_camera' }
-                    : { ios: 'lock.fill', android: 'lock' }
-                }
-                tone={p.mode === mode ? 'scrim' : 'onPhoto'}
-                size={20}
-              />
-              <Text
-                className={`font-fieldLabel text-fieldLabel ${p.mode === mode ? 'text-scrim' : 'text-onPhoto'}`}>
-                {mode === 'public' ? 'Public' : 'Local Only'}
-              </Text>
-            </Pressable>
-          ))}
+          {(['public', 'local_only'] as const).map((mode) => {
+            const selected = p.mode === mode;
+            return (
+              <Pressable
+                key={mode}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                accessibilityLabel={mode === 'public' ? 'Public' : 'Local Only'}
+                onPress={() => p.onMode(mode)}
+                className={`min-h-12 flex-row items-center gap-2 rounded-full px-5 ${selected ? 'bg-accent' : ''}`}>
+                <Glyph
+                  name={
+                    mode === 'public'
+                      ? { ios: 'camera.fill', android: 'photo_camera' }
+                      : { ios: 'lock.fill', android: 'lock' }
+                  }
+                  tone={selected ? 'scrim' : 'onPhoto'}
+                  size={20}
+                />
+                <Text
+                  className={`font-fieldLabel text-fieldLabel ${selected ? 'text-scrim' : 'text-onPhoto'}`}>
+                  {mode === 'public' ? 'Public' : 'Local Only'}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
     </View>
-  );
-}
-export function Shutter({
-  busy,
-  ready,
-  onPress,
-}: {
-  busy: boolean;
-  ready: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Take photo"
-      disabled={!ready || busy}
-      accessibilityState={{ disabled: !ready || busy, busy }}
-      onPress={onPress}
-      className={`h-20 w-20 items-center justify-center rounded-full border-[3px] border-onPhoto ${!ready ? 'opacity-40' : ''}`}>
-      <View
-        className={`h-16 w-16 items-center justify-center rounded-full ${busy ? 'bg-onPhoto/50' : 'bg-onPhoto'}`}>
-        {busy ? <ActivityIndicator className="text-scrim" /> : null}
-      </View>
-    </Pressable>
   );
 }
