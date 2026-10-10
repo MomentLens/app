@@ -126,7 +126,7 @@ The one worker slice in this phase is S-18a. Only the worker sets `processed_at`
 | S-10 | My Media: sectioned by sub-event, SQLite queue, status badges, "+ Add Media", the queue banner, and the publish status endpoint | §2.5.3, HB §4, spec §5.2, spec §5.4, arch §4.2, arch §4.3, arch:media, D-145 | C | S-04, S-08, S-12 |
 | S-11 | Client upload pipeline: EXIF strip, HEIC, 4096px guard, thumbnail, SHA-256, and the **upload loop**: pre-flight, both PUTs, completion, and the queue state each answer leads to | §4.8.1 Stage 1, §4.8.2, §4.8.3, D-58, D-69, D-32, D-53, D-97, D-122, arch §4.1, arch §4.2, arch §4.3, HB §5.3, spec §5.4, D-146, D-147 | C | S-10, S-12 |
 | S-18a | Worker skeleton: pgmq consumer loop under one advisory lock, `/health`, `thumbnail_dims` job, Sentry for archived messages, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, D-108, D-123, arch §5 | U | S-12 |
-| S-09 | Viewfinder: native aspect, Public/Local Only toggle, Public captures saved to the gallery, session strip, FAB visibility rule and the line that replaces the hidden FAB | §4.7, §2.5.4, D-21, D-20, D-90, D-136 | B | S-04, S-08, S-10 |
+| S-09 | Viewfinder: native aspect, Public/Local Only toggle, durable capture persistence and backup exclusion, Public gallery saves and recovery, session stack, FAB visibility rule and the line that replaces the hidden FAB | §4.7, §2.5.4, §4.12, §4.19, spec §5.3, spec §4.14, arch §4.2, D-21, D-20, D-90, D-136, D-134, D-135, D-153 | B | S-04, S-08, S-10 |
 | S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3, D-137, D-138, D-147, D-148 | B | S-12, S-18a |
 | S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-11 |
 
@@ -135,6 +135,8 @@ The one worker slice in this phase is S-18a. Only the worker sets `processed_at`
 **S-10's queue belongs to an account.** Each queued item uploads only under the session of the account that queued it, and My Media shows each account only its own (apps/mobile/AGENTS.md). The team hands phones around at the demo.
 
 **S-10 builds the SQLite table that S-11's loop moves photos through**, with a state for every answer in arch §4.3, so S-11 writes no local migration. A photo stays in the table after it uploads, and `POST /events/{eventId}/media/status` tells the phone when it is published or deleted. That endpoint reads only the caller's own rows, so its API PR carries a negative test for another member, another event and each membership that is not active. S-10 builds the queue banner with its waiting and uploading counts. S-16 builds the check-in banner, S-17 turns the waiting count into "waiting to check in", and S-09 writes the line that replaces the hidden camera button (D-136, D-145).
+
+**S-09 persists both camera modes before S-30 exists** (D-153). Local Only inserts directly as `local_only`, never through a temporary queued state. A durable Public draft retains the original until the gallery save succeeds; a stable capture id makes its later queue handoff idempotent. S-09 adds the local SQLite migration and backup exclusions for files and metadata, using a local iOS native helper and Android config-plugin rules with no new external dependency. Native rebuilds and physical iOS and Android checks are required. S-30 owns the full viewer, local deletion and queued-Public conversion. S-09 has no shared-schema stage and builds only mobile against the existing event, schedule and queue contracts.
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). It PUTs the thumbnail S-10 made when the photo entered the queue, which shows the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69, D-146). It always sends a capture time (D-147). S-11 also owns the loop that calls S-12's endpoints and moves each queued item by the table in arch §4.3 (D-97). That loop is the upload queue's state machine, so a human reads it before it merges.
 
@@ -206,7 +208,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 |---|---|---|---|---|
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
 | S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143, D-144, D-146 | B | S-01, S-06, S-20, S-25 |
-| S-30 | Local Only mode: app-sandbox storage, no gallery sync, viewer in My Media | §4.12, D-34 | C | S-09 |
+| S-30 | Local Only full viewer and deletion in My Media, and conversion of queued Public photos, reusing S-09's storage and backup exclusions | §4.12, D-34, D-145, D-153 | C | S-09 |
 | S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent, arch §4.1, arch §4.3, D-146 | B | S-08, S-13, S-12, S-07a, S-11 |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
 | S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-07a |
@@ -222,6 +224,8 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 **S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request retain the row with status set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144).
 
 **S-29's Upload over Mobile Data toggle writes the MMKV key S-11's runner reads** (arch §4.3, D-146).
+
+**S-29's Camera Starts In control writes S-09's device preference** (spec §4.19, D-153). MMKV store `device-preferences` holds `cameraStartsIn`, whose values are `public` and `local_only`, with Public as the default. Changing the running camera's mode never writes that preference.
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 
