@@ -246,11 +246,20 @@ export type ListEventsResponse = z.infer<typeof ListEventsResponse>;
  *   never a member. The app tells a pending caller apart by the event's id in GET /events'
  *   `joinRequests`, and sends them to Pending Approval instead (D-118).
  * - A soft-deleted or unknown event is 404 `not_found`, the Admin's own included.
- * - The event sits under a key of its own so S-15 can add the caller's verification state beside
- *   it (spec §4.5).
+ * - `verification` is the caller's state, computed by the server. `everySubEvent` covers a manual
+ *   check-in or an exempt role, Admin or Photographer. `subEventIds` names only this caller's
+ *   check-ins in this event (D-155).
+ * - The field is optional for Events-list seeds and cached responses that predate S-15. Its
+ *   absence leaves the upload gate to pre-flight, so it has no default (D-155).
  */
 export const GetEventResponse = z.object({
   event: EventSummary,
+  verification: z
+    .object({
+      everySubEvent: z.boolean(),
+      subEventIds: z.array(z.uuid()).max(MAX_SUB_EVENTS),
+    })
+    .optional(),
 });
 export type GetEventResponse = z.infer<typeof GetEventResponse>;
 
