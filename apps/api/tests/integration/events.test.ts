@@ -86,6 +86,8 @@ interface FakeEvent {
   archivedAt: string | null;
   deleted: boolean;
   members: Map<string, { role: MembershipRole; status: MembershipStatus }>;
+  checkIns: Map<string, string[]>;
+  manualCheckIns: Set<string>;
   // A column the real row has and no response may carry, to check the API drops it.
   qrSecret: string;
 }
@@ -128,6 +130,8 @@ class FakeEvents implements EventStore {
         Object.entries(members).map(([user, [role, status]]) => [user, { role, status }]),
       ),
       qrSecret: 'c2VjcmV0LXNob3VsZC1uZXZlci1sZWF2ZQ',
+      checkIns: new Map(),
+      manualCheckIns: new Set(),
       ...extra,
     };
     this.events.set(event.id, event);
@@ -208,6 +212,12 @@ class FakeEvents implements EventStore {
       deleted: event.deleted,
       membership: event.members.get(userId) ?? null,
       event: this.record(event, userId),
+      verification: {
+        everySubEvent:
+          event.manualCheckIns.has(userId) ||
+          ['admin', 'photographer'].includes(event.members.get(userId)?.role ?? ''),
+        subEventIds: event.checkIns.get(userId) ?? [],
+      },
     });
   }
 
@@ -1021,6 +1031,7 @@ describe('GET /events/{eventId}', () => {
         endsAt: event.endsAt,
         archivedAt: null,
       },
+      verification: { everySubEvent: role !== 'guest', subEventIds: [] },
     });
   });
 
@@ -1034,6 +1045,43 @@ describe('GET /events/{eventId}', () => {
     expect(url.searchParams.get('X-Amz-Expires')).toBe('3600');
     expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  it('returns only the callers check-ins in this event', async () => {
+    const own = randomUUID();
+    const anotherUsers = randomUUID();
+    const anotherEvents = randomUUID();
+    event.checkIns.set(G, [own]);
+    event.checkIns.set(A, [anotherUsers]);
+    store.seed({ [G]: ['guest', 'active'] }, { checkIns: new Map([[G, [anotherEvents]]]) });
+    const response = await send('GET', `/events/${event.id}`, 'token-guest');
+    expect(response.status).toBe(200);
+    const body = GetEventResponse.parse(await response.json());
+    expect(body.verification).toEqual({ everySubEvent: false, subEventIds: [own] });
+    expect(JSON.stringify(body)).not.toContain(anotherUsers);
+    expect(JSON.stringify(body)).not.toContain(anotherEvents);
+  });
+
+  it('returns a manual check-in from the server for a Guest', async () => {
+    event.manualCheckIns.add(G);
+    const response = await send('GET', `/events/${event.id}`, 'token-guest');
+    expect(response.status).toBe(200);
+    expect(GetEventResponse.parse(await response.json()).verification).toEqual({
+      everySubEvent: true,
+      subEventIds: [],
+    });
+  });
+
+  it.each(['token-pending', 'token-blocked', 'token-removed', 'token-b'])(
+    'returns no verification state to inactive caller %s',
+    async (token) => {
+      event.checkIns.set(tokens.get(token)!, [randomUUID()]);
+      const response = await send('GET', `/events/${event.id}`, token);
+      expect(response.status).toBe(403);
+      const body = await response.json();
+      expect(body).not.toHaveProperty('verification');
+      expect(body).not.toHaveProperty('event');
+    },
+  );
 
   it('sends a null cover for an event with none', async () => {
     event.coverKey = null;
@@ -1088,6 +1136,7 @@ describe('GET /events/{eventId}', () => {
               deleted: false,
               membership: { role: 'guest', status: 'active' },
               event: null,
+              verification: null,
             }),
         }),
       }),
