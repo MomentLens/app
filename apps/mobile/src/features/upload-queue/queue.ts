@@ -11,7 +11,6 @@ import { completeUpload, preflightUpload } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
-import { excludeMediaFromBackup } from '../../../modules/local-media';
 import { CaptureStore } from '@/features/capture/capture-store';
 import { captureFiles } from '@/features/capture/capture-files';
 
@@ -22,11 +21,12 @@ import { stallGuard } from './stall';
 import { QueueStore } from './store';
 import type { QueuePatch, QueuePhoto, WaitingState } from './types';
 
+// Opens without waiting for backup exclusion (D-153). A failed exclusion stops each capture before
+// its shot, in capture.ts, so the queue stays readable and Public uploads keep going.
 let opening: Promise<QueueStore> | undefined;
 export function getQueue(): Promise<QueueStore> {
   if (!opening) {
-    opening = excludeMediaFromBackup()
-      .then(() => openDatabaseAsync('momentlens-upload-queue.db'))
+    opening = openDatabaseAsync('momentlens-upload-queue.db')
       .then(async (db) => {
         const store = new QueueStore(db, queueFiles, randomUUID);
         await store.initialize();
