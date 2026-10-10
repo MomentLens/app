@@ -23,6 +23,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it, jest } from '@jest/globals';
 import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
+import { z } from 'zod';
 
 import {
   InviteToken,
@@ -65,6 +66,7 @@ import {
 import {
   createMediaStore,
   MAX_EVENT_MEDIA,
+  preflightUpload,
   startUploadParams,
   UPLOAD_LIMITS,
 } from '../../src/services/media';
@@ -670,11 +672,13 @@ if (project === null) {
         deleted: false,
         membership: { role: 'admin', status: 'active' },
         event,
+        verification: { everySubEvent: true, subEventIds: [] },
       });
       await expect(store.findForCaller(event.id, b.id)).resolves.toEqual({
         deleted: false,
         membership: null,
         event: null,
+        verification: null,
       });
 
       await addMember(event.id, b.id, 'photographer', 'pending');
@@ -688,6 +692,7 @@ if (project === null) {
           deleted: false,
           membership: { role: 'photographer', status },
           event: null,
+          verification: null,
         });
       }
 
@@ -706,11 +711,13 @@ if (project === null) {
         deleted: true,
         membership: { role: 'admin', status: 'active' },
         event: null,
+        verification: null,
       });
       await expect(store.findForCaller(event.id, b.id)).resolves.toEqual({
         deleted: true,
         membership: { role: 'photographer', status: 'active' },
         event: null,
+        verification: null,
       });
     });
 
@@ -732,6 +739,8 @@ if (project === null) {
         starts_at: null,
         ends_at: null,
         archived_at: null,
+        every_sub_event: null,
+        verified_sub_event_ids: null,
       };
       const row = async (userId: string) => {
         const result = await admin.rpc('get_my_event', {
@@ -2422,6 +2431,9 @@ if (project === null) {
           capturedAt: '2026-12-10T15:42:07.000Z',
           uploadKey: keys.photo,
           uploadThumbKey: keys.thumbnail,
+          // These older SQL tests start after the API has accepted a check-in. Gate tests
+          // below pass an empty list when the caller has supplied none (D-155).
+          verifiedSubEventIds: [subEventId],
           ...fields,
         };
       }
@@ -2468,6 +2480,311 @@ if (project === null) {
           .eq('id', eventId);
         expect(result.error).toBeNull();
       }
+
+      describe('S-15 venue verification', () => {
+        async function checkIns(userId: string) {
+          const result = await admin
+            .from('venue_verification')
+            .select('*')
+            .eq('user_id', userId)
+            .order('sub_event_id');
+          expect(result.error).toBeNull();
+          return z
+            .array(
+              z
+                .object({
+                  user_id: z.uuid(),
+                  sub_event_id: z.uuid(),
+                  method: z.literal('gps'),
+                  verified_at: z.string(),
+                })
+                .strict(),
+            )
+            .parse(result.data);
+        }
+
+        const apiDeps = () => ({
+          events: store,
+          media,
+          logger: silent,
+          presignPut: () => Promise.resolve('https://uploads.invalid/signed'),
+          objectSize: () => Promise.resolve(null),
+          deleteObject: () => Promise.resolve(),
+        });
+
+        it('answers 409 without a check-in, rejects another users row and ignores a spoofed Photographer role', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const other = await createNamedUser();
+          const { event, mehndi } = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          await addMember(event.id, other.id, 'guest', 'active');
+          await expect(
+            preflightUpload(apiDeps(), g.id, event.id, { contentHash: hash(), subEventId: mehndi }),
+          ).rejects.toMatchObject({ code: 'unverified', status: 409 });
+          const seeded = await admin
+            .from('venue_verification')
+            .insert({ user_id: other.id, sub_event_id: mehndi, method: 'gps' });
+          expect(seeded.error).toBeNull();
+          await expect(
+            media.start(
+              newUpload(event.id, mehndi, g.id, { role: 'photographer', verifiedSubEventIds: [] }),
+              UPLOAD_LIMITS,
+            ),
+          ).resolves.toEqual({ outcome: 'unverified' });
+          await expect(checkIns(g.id)).resolves.toEqual([]);
+          await expect(countMedia(event.id)).resolves.toBe(0);
+        });
+
+        it('records Y before refusing a photo in X, ignores a foreign sub-event and preserves the first check-in on retry', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const { event, mehndi, baraat } = await eventWithSchedule(a.id);
+          const foreign = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          const offer = newUpload(event.id, mehndi, g.id, {
+            verifiedSubEventIds: [baraat, foreign.mehndi],
+          });
+          await expect(media.start(offer, UPLOAD_LIMITS)).resolves.toEqual({
+            outcome: 'unverified',
+          });
+          const before = await checkIns(g.id);
+          expect(before).toEqual([
+            { user_id: g.id, sub_event_id: baraat, method: 'gps', verified_at: expect.any(String) },
+          ]);
+          await expect(media.start(offer, UPLOAD_LIMITS)).resolves.toEqual({
+            outcome: 'unverified',
+          });
+          await expect(checkIns(g.id)).resolves.toEqual(before);
+          await expect(countMedia(event.id)).resolves.toBe(0);
+        });
+
+        it('uses the stored schedule to reject invalid GPS and accepts an old fix at the venues coordinates', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const { event, mehndi } = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          const historical = await admin
+            .from('sub_event')
+            .update({
+              starts_at: '2000-01-01T14:00:00.000Z',
+              ends_at: '2000-01-01T18:00:00.000Z',
+            })
+            .eq('event_id', event.id);
+          expect(historical.error).toBeNull();
+          const scheduled = (await subEvents.schedule(event.id))!.find((row) => row.id === mehndi)!;
+          const fix = {
+            kind: 'gps' as const,
+            subEventId: mehndi,
+            lat: scheduled.venue.lat,
+            lng: scheduled.venue.lng,
+            accuracyM: 0,
+            recordedAt: scheduled.startsAt,
+          };
+          for (const change of [
+            { lat: scheduled.venue.lat + 0.1 },
+            { recordedAt: new Date(Date.parse(scheduled.startsAt) - 1).toISOString() },
+            { recordedAt: scheduled.endsAt },
+            { accuracyM: scheduled.verificationRadiusM + 1 },
+            { subEventId: randomUUID() },
+          ]) {
+            await expect(
+              preflightUpload(apiDeps(), g.id, event.id, {
+                contentHash: hash(),
+                subEventId: mehndi,
+                verifications: [{ ...fix, ...change }],
+              }),
+            ).rejects.toMatchObject({ code: 'unverified', status: 409 });
+          }
+          await expect(checkIns(g.id)).resolves.toEqual([]);
+          await expect(countMedia(event.id)).resolves.toBe(0);
+          await expect(
+            preflightUpload(apiDeps(), g.id, event.id, {
+              contentHash: hash(),
+              subEventId: mehndi,
+              verifications: [fix],
+            }),
+          ).resolves.toMatchObject({ created: true });
+          expect(await checkIns(g.id)).toEqual([
+            { user_id: g.id, sub_event_id: mehndi, method: 'gps', verified_at: expect.any(String) },
+          ]);
+        }, 60_000);
+
+        it('refuses pending, blocked, removed, non-members and another events Admin without writing a check-in or media', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const foreignAdmin = await createNamedUser();
+          const { event, mehndi } = await eventWithSchedule(a.id);
+          await eventWithSchedule(foreignAdmin.id);
+          await addMember(event.id, g.id, 'guest', 'pending');
+          for (const status of ['pending', 'blocked', 'removed'] as const) {
+            const changed = await admin
+              .from('membership')
+              .update({ status })
+              .eq('event_id', event.id)
+              .eq('user_id', g.id);
+            expect(changed.error).toBeNull();
+            await expect(
+              media.start(newUpload(event.id, mehndi, g.id), UPLOAD_LIMITS),
+            ).resolves.toEqual({ outcome: 'not_member' });
+          }
+          const removed = await admin
+            .from('membership')
+            .delete()
+            .eq('event_id', event.id)
+            .eq('user_id', g.id);
+          expect(removed.error).toBeNull();
+          for (const userId of [g.id, foreignAdmin.id]) {
+            await expect(
+              media.start(newUpload(event.id, mehndi, userId), UPLOAD_LIMITS),
+            ).resolves.toEqual({ outcome: 'not_member' });
+            await expect(checkIns(userId)).resolves.toEqual([]);
+          }
+          await expect(countMedia(event.id)).resolves.toBe(0);
+        });
+
+        it('checks unverified before the cap, records a check-in on full or duplicate, and resumes without verification', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const { event, mehndi, baraat, walima } = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          const full = { maxMedia: 0, maxUnfinished: 50 };
+          await expect(
+            media.start(newUpload(event.id, mehndi, g.id, { verifiedSubEventIds: [] }), full),
+          ).resolves.toEqual({ outcome: 'unverified' });
+          await expect(media.start(newUpload(event.id, mehndi, g.id), full)).resolves.toEqual({
+            outcome: 'full',
+          });
+          expect((await checkIns(g.id)).map((row) => row.sub_event_id)).toEqual([mehndi]);
+          const original = newUpload(event.id, mehndi, g.id, { verifiedSubEventIds: [] });
+          started(await media.start(original, UPLOAD_LIMITS));
+          const deleted = await admin.from('venue_verification').delete().eq('user_id', g.id);
+          expect(deleted.error).toBeNull();
+          await expect(
+            media.start(
+              newUpload(event.id, mehndi, g.id, {
+                verifiedSubEventIds: [],
+                contentHash: original.contentHash,
+              }),
+              full,
+            ),
+          ).resolves.toMatchObject({ outcome: 'resumed', mediaId: original.mediaId });
+          const completed = newUpload(event.id, mehndi, a.id, { verifiedSubEventIds: [] });
+          started(await media.start(completed, UPLOAD_LIMITS));
+          await expect(media.complete(completed.mediaId, a.id, 100)).resolves.toMatchObject({
+            outcome: 'completed',
+          });
+          await expect(
+            media.start(
+              newUpload(event.id, walima, g.id, {
+                contentHash: completed.contentHash,
+                verifiedSubEventIds: [baraat],
+              }),
+              full,
+            ),
+          ).resolves.toEqual({ outcome: 'duplicate' });
+          expect((await checkIns(g.id)).map((row) => row.sub_event_id)).toEqual([baraat]);
+        }, 60_000);
+
+        it('lets Admin, Photographer and a manually checked-in Guest create without per-sub-event rows', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const p = await createNamedUser();
+          const { event, mehndi } = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          await addMember(event.id, p.id, 'photographer', 'active');
+          const checked = await admin
+            .from('membership')
+            .update({ admin_verified_at: new Date().toISOString() })
+            .eq('event_id', event.id)
+            .eq('user_id', g.id);
+          expect(checked.error).toBeNull();
+          for (const userId of [a.id, p.id, g.id]) {
+            await expect(
+              preflightUpload(apiDeps(), userId, event.id, {
+                contentHash: hash(),
+                subEventId: mehndi,
+              }),
+            ).resolves.toMatchObject({ created: true });
+            await expect(checkIns(userId)).resolves.toEqual([]);
+            expect((await store.findForCaller(event.id, userId))?.verification).toEqual({
+              everySubEvent: true,
+              subEventIds: [],
+            });
+          }
+        });
+
+        it('returns only this users verification rows in this event, with no state for inactive members', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const { event, mehndi, baraat } = await eventWithSchedule(a.id);
+          const foreign = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          const seeded = await admin.from('venue_verification').insert([
+            { user_id: g.id, sub_event_id: mehndi, method: 'gps' },
+            { user_id: a.id, sub_event_id: baraat, method: 'gps' },
+            { user_id: g.id, sub_event_id: foreign.mehndi, method: 'gps' },
+          ]);
+          expect(seeded.error).toBeNull();
+          expect((await store.findForCaller(event.id, g.id))?.verification).toEqual({
+            everySubEvent: false,
+            subEventIds: [mehndi],
+          });
+          for (const status of ['pending', 'blocked', 'removed'] as const) {
+            const changed = await admin
+              .from('membership')
+              .update({ status })
+              .eq('event_id', event.id)
+              .eq('user_id', g.id);
+            expect(changed.error).toBeNull();
+            expect((await store.findForCaller(event.id, g.id))?.verification).toBeNull();
+          }
+        });
+
+        it('gives the app keys no verification rows, writes or RPC execution', async () => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const { event, mehndi, baraat } = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          const row = { user_id: g.id, sub_event_id: mehndi, method: 'gps' };
+          expect((await admin.from('venue_verification').insert(row)).error).toBeNull();
+          const before = await checkIns(g.id);
+          const clients = [
+            createServerClient(project.url, project.publishableKey),
+            await signedInClient(g),
+          ];
+          for (const client of clients) {
+            const read = await client.from('venue_verification').select('*');
+            expect(read.error).toBeNull();
+            expect(read.data).toEqual([]);
+            expect(
+              (await client.from('venue_verification').insert({ ...row, sub_event_id: baraat }))
+                .error,
+            ).not.toBeNull();
+            expect(
+              (
+                await client
+                  .from('venue_verification')
+                  .update({ method: 'gps' })
+                  .eq('user_id', g.id)
+              ).error,
+            ).not.toBeNull();
+            expect(
+              (await client.from('venue_verification').delete().eq('user_id', g.id)).error,
+            ).not.toBeNull();
+            const direct = await client.rpc(
+              'start_upload',
+              startUploadParams(newUpload(event.id, baraat, g.id), UPLOAD_LIMITS),
+            );
+            expect(direct.error).not.toBeNull();
+            expect(
+              (await client.rpc('get_my_event', { p_event_id: event.id, p_user_id: g.id })).error,
+            ).not.toBeNull();
+          }
+          await expect(checkIns(g.id)).resolves.toEqual(before);
+          await expect(countMedia(event.id)).resolves.toBe(0);
+        });
+      });
 
       it("creates the row with the keys built from its id, and resumes the caller's unfinished row with its own id and keys", async () => {
         const a = await createNamedUser();
