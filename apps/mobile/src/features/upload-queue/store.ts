@@ -1,4 +1,5 @@
 import { backoffDelay } from './transitions';
+import { CAPTURE_SCHEMA } from '@/features/capture/capture-store';
 import type {
   QueueCounts,
   QueueItem,
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS queue_item (
   CHECK(state != 'stopped' OR stoppedReason IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS queue_owner_event ON queue_item(userId, eventId, createdAt);
-PRAGMA user_version = 1;
+${CAPTURE_SCHEMA}
+PRAGMA user_version = 2;
 `;
 type StoredItem = Omit<QueueItem, 'photoUri' | 'thumbnailUri'>;
 
@@ -78,7 +80,7 @@ export class QueueStore {
   sweep(): Promise<void> {
     return this.mutate(async () => {
       const rows = await this.db.getAllAsync<Pick<StoredItem, 'photoPath' | 'thumbnailPath'>>(
-        'SELECT photoPath, thumbnailPath FROM queue_item',
+        "SELECT photoPath, thumbnailPath FROM queue_item UNION ALL SELECT photoPath, thumbnailPath FROM capture_journal WHERE galleryState != 'handed_off'",
       );
       const keep = new Set(rows.flatMap((row) => [row.photoPath, row.thumbnailPath]));
       for (const path of await this.files.list()) {
@@ -99,6 +101,19 @@ export class QueueStore {
   };
   private changed() {
     for (const listener of this.listeners) listener();
+  }
+  async captureRead<T>(read: (db: QueueDatabase, disk: QueueFiles) => Promise<T>): Promise<T> {
+    await this.initialize();
+    return read(this.db, this.files);
+  }
+  captureMutation<T>(write: (db: QueueDatabase, disk: QueueFiles) => Promise<T>): Promise<T> {
+    return this.mutate(async () => {
+      try {
+        return await write(this.db, this.files);
+      } finally {
+        this.changed();
+      }
+    });
   }
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
     const work = this.tail.then(async () => {

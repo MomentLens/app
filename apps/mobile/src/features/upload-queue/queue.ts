@@ -11,6 +11,9 @@ import { completeUpload, preflightUpload } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
+import { excludeMediaFromBackup } from '../../../modules/local-media';
+import { CaptureStore } from '@/features/capture/capture-store';
+import { captureFiles } from '@/features/capture/capture-files';
 
 import { queueFiles } from './files';
 import { prepareUpload } from './prepare';
@@ -22,10 +25,12 @@ import type { QueuePatch, QueuePhoto, WaitingState } from './types';
 let opening: Promise<QueueStore> | undefined;
 export function getQueue(): Promise<QueueStore> {
   if (!opening) {
-    opening = openDatabaseAsync('momentlens-upload-queue.db')
+    opening = excludeMediaFromBackup()
+      .then(() => openDatabaseAsync('momentlens-upload-queue.db'))
       .then(async (db) => {
         const store = new QueueStore(db, queueFiles, randomUUID);
         await store.initialize();
+        await new CaptureStore(store, captureFiles).recover();
         // Reads start at once. An enqueue made during the sweep waits behind it, and so does the
         // runner's first write, so Stage 1 never writes an upload.jpg the sweep could take.
         void store.sweep();

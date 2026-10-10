@@ -16,6 +16,7 @@ import {
 } from '@/features/upload-queue/runner';
 import { QueueStore, type QueueDatabase, type QueueFiles } from '@/features/upload-queue/store';
 import type { QueueItem } from '@/features/upload-queue/types';
+import { CaptureStore } from '@/features/capture/capture-store';
 
 const EVENT = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
 const OTHER_EVENT = '5d6e7f80-91a2-4b3c-8d4e-5f6a7b8c9d0e';
@@ -246,6 +247,35 @@ beforeEach(() => {
 });
 
 describe('one photo through the loop', () => {
+  it('never hashes, verifies or sends a Local Only capture or a Public gallery draft', async () => {
+    const captures = new CaptureStore(store, {
+      original: async (owner, id) => {
+        const path = `${owner}/${id}/original.jpg`;
+        disk.set(path, new Uint8Array([1]));
+        return path;
+      },
+      thumbnail: async (path) => {
+        const thumb = path.replace('original.jpg', 'thumb.webp');
+        disk.set(thumb, new Uint8Array([2]));
+        return thumb;
+      },
+    });
+    const shot = {
+      userId: 'A',
+      eventId: EVENT,
+      subEventId: SUB,
+      capturedAt: new Date(clock).toISOString(),
+    };
+    await captures.persist('local', { ...shot, mode: 'local_only' }, 'file:///camera.jpg');
+    await captures.persist('draft', { ...shot, mode: 'public' }, 'file:///camera.jpg');
+    await createRunner().run();
+    expect(prepares).toEqual([]);
+    expect(puts).toEqual([]);
+    expect(server.calls).toEqual([]);
+    expect(lost).toEqual([]);
+    expect((await store.listForEvent('A', EVENT))[0]?.state).toBe('local_only');
+    expect(await captures.list('A', EVENT)).toHaveLength(1);
+  });
   it('prepares once, pre-flights, PUTs both files to their own URLs, completes and keeps the thumbnail', async () => {
     const item = await store.enqueue('A', EVENT, SUB, photo);
     await createRunner().run();
