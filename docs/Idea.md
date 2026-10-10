@@ -557,7 +557,7 @@ This system is a **gate on uploading**, applied to the *person*, not the *photo*
 
 ### 4.7 Media capture (viewfinder)
 - A custom in-app camera Viewfinder, presented full screen. The live preview fits the selected camera output's native bounds without cropping to fill the screen; controls or empty space may surround it (D-21, D-153).
-- **Native aspect ratio.** Capture is not cropped to any fixed ratio; the photo keeps whatever the device sensor produces, and the preview matches the capture bounds so what is framed is what is captured.
+- **Native aspect ratio.** The app never crops a capture, and the preview matches the capture bounds so what is framed is what is captured. On iOS the photo keeps the camera's native still size. On Android it is the largest 4:3 output the camera lists, because Expo Camera binds no other shape with a matching preview (D-154).
 - Public / Local Only switch always visible below the shutter, setting the mode for the next capture, changeable at any point mid-session. While Local Only is on, a "Local Only" pill stays at the top of the preview (D-134).
 - **A Public capture is also saved to the phone's gallery**, as the camera took it; the copy that uploads is the stripped one (§4.8.1). A Local Only capture is not saved there (§4.12, D-90).
 - Public capture requires gallery write access. If a gallery save fails, the app retains a durable draft in My Media and withholds upload until the gallery save succeeds. An interrupted gallery write with an unknown result requires an explicit retry, warning that it may create another gallery copy (D-153).

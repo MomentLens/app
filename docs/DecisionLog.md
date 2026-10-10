@@ -150,6 +150,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** A fixed ratio can only bind in-app capture anyway. Gallery imports are whatever the phone shot, and photographer files are almost always 3:2. Cropping a professional's framing to fit a grid is destroying the work.
 **Related.** Album grid thumbnails are center-cropped to square for grid uniformity across mixed-aspect sources; full-screen view always renders native aspect. This is a display decision, not a storage one; the stored file is never cropped.
 **Amended (see D-153).** The full-screen Viewfinder fits its preview to the camera output's native bounds without cropping to fill the screen.
+**Amended (see D-154).** On Android, in-app capture uses the largest 4:3 output the camera lists, because Expo Camera binds no other shape with a matching preview. The app still crops nothing, and imported files keep their own shape.
 
 ### D-22 — FlashList grid, not masonry, but store dimensions anyway
 **Decision.** Square-cropped uniform grid. The worker writes `width` and `height` onto every media row regardless.
@@ -1497,6 +1498,14 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Deferring Local Only persistence until S-30, marking a photo local only after enqueue, treating a sandbox path as backup exclusion, cropping the preview to fill the screen, uploading before gallery success, and automatically replaying an uncertain gallery write.
 **Cost.** One local SQLite migration and capture journal, recovery UI in My Media, a local iOS native helper, Android config-plugin rules and native rebuilds. No server migration, endpoint, job, R2 key or external dependency is added. An explicit retry after an interrupted gallery save can create another gallery copy. A camera session uses the phone's clock and cached schedule, so an offline phone can keep an older schedule until reconnect. The full Local Only viewer and deletion remain unavailable until S-30.
 **Reopen if.** Gallery failures block Public capture during rehearsal, backup exclusion fails on a supported phone, testers object to possible extra gallery copies after an interrupted save, or native preview and capture bounds cannot be matched on a supported camera.
+**Amended (see D-154).** On Android the selected camera output is the largest 4:3 size the camera lists, so the preview and the shutter check use the size CameraX binds.
+
+### D-154: Android captures the largest 4:3 output
+**Decision.** Amends D-21, D-153 and spec §4.7. On Android the Viewfinder requests the largest 4:3 photo size the camera lists, or the largest size of any shape when the camera lists no 4:3 size, and passes Expo Camera's `ratio` as 4:3. The preview fits that size, and the shutter check still refuses a photo whose shape differs from it. iOS keeps the camera's native still size. Ukasha chose this on 2026-10-10 after the S-09 device test.
+**Why.** Expo Camera 57.0.5 binds its Android photo and preview streams through a CameraX selector that prefers 4:3 and treats `pictureSize` as an upper limit, although its prop documentation says `pictureSize` overrides `ratio`. A Pixel's front camera lists its full 3440x2448 sensor as a JPEG size, CameraX bound 3264x2448, and every selfie failed the shutter check. That camera's only preview stream with the 3440:2448 shape is 3440x2448 itself, which CameraX does not run beside the photo stream, so a full-sensor photo cannot have a preview that matches it. The back camera's 4080x3072 already counts as 4:3, so it is unchanged.
+**Rejected.** A pnpm patch to Expo Camera that captures the full sensor: its preview would still be 4:3, so the photo would hold width the person never saw. A patch that reads the bound size back from CameraX: it produces the same 4:3 photo and adds a patch and a native rebuild on three machines.
+**Cost.** A camera whose sensor is wider than 4:3 produces a narrower photo than its sensor allows. The Pixel front camera loses 176 of its 3440 columns, 5% of the width. A phone where CameraX binds a shape other than the requested one still fails the shutter check, and the error names both sizes.
+**Reopen if.** A supported Android phone fails the shutter check, or a later Expo Camera version lets the app bind a non-4:3 shape together with a matching preview.
 
 ## Open items that are not decisions yet
 
