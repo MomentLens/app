@@ -58,7 +58,7 @@ export default function Viewfinder(p: ViewfinderProps) {
           />
         </Pressable>
         <Pressable
-          disabled={p.busy}
+          disabled={p.busy || !p.ready}
           accessibilityRole="button"
           accessibilityLabel="Flip camera"
           onPress={p.onFlip}>
