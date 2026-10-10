@@ -2,6 +2,7 @@ import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Glyph, GLYPH } from '@/components/ui/glyph';
+import { PreviewArea, Shutter } from './camera-controls';
 import { SessionStack } from './session-stack';
 import type { ViewfinderProps } from './viewfinder';
 
@@ -25,6 +26,8 @@ function Glass({ children, circle = false }: { children: ReactNode; circle?: boo
     </View>
   );
 }
+// The Camera app's layout from iOS 26 (D-134): close and the name on glass at the top, the stack
+// leading and flip trailing the shutter, and the two mode labels below it.
 export default function Viewfinder(p: ViewfinderProps) {
   return (
     <View className="flex-1 bg-scrim" style={{ paddingTop: p.top, paddingBottom: p.bottom }}>
@@ -43,20 +46,10 @@ export default function Viewfinder(p: ViewfinderProps) {
         </View>
         <View style={{ width: 44 }} />
       </View>
-      <View className="flex-1 items-center justify-center">{p.preview}</View>
+      <PreviewArea preview={p.preview} shots={p.shots} />
       <View className="h-28 flex-row items-center justify-between px-8">
         <SessionStack photos={p.photos} onPress={p.onClose} round />
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Take photo"
-          disabled={!p.ready || p.busy}
-          accessibilityState={{ disabled: !p.ready || p.busy, busy: p.busy }}
-          onPress={p.onShutter}
-          className={`h-20 w-20 items-center justify-center rounded-full border-[5px] border-onPhoto/30 ${!p.ready ? 'opacity-40' : ''}`}>
-          <View
-            className={`h-[66px] w-[66px] rounded-full ${p.busy ? 'bg-onPhoto/50' : 'bg-onPhoto'}`}
-          />
-        </Pressable>
+        <Shutter busy={p.busy} ready={p.ready} onPress={p.onShutter} />
         <Pressable
           disabled={p.busy || !p.ready}
           accessibilityRole="button"

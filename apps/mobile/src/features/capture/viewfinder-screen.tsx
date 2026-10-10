@@ -79,6 +79,7 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   const [active, setActive] = useState(AppState.currentState === 'active');
   const [problem, setProblem] = useState<string>();
   const [photos, setPhotos] = useState<SessionPhoto[]>([]);
+  const [shots, setShots] = useState(0);
   const mode = useCaptureMode((state) => state.mode);
   const mounted = useRef(true);
   const shooting = useRef(false);
@@ -214,6 +215,7 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
         throw new Error('The camera is no longer ready to take this photo.');
       const photo = await selectedCamera.takePictureAsync({ quality: 1, exif: true });
       if (!photo) throw new Error('The camera could not take the photo.');
+      if (mounted.current) setShots((count) => count + 1);
       if (!matchesShape(selectedSize, photo.width, photo.height))
         throw new Error(
           `This camera output (${photo.width}x${photo.height}) does not match its preview bounds (${selectedSize}). Please report these dimensions.`,
@@ -343,7 +345,8 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
         </View>
       ) : permission?.granted && focused && active && accessible && schedule.data ? (
         <GestureDetector gesture={swipe}>
-          <View style={frame}>
+          {/* The bottom margin lifts the frame under the top bar, as Pixel Camera places it. */}
+          <View style={frame} className="mb-auto">
             <CameraView
               ref={bindCamera}
               style={{ width: '100%', height: '100%', opacity: size ? 1 : 0 }}
@@ -422,12 +425,14 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   );
   return (
     <>
-      <StatusBar style="light" />
+      {/* Both system cameras hide the status bar over the viewfinder. */}
+      <StatusBar style="light" hidden />
       <Viewfinder
         name={live?.name ?? 'Camera'}
         preview={preview}
         mode={mode}
         photos={photos}
+        shots={shots}
         busy={busy}
         ready={ready && focused && active && accessible && Boolean(live)}
         top={insets.top}
