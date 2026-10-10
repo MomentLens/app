@@ -7,7 +7,7 @@ import { getQueue, runUploads } from '@/features/upload-queue/queue';
 import { useAuthStore } from '@/stores/auth';
 import { CaptureController } from './capture';
 import { captureFiles } from './capture-files';
-import { CaptureStore, type CaptureDraft } from './capture-store';
+import { CaptureStore, type CaptureDraft, type GalleryState } from './capture-store';
 import { galleryPermission, saveOriginalToGallery } from './gallery';
 import { noticeKey, startingMode } from './preferences';
 
@@ -54,8 +54,25 @@ export async function retryCapture(draft: CaptureDraft): Promise<void> {
   const controller = captureController(async () => {
     throw new Error('Retry does not take another photo');
   });
-  if (!(await controller.finishPublic(draft.userId, draft.id, true)))
-    throw new Error('The gallery save did not finish. The photo stays on this phone.');
+  if (await controller.finishPublic(draft.userId, draft.id, true)) return;
+  // The journal, not the draft, says how far the retry got: a save can succeed and the handoff fail.
+  const state = await (await getCaptures()).galleryStateOf(draft.userId, draft.id);
+  throw new Error(unqueuedMessage(state));
+}
+// Why a retry did not queue the photo, by the gallery state the journal holds after the attempt.
+function unqueuedMessage(state: GalleryState | null): string {
+  switch (state) {
+    case 'saved':
+      return 'The photo is in your gallery, but it could not be added to the upload queue. Try again.';
+    case 'saving':
+      return 'The gallery save is still in progress. Try again when it finishes.';
+    case 'handed_off':
+      return 'This photo is already in the upload queue.';
+    case null:
+      return 'This photo is no longer on this phone.';
+    default:
+      return 'The gallery save did not finish. The photo stays on this phone.';
+  }
 }
 export function useCaptureDrafts(owner: string | null, eventId: string) {
   const [drafts, setDrafts] = useState<CaptureDraft[]>([]);
