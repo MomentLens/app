@@ -134,6 +134,17 @@ export class CaptureStore {
       );
     });
   }
+  // The gallery state the journal holds now, or null when the row is gone.
+  async galleryStateOf(owner: string, id: string): Promise<GalleryState | null> {
+    return this.queue.captureRead(async (db) => {
+      const [row] = await db.getAllAsync<Pick<JournalRow, 'galleryState'>>(
+        'SELECT galleryState FROM capture_journal WHERE userId = ? AND id = ?',
+        owner,
+        id,
+      );
+      return row?.galleryState ?? null;
+    });
+  }
   async originalUri(owner: string, id: string): Promise<string> {
     return this.queue.captureRead(async (db, disk) => {
       const [row] = await db.getAllAsync<JournalRow>(
