@@ -4,8 +4,10 @@ import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AnchoredMenu, type MenuAnchor } from '@/components/ui/anchored-menu';
 import { Button } from '@/components/ui/button';
+import { Fab } from '@/components/ui/fab';
 import { FormMessage } from '@/components/ui/form-message';
 import { GLYPH } from '@/components/ui/glyph';
 import { useEventId } from '@/features/event-shell/event-id';
@@ -19,16 +21,18 @@ import type { CaptureDraft } from '@/features/capture/capture-store';
 import { useQueue } from '@/features/upload-queue/use-queue';
 import { useNow } from '@/hooks/use-now';
 import { useTokenColor } from '@/hooks/use-token-color';
+import { BottomTabInset } from '@/lib/platform';
 import { useAuthStore } from '@/stores/auth';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
 import { QueueBanner } from './queue-banner';
-import { mediaListItems, mediaSections, type MediaListItem, type MyMediaItem } from './sections';
-import { CameraEntry } from './camera-entry';
+import { mediaRows, mediaSections, type MediaListItem, type MyMediaItem } from './sections';
+import { CameraHint } from './camera-entry';
 import { useMediaStatus } from './use-media-status';
 
 const IOS = Platform.OS === 'ios';
 const EMPTY_SCHEDULE: SubEvent[] = [];
+const FAB_CLEARANCE = 56 + 16;
 // A Reanimated list, because on Android the frame's scroll handler collapses the large title.
 const AnimatedList = Animated.createAnimatedComponent(FlashList<MediaListItem>);
 export function MyMediaScreen() {
@@ -38,6 +42,7 @@ export function MyMediaScreen() {
 }
 function MediaContent({ eventId }: { eventId: string }) {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { captureSubEventId } = useLocalSearchParams<{ captureSubEventId?: string }>();
   const list = useRef<FlashListRef<MediaListItem>>(null);
   const background = useTokenColor('background');
@@ -61,7 +66,7 @@ function MediaContent({ eventId }: { eventId: string }) {
     [subEvents, queue.items, captures.drafts, now],
   );
   const items = useMemo(
-    () => (schedule.data ? mediaListItems(sections) : []),
+    () => mediaRows(schedule.data ? sections : null),
     [schedule.data, sections],
   );
   const sticky = useMemo(
@@ -72,15 +77,18 @@ function MediaContent({ eventId }: { eventId: string }) {
   const [pulling, setPulling] = useState(false);
   const [problem, setProblem] = useState<string>();
   const showCaptureSection = useCallback(() => {
-    if (!captureSubEventId || !list.current) return;
+    const view = list.current;
+    if (!captureSubEventId || !view) return;
     const index = items.findIndex(
       (item) => item.type === 'header' && item.section.key === captureSubEventId,
     );
-    if (index < 0) return;
-    void list.current
-      .scrollToIndex({ index, animated: false })
-      .then(() => router.setParams({ captureSubEventId: undefined }))
-      .catch(() => undefined);
+    const layout = index < 0 ? undefined : view.getLayout(index);
+    if (!layout) return;
+    // scrollToIndex records its target as the list's offset even when the list is too short to
+    // reach it, and the section's header then sticks while it is still on screen. scrollToOffset
+    // moves the native view only, and the list reads the offset it reached from the scroll event.
+    view.scrollToOffset({ offset: layout.y, animated: false });
+    router.setParams({ captureSubEventId: undefined });
   }, [captureSubEventId, items, router]);
   useFocusEffect(
     useCallback(() => {
@@ -94,6 +102,15 @@ function MediaContent({ eventId }: { eventId: string }) {
   const scheduleMissing = !schedule.data && schedule.isError;
   const live = currentSubEvent(subEvents, now);
   const subtitle = `${live ? `${live.name} is live · ` : ''}${queue.items.length + captures.drafts.length} of yours`;
+  // The camera opens only while a sub-event is live (spec §2.5.4), from a floating button on both
+  // platforms (D-112). Android lays the tab out above its bar; iOS draws the bar over the content.
+  const camera =
+    schedule.data && live
+      ? {
+          label: `Open camera for ${live.name}`,
+          onPress: () => router.push({ pathname: '/capture/[eventId]', params: { eventId } }),
+        }
+      : null;
 
   async function add(subEventId: string) {
     const owner = queue.userId;
@@ -168,6 +185,26 @@ function MediaContent({ eventId }: { eventId: string }) {
       ],
     );
   }
+  const emptyNotice = (
+    <View className="items-center gap-3 px-8 py-12">
+      {schedule.isPending || queue.loading ? (
+        <ActivityIndicator className="text-textSecondary" />
+      ) : (
+        <>
+          <Text className="text-center font-h2 text-h2 text-textPrimary">
+            {queue.error || scheduleMissing
+              ? 'Your photos could not be loaded'
+              : 'Your photos will show here'}
+          </Text>
+          <Text className="text-center font-body text-body text-textSecondary">
+            {queue.error || scheduleMissing
+              ? 'Pull to refresh and try again.'
+              : 'Add photos once a sub-event has started. This tab keeps the photos you add on this phone.'}
+          </Text>
+        </>
+      )}
+    </View>
+  );
   async function refresh() {
     if (pulling) return;
     setPulling(true);
@@ -177,6 +214,7 @@ function MediaContent({ eventId }: { eventId: string }) {
   }
   return (
     <EventTabScreen
+      bottomInset={camera ? FAB_CLEARANCE : 0}
       overlay={
         <>
           <AnchoredMenu
@@ -196,7 +234,13 @@ function MediaContent({ eventId }: { eventId: string }) {
                 : []
             }
           />
-          {schedule.data ? <CameraEntry eventId={eventId} schedule={subEvents} now={now} /> : null}
+          {camera ? (
+            <Fab
+              glyph={GLYPH.camera}
+              bottom={IOS ? insets.bottom + BottomTabInset + 16 : 16}
+              {...camera}
+            />
+          ) : null}
         </>
       }
       renderList={({ scroll, header }) => (
@@ -212,33 +256,33 @@ function MediaContent({ eventId }: { eventId: string }) {
           contentContainerStyle={{ ...scroll.contentContainerStyle, backgroundColor: background }}
           refreshing={pulling}
           onRefresh={() => void refresh()}
-          ListHeaderComponent={
-            <>
-              {header}
-              <View className="px-5 pb-5 android:px-4">
-                <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-                  {subtitle}
-                </Text>
-              </View>
-              <QueueBanner counts={queue.counts} />
-              {schedule.data ? (
-                <CameraEntry eventId={eventId} schedule={subEvents} now={now} line />
-              ) : null}
-              {problem || queue.error || captures.error || status.error || schedule.isError ? (
-                <View className="px-5 pb-3">
-                  <FormMessage
-                    message={
-                      problem ??
-                      (queue.error
-                        ? 'Your photos could not be read from this phone. Pull to refresh and try again.'
-                        : 'The latest status could not be loaded. Your photos stay on this phone. Pull to refresh to try again.')
-                    }
-                  />
-                </View>
-              ) : null}
-            </>
-          }
           renderItem={({ item }) => {
+            if (item.type === 'top')
+              return (
+                <View>
+                  {header}
+                  <View className="px-5 pb-5 android:px-4">
+                    <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
+                      {subtitle}
+                    </Text>
+                  </View>
+                  <QueueBanner counts={queue.counts} />
+                  {schedule.data && !live ? <CameraHint schedule={subEvents} now={now} /> : null}
+                  {problem || queue.error || captures.error || status.error || schedule.isError ? (
+                    <View className="px-5 pb-3">
+                      <FormMessage
+                        message={
+                          problem ??
+                          (queue.error
+                            ? 'Your photos could not be read from this phone. Pull to refresh and try again.'
+                            : 'The latest status could not be loaded. Your photos stay on this phone. Pull to refresh to try again.')
+                        }
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              );
+            if (item.type === 'notice') return emptyNotice;
             if (item.type === 'header') {
               const section = item.section;
               const date = section.subEvent ? formatDay(new Date(section.subEvent.startsAt)) : null;
@@ -313,26 +357,6 @@ function MediaContent({ eventId }: { eventId: string }) {
               </View>
             );
           }}
-          ListEmptyComponent={
-            <View className="items-center gap-3 px-8 py-12">
-              {schedule.isPending || queue.loading ? (
-                <ActivityIndicator className="text-textSecondary" />
-              ) : (
-                <>
-                  <Text className="text-center font-h2 text-h2 text-textPrimary">
-                    {queue.error || scheduleMissing
-                      ? 'Your photos could not be loaded'
-                      : 'Your photos will show here'}
-                  </Text>
-                  <Text className="text-center font-body text-body text-textSecondary">
-                    {queue.error || scheduleMissing
-                      ? 'Pull to refresh and try again.'
-                      : 'Add photos once a sub-event has started. This tab keeps the photos you add on this phone.'}
-                  </Text>
-                </>
-              )}
-            </View>
-          }
         />
       )}
     />

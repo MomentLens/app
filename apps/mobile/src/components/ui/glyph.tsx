@@ -16,6 +16,7 @@ export const GLYPH = {
   delay: { ios: 'timer', android: 'more_time' },
   directions: { ios: 'arrow.triangle.turn.up.right.diamond', android: 'directions' },
   photos: { ios: 'photo.on.rectangle', android: 'photo_library' },
+  camera: { ios: 'camera', android: 'photo_camera' },
   location: { ios: 'location', android: 'my_location' },
   search: { ios: 'magnifyingglass', android: 'search' },
   chevron: { ios: 'chevron.forward', android: 'chevron_right' },

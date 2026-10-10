@@ -113,9 +113,22 @@ export function canDeleteLocally(item: MyMediaItem, removed: boolean): boolean {
   return removed || (item.state !== 'uploaded' && item.state !== 'published');
 }
 export type MediaListItem =
+  | { type: 'top'; key: 'top' }
+  | { type: 'notice'; key: 'notice' }
   | { type: 'header'; key: string; section: MediaSection }
   | { type: 'photos'; key: string; items: MyMediaItem[]; removed: boolean }
   | { type: 'empty'; key: string };
+// The title, banners and lines above the sections are the list's first row, and the loading,
+// error or empty notice stands in for the sections. FlashList 2.3 places sticky headers by an
+// offset that starts at its first row, so with a ListHeaderComponent above that row the first
+// section header stuck over the title before anything scrolled.
+export function mediaRows(sections: readonly MediaSection[] | null): MediaListItem[] {
+  const rows = sections ? mediaListItems(sections) : [];
+  return [
+    { type: 'top', key: 'top' },
+    ...(rows.length ? rows : [{ type: 'notice' as const, key: 'notice' as const }]),
+  ];
+}
 export function mediaListItems(sections: readonly MediaSection[]): MediaListItem[] {
   return sections.flatMap((section) => {
     const list: MediaListItem[] = [{ type: 'header', key: `header/${section.key}`, section }];
