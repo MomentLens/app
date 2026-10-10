@@ -8,6 +8,7 @@ import {
   InviteRole,
   MembershipRole,
   MembershipStatus,
+  MAX_SUB_EVENTS,
 } from '@momentlens/shared-types';
 import type {
   CreateCoverUploadResponse,
@@ -67,6 +68,7 @@ export interface MemberAccess extends EventAccess {
 // active and the event is not deleted, so the store never returns an event the caller may not see.
 export interface CallerEvent extends EventAccess {
   event: EventRecord | null;
+  verification: NonNullable<GetEventResponse['verification']> | null;
 }
 
 // The Event Settings form as event_settings reads it, before its cover is presigned (D-142).
@@ -164,6 +166,16 @@ const CallerRow = z.object({
   role: MembershipRole.nullable(),
   status: MembershipStatus.nullable(),
 });
+
+const VerificationRow = z
+  .object({
+    every_sub_event: z.boolean(),
+    verified_sub_event_ids: z.array(z.uuid()).max(MAX_SUB_EVENTS),
+  })
+  .transform((row): NonNullable<GetEventResponse['verification']> => ({
+    everySubEvent: row.every_sub_event,
+    subEventIds: row.verified_sub_event_ids,
+  }));
 
 // event_settings' object. Parsed rather than cast, so a renamed key fails here. So does a null in
 // pending_photographers, a Photographer with no profile, rather than drop them from the confirm.
@@ -315,6 +327,7 @@ export function createEventStore(supabase: Supabase): EventStore {
         deleted: access.deleted,
         membership,
         event: shown ? toRecord(EventRow.parse(row)) : null,
+        verification: shown ? VerificationRow.parse(row) : null,
       };
     },
 
@@ -499,10 +512,10 @@ export async function getEvent(
   if (found.membership?.status !== 'active') {
     throw new ApiError('not_member', 'Not an active member of this event');
   }
-  if (found.event === null) {
-    throw new Error('The event store found an active member of a live event but no event');
+  if (found.event === null || found.verification === null) {
+    throw new Error('The event store found an active member but no event or verification state');
   }
-  return { event: await toSummary(found.event, presignGet) };
+  return { event: await toSummary(found.event, presignGet), verification: found.verification };
 }
 
 // The check an endpoint on one event makes before anything else: the event exists and is not
