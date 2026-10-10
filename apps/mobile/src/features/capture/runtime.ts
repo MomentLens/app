@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { File } from 'expo-file-system';
 import { randomUUID } from 'expo-crypto';
 import { createMMKV } from 'react-native-mmkv';
@@ -106,8 +106,10 @@ export function useCaptureDrafts(owner: string | null, eventId: string) {
       unsubscribe?.();
     };
   }, [owner, eventId]);
-  return {
-    drafts: drafts.filter((draft) => draft.userId === owner && draft.eventId === eventId),
-    error,
-  };
+  // My Media's sections memo depends on this array, so it changes only with the drafts or the scope.
+  const scoped = useMemo(
+    () => drafts.filter((draft) => draft.userId === owner && draft.eventId === eventId),
+    [drafts, owner, eventId],
+  );
+  return { drafts: scoped, error };
 }
