@@ -2,11 +2,10 @@ import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Glyph, GLYPH } from '@/components/ui/glyph';
-import { PreviewArea, Shutter } from './camera-controls';
+import { FLIP, PreviewArea, Shutter } from './camera-controls';
 import { SessionStack } from './session-stack';
 import type { ViewfinderProps } from './viewfinder';
 
-const FLIP = { ios: 'arrow.triangle.2.circlepath.camera', android: 'flip_camera_android' } as const;
 function Glass({ children, circle = false }: { children: ReactNode; circle?: boolean }) {
   const style = {
     borderRadius: 50,
