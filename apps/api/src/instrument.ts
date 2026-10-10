@@ -5,8 +5,8 @@ import * as Sentry from '@sentry/node';
 // express and http had already loaded, too late to wrap them. Without that wrapping, errors still
 // arrive but lose the request they came from, and two concurrent requests can share one scope.
 //
-// Errors only: no tracing and no profiling. With sendDefaultPii off, Sentry sends no IP address and
-// no request or response body, and filters auth headers, cookies and query parameters by name.
+// Errors only, with no tracing or profiling. sendDefaultPii excludes IP addresses. HTTP body
+// capture is disabled separately, so pre-flight's GPS readings never enter an error event (D-89).
 //
 // With SENTRY_DSN unset, as in tests, CI and most local runs, the SDK starts disabled and sends
 // nothing. SENTRY_ENVIRONMENT tags each event: `local`, `development`, or `production` for the
@@ -15,4 +15,5 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   environment: process.env.SENTRY_ENVIRONMENT,
   sendDefaultPii: false,
+  integrations: [Sentry.httpIntegration({ maxIncomingRequestBodySize: 'none' })],
 });

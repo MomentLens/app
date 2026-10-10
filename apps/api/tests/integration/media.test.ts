@@ -15,7 +15,12 @@ import {
   MediaStatusResponse,
   PreflightUploadResponse,
 } from '@momentlens/shared-types';
-import type { MembershipRole, MembershipStatus } from '@momentlens/shared-types';
+import type {
+  MembershipRole,
+  MembershipStatus,
+  SubEvent,
+  VerificationRecord,
+} from '@momentlens/shared-types';
 
 import { uploadKeys } from '../../src/lib/keys';
 import type { VerifyToken } from '../../src/middleware/auth';
@@ -108,6 +113,8 @@ class FakeEvents implements EventStore {
 // answer to give instead. complete marks the row uploaded and counts one message, unless
 // `completeAnswer` holds an answer, as the real function gives under its lock.
 class FakeMedia implements MediaStore {
+  readonly schedules = new Map<string, SubEvent[]>();
+  readonly scheduleReads: string[] = [];
   readonly rows = new Map<string, UploadRecord>();
   readonly processed = new Set<string>();
   readonly deleted = new Set<string>();
@@ -118,6 +125,12 @@ class FakeMedia implements MediaStore {
   completeAnswer: CompleteResult | null = null;
   messages = 0;
   failWith: Error | null = null;
+
+  verificationSchedule(eventId: string): Promise<SubEvent[] | null> {
+    this.scheduleReads.push(eventId);
+    if (this.failWith) return Promise.reject(this.failWith);
+    return Promise.resolve(this.schedules.get(eventId) ?? null);
+  }
 
   statuses(eventId: string, userId: string, mediaIds: string[]): Promise<MediaStatusResponse> {
     this.statusReads.push({ eventId, userId, mediaIds });
@@ -255,6 +268,8 @@ afterAll(async () => {
 beforeEach(() => {
   events.events.clear();
   media.rows.clear();
+  media.schedules.clear();
+  media.scheduleReads.length = 0;
   media.processed.clear();
   media.deleted.clear();
   media.statusReads.length = 0;
@@ -408,6 +423,7 @@ describe('POST /events/{eventId}/media/preflight', () => {
             capturedAt: body.capturedAt,
             uploadKey: keys.photo,
             uploadThumbKey: keys.thumbnail,
+            verifiedSubEventIds: [],
           },
           limits: UPLOAD_LIMITS,
         },
@@ -539,6 +555,8 @@ describe('POST /events/{eventId}/media/preflight', () => {
     ['full', 422, 'event_full'],
     ['too_many', 422, 'too_many_unfinished'],
     ['not_found', 404, 'not_found'],
+    ['not_member', 403, 'not_member'],
+    ['unverified', 409, 'unverified'],
   ] as const)(
     'answers start_upload refusing with %s as %i %s, with no URL',
     async (outcome, status, code) => {
@@ -594,6 +612,214 @@ describe('POST /events/{eventId}/media/preflight', () => {
     expect(response.status).toBe(500);
     const body = ErrorResponse.parse(await response.json());
     expect(body.error).toEqual({ code: 'internal_error', message: 'Internal error' });
+  });
+});
+
+describe('S-15 preflight verification', () => {
+  let scheduled: SubEvent;
+
+  beforeEach(() => {
+    scheduled = {
+      id: subEventId,
+      name: 'Mehndi',
+      description: null,
+      startsAt: '2026-12-10T14:00:00.000Z',
+      endsAt: '2026-12-10T18:00:00.000Z',
+      verificationRadiusM: 200,
+      venue: { id: randomUUID(), name: 'Hall', lat: 0, lng: 0 },
+    };
+    media.schedules.set(eventId, [scheduled]);
+  });
+
+  function reading(change: Partial<VerificationRecord> = {}): VerificationRecord {
+    return {
+      kind: 'gps',
+      subEventId,
+      lat: 0,
+      lng: 0,
+      accuracyM: 20,
+      recordedAt: '2026-12-10T15:00:00.000Z',
+      ...change,
+    };
+  }
+
+  it('answers 409 unverified with no reading and writes no media or check-in', async () => {
+    media.startAnswer = { outcome: 'unverified' };
+    const response = await send('POST', preflightPath(), 'token-guest', preflightBody());
+    expect(response.status).toBe(409);
+    await expect(errorCode(response)).resolves.toBe('unverified');
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([]);
+    expect(media.rows.size).toBe(0);
+    expect(media.scheduleReads).toEqual([]);
+    expect(puts).toEqual([]);
+  });
+
+  it.each([
+    ['outside the radius', { lat: 0.002 }],
+    ['before the start', { recordedAt: '2026-12-10T13:59:59.999Z' }],
+    ['at the end', { recordedAt: '2026-12-10T18:00:00.000Z' }],
+    ['with accuracy worse than the radius', { accuracyM: 200.001 }],
+    ["for another event's sub-event", { subEventId: randomUUID() }],
+  ] as const)('refuses a GPS reading %s with 409 and no check-in', async (_case, change) => {
+    media.startAnswer = { outcome: 'unverified' };
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: [reading(change)] }),
+    );
+    expect(response.status).toBe(409);
+    await expect(errorCode(response)).resolves.toBe('unverified');
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([]);
+    expect(media.rows.size).toBe(0);
+    expect(media.scheduleReads).toEqual([eventId]);
+  });
+
+  it.each([{ verified: true }, { role: 'photographer' }, { userId: PHOTOGRAPHER }])(
+    'refuses a Guest spoofing verification or exemption with %j',
+    async (spoof) => {
+      media.startAnswer = { outcome: 'unverified' };
+      const response = await send('POST', preflightPath(), 'token-guest', preflightBody(spoof));
+      expect(response.status).toBe(409);
+      await expect(errorCode(response)).resolves.toBe('unverified');
+      expect(media.starts[0]?.upload).toMatchObject({
+        userId: GUEST,
+        role: 'guest',
+        verifiedSubEventIds: [],
+      });
+      expect(media.rows.size).toBe(0);
+    },
+  );
+
+  it.each(NOT_MEMBERS)(
+    'refuses %s before reading the schedule or recording a check-in',
+    async (_case, token) => {
+      const response = await send(
+        'POST',
+        preflightPath(),
+        token,
+        preflightBody({ verifications: [reading()] }),
+      );
+      expect(response.status).toBe(403);
+      await expect(errorCode(response)).resolves.toBe('not_member');
+      expect(media.scheduleReads).toEqual([]);
+      expect(media.starts).toEqual([]);
+      expect(media.rows.size).toBe(0);
+    },
+  );
+
+  it('checks the album before reading the schedule', async () => {
+    await expect(
+      preflightUpload(
+        serviceDeps(),
+        GUEST,
+        eventId,
+        {
+          ...preflightBody(),
+          verifications: [reading()],
+        },
+        true,
+      ),
+    ).rejects.toMatchObject({ code: 'album_closed' });
+    expect(media.scheduleReads).toEqual([]);
+    expect(media.starts).toEqual([]);
+  });
+
+  it('passes only accepted sub-event ids to SQL, without coordinates or a reading time', async () => {
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({
+        verifications: [reading({ subEventId: subEventId.toUpperCase() }), reading()],
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(media.scheduleReads).toEqual([eventId]);
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([subEventId]);
+    const written = JSON.stringify(media.starts);
+    expect(written).not.toContain('accuracyM');
+    expect(written).not.toContain('recordedAt');
+    expect(logs).toEqual([]);
+  });
+
+  it('records Y while a photo in X still answers 409 unverified', async () => {
+    const y = { ...scheduled, id: randomUUID() };
+    media.schedules.get(eventId)!.push(y);
+    media.startAnswer = { outcome: 'unverified' };
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: [reading({ subEventId: y.id })] }),
+    );
+    expect(response.status).toBe(409);
+    await expect(errorCode(response)).resolves.toBe('unverified');
+    expect(media.starts[0]?.upload).toMatchObject({ subEventId, verifiedSubEventIds: [y.id] });
+    expect(media.rows.size).toBe(0);
+  });
+
+  it('judges both overlapping venues in one schedule read at the fix time', async () => {
+    const y = {
+      ...scheduled,
+      id: randomUUID(),
+      venue: { ...scheduled.venue, id: randomUUID(), lat: 1 },
+    };
+    media.schedules.get(eventId)!.push(y);
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: [reading(), reading({ subEventId: y.id, lat: 1 })] }),
+    );
+    expect(response.status).toBe(201);
+    expect(media.scheduleReads).toEqual([eventId]);
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([subEventId, y.id]);
+  });
+
+  it('keeps an earlier fix after a delay and refuses it after a schedule edit', async () => {
+    scheduled.endsAt = '2026-12-10T20:00:00.000Z';
+    const body = preflightBody({ verifications: [reading()] });
+    expect((await send('POST', preflightPath(), 'token-guest', body)).status).toBe(201);
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([subEventId]);
+    scheduled.startsAt = '2026-12-10T16:00:00.000Z';
+    media.startAnswer = { outcome: 'unverified' };
+    expect((await send('POST', preflightPath(), 'token-guest', body)).status).toBe(409);
+    expect(media.starts[1]?.upload.verifiedSubEventIds).toEqual([]);
+  });
+
+  it('answers 404 if the schedule disappeared after the membership check', async () => {
+    media.schedules.delete(eventId);
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: [reading()] }),
+    );
+    expect(response.status).toBe(404);
+    await expect(errorCode(response)).resolves.toBe('not_found');
+    expect(media.starts).toEqual([]);
+  });
+
+  it('does not read a schedule for an empty list', async () => {
+    expect(
+      (await send('POST', preflightPath(), 'token-admin', preflightBody({ verifications: [] })))
+        .status,
+    ).toBe(201);
+    expect(media.scheduleReads).toEqual([]);
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([]);
+  });
+
+  it('refuses a 16th reading before any schedule read or write', async () => {
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: Array.from({ length: 16 }, () => reading()) }),
+    );
+    expect(response.status).toBe(400);
+    expect(media.scheduleReads).toEqual([]);
+    expect(media.starts).toEqual([]);
   });
 });
 

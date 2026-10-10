@@ -52,6 +52,7 @@ const noSubEvents: SubEventStore = {
 
 // A media store that knows no rows and fails any write.
 const noMedia: MediaStore = {
+  verificationSchedule: () => Promise.resolve(null),
   statuses: () => Promise.reject(new Error('no media store in this test')),
   start: () => Promise.reject(new Error('no media store in this test')),
   findUpload: () => Promise.resolve(null),

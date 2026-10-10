@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 
+import { readingMatches } from '@momentlens/shared-types';
 import type {
   CompleteUploadResponse,
   MediaStatusRequest,
@@ -10,6 +11,7 @@ import type {
   MembershipRole,
   PreflightUploadRequest,
   PreflightUploadResponse,
+  SubEvent,
 } from '@momentlens/shared-types';
 
 import type { Supabase } from '../db/supabase';
@@ -18,6 +20,7 @@ import type { DeleteObject, ObjectSize, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
 import { requireActiveMember, requireMember } from './events';
 import type { EventStore } from './events';
+import { createSubEventStore } from './sub-events';
 
 // The most media rows an event holds that are not soft-deleted, unfinished ones included
 // (spec §4.17, D-95). start_upload counts against it under the event lock.
@@ -59,14 +62,25 @@ export interface NewUpload {
   capturedAt: string | null;
   uploadKey: string;
   uploadThumbKey: string;
+  // Only ids accepted by the API's schedule check. SQL stores no GPS data (D-155).
+  verifiedSubEventIds?: string[];
 }
 
 // What start_upload did (supabase/migrations/..._media_upload.sql). `created` inserted the row
 // offered; `resumed` found the caller's own unfinished row with this hash and returns its id and
-// keys, which are the ones to sign. A refusal wrote nothing.
+// keys, which are the ones to sign. A photo refusal can still record accepted check-ins (D-155).
 export type StartResult =
   | { outcome: 'created' | 'resumed'; mediaId: string; uploadKey: string; uploadThumbKey: string }
-  | { outcome: 'not_found' | 'sub_event_missing' | 'duplicate' | 'full' | 'too_many' };
+  | {
+      outcome:
+        | 'not_found'
+        | 'not_member'
+        | 'sub_event_missing'
+        | 'duplicate'
+        | 'unverified'
+        | 'full'
+        | 'too_many';
+    };
 
 // One media row as completion reads it, before any check.
 export interface UploadRecord {
@@ -90,6 +104,8 @@ export type CompleteResult =
 // Every read and write of media that upload makes. It checks nothing about who asks; the functions
 // below do, before each call.
 export interface MediaStore {
+  // The event-scoped schedule, read only when pre-flight carries verification records.
+  verificationSchedule(eventId: string): Promise<SubEvent[] | null>;
   statuses(eventId: string, userId: string, mediaIds: string[]): Promise<MediaStatusResponse>;
   start(upload: NewUpload, limits: UploadLimits): Promise<StartResult>;
   // Null when no row has this id, or the row was soft-deleted (D-122).
@@ -123,7 +139,15 @@ const StartRow = z.union([
     })),
   z
     .object({
-      outcome: z.enum(['not_found', 'sub_event_missing', 'duplicate', 'full', 'too_many']),
+      outcome: z.enum([
+        'not_found',
+        'not_member',
+        'sub_event_missing',
+        'duplicate',
+        'unverified',
+        'full',
+        'too_many',
+      ]),
       media_id: z.null(),
       upload_key: z.null(),
       upload_thumb_key: z.null(),
@@ -183,6 +207,7 @@ export function startUploadParams(upload: NewUpload, limits: UploadLimits) {
     p_upload_thumb_key: upload.uploadThumbKey,
     p_max_media: limits.maxMedia,
     p_max_unfinished: limits.maxUnfinished,
+    p_verified_sub_event_ids: upload.verifiedSubEventIds ?? [],
   };
 }
 
@@ -206,7 +231,9 @@ async function callOne<T extends z.ZodType>(
 }
 
 export function createMediaStore(supabase: Supabase): MediaStore {
+  const subEvents = createSubEventStore(supabase);
   return {
+    verificationSchedule: (eventId) => subEvents.schedule(eventId),
     async statuses(eventId, userId, mediaIds) {
       const { data, error } = await supabase
         .from('media')
@@ -277,9 +304,9 @@ export async function mediaStatus(
 
 // POST /events/{eventId}/media/preflight, for every active role alike (D-58). `created` is false
 // for a resume. The event comes from the path and the role from the membership, never the body.
-// start_upload decides the sub-event, the resume, the duplicate, the cap and the caller's limit on
-// unfinished rows under the event lock, in that order, and the API makes no lookups of its own
-// first (arch §4, D-122). S-15 adds the verification check between the duplicate and the cap.
+// The API judges readings with one schedule read after access and album checks (D-155).
+// start_upload records accepted check-ins, then checks the photo's sub-event, resume, duplicate,
+// verification and limits under the event lock (arch §4.1, D-122).
 export async function preflightUpload(
   deps: MediaDeps,
   userId: string,
@@ -290,6 +317,21 @@ export async function preflightUpload(
   const { role, albumOpen } = await requireActiveMember(deps.events, eventId, userId);
   if (albumCheck && !albumOpen) {
     throw new ApiError('album_closed', "The event's album is closed");
+  }
+
+  const verifiedSubEventIds = new Set<string>();
+  if (request.verifications?.length) {
+    const schedule = await deps.media.verificationSchedule(eventId);
+    if (schedule === null) {
+      throw new ApiError('not_found', 'No such event');
+    }
+    const subEvents = new Map(schedule.map((subEvent) => [subEvent.id.toLowerCase(), subEvent]));
+    for (const record of request.verifications) {
+      const subEvent = subEvents.get(record.subEventId.toLowerCase());
+      if (subEvent !== undefined && readingMatches(record, subEvent)) {
+        verifiedSubEventIds.add(subEvent.id.toLowerCase());
+      }
+    }
   }
 
   const mediaId = randomUUID();
@@ -305,6 +347,7 @@ export async function preflightUpload(
       capturedAt: request.capturedAt ?? null,
       uploadKey: keys.photo,
       uploadThumbKey: keys.thumbnail,
+      verifiedSubEventIds: [...verifiedSubEventIds],
     },
     UPLOAD_LIMITS,
   );
@@ -326,11 +369,16 @@ export async function preflightUpload(
     case 'not_found':
       // Soft-deleted after the check.
       throw new ApiError('not_found', 'No such event');
+    case 'not_member':
+      // Membership changed while start_upload waited for the event lock.
+      throw new ApiError('not_member', 'Not an active member of this event');
     case 'sub_event_missing':
       throw new ApiError('sub_event_missing', 'No such sub-event in this event');
     case 'duplicate':
       // A finished photo in this event, deleted or not, has these bytes (D-96).
       throw new ApiError('duplicate', 'This photo is already in the event');
+    case 'unverified':
+      throw new ApiError('unverified', 'Not checked in for this sub-event');
     case 'full':
       throw new ApiError('event_full', `The event holds ${MAX_EVENT_MEDIA} photos`);
     case 'too_many':
