@@ -64,7 +64,6 @@
         "expo-image-picker",
         {
           "photosPermission": "MomentLens adds photos you pick from your gallery to the event.",
-          "cameraPermission": false,
           "microphonePermission": false
         }
       ],
