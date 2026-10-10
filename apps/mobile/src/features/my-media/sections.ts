@@ -112,6 +112,17 @@ export function canDeleteLocally(item: MyMediaItem, removed: boolean): boolean {
   if (item.state === 'uploading' || item.state === 'local_only') return false;
   return removed || (item.state !== 'uploaded' && item.state !== 'published');
 }
+// What the delete dialog says the phone's copy leaves behind. A draft that never reached the
+// gallery, or whose save did not finish, may have no other copy.
+export function deleteWarning(item: MyMediaItem): string {
+  if (item.state === 'capture_draft') {
+    if (item.galleryState === 'pending' || item.galleryState === 'failed')
+      return 'This photo is not in your gallery yet. Deleting removes the only copy.';
+    if (item.galleryState === 'uncertain')
+      return 'A gallery save did not finish, so a copy may or may not be in your gallery. Deleting removes the copy on this phone.';
+  }
+  return 'This removes the local copy. The photo in your gallery stays.';
+}
 export type MediaListItem =
   | { type: 'top'; key: 'top' }
   | { type: 'notice'; key: 'notice' }

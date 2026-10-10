@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   canDeleteLocally,
+  deleteWarning,
   mediaRows,
   mediaSections,
   tileStatus,
@@ -85,5 +86,18 @@ describe('My Media sections', () => {
     expect(rows.map((row) => row.type)).toEqual(['top', 'header', 'photos', 'header', 'empty']);
     expect(mediaRows(null).map((row) => row.type)).toEqual(['top', 'notice']);
     expect(mediaRows([]).map((row) => row.type)).toEqual(['top', 'notice']);
+  });
+  it('says what the delete leaves behind for each gallery state', () => {
+    const draft = (galleryState: CaptureDraft['galleryState']) =>
+      ({ ...item('live'), state: 'capture_draft', galleryState }) as CaptureDraft;
+    const onlyCopy = 'This photo is not in your gallery yet. Deleting removes the only copy.';
+    const stays = 'This removes the local copy. The photo in your gallery stays.';
+    expect(deleteWarning(draft('pending'))).toBe(onlyCopy);
+    expect(deleteWarning(draft('failed'))).toBe(onlyCopy);
+    expect(deleteWarning(draft('uncertain'))).toBe(
+      'A gallery save did not finish, so a copy may or may not be in your gallery. Deleting removes the copy on this phone.',
+    );
+    expect(deleteWarning(draft('saved'))).toBe(stays);
+    expect(deleteWarning(item('live'))).toBe(stays);
   });
 });

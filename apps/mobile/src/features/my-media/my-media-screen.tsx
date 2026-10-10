@@ -26,7 +26,13 @@ import { useAuthStore } from '@/stores/auth';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
 import { QueueBanner } from './queue-banner';
-import { mediaRows, mediaSections, type MediaListItem, type MyMediaItem } from './sections';
+import {
+  deleteWarning,
+  mediaRows,
+  mediaSections,
+  type MediaListItem,
+  type MyMediaItem,
+} from './sections';
 import { CameraHint } from './camera-entry';
 import { useMediaStatus } from './use-media-status';
 
@@ -165,25 +171,21 @@ function MediaContent({ eventId }: { eventId: string }) {
     );
   }
   function confirmDelete(item: MyMediaItem) {
-    Alert.alert(
-      'Delete this photo from this phone?',
-      'This removes the local copy. The photo in your gallery stays.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            if (useAuthStore.getState().userId !== item.userId) return;
-            const deleted =
-              item.state === 'capture_draft'
-                ? getCaptures().then((store) => store.remove(item.userId, item.id))
-                : remove(item.userId, item.id);
-            void deleted.catch(() => setProblem('This photo could not be deleted. Try again.'));
-          },
+    Alert.alert('Delete this photo from this phone?', deleteWarning(item), [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => {
+          if (useAuthStore.getState().userId !== item.userId) return;
+          const deleted =
+            item.state === 'capture_draft'
+              ? getCaptures().then((store) => store.remove(item.userId, item.id))
+              : remove(item.userId, item.id);
+          void deleted.catch(() => setProblem('This photo could not be deleted. Try again.'));
         },
-      ],
-    );
+      },
+    ]);
   }
   const emptyNotice = (
     <View className="items-center gap-3 px-8 py-12">
