@@ -5,6 +5,7 @@ import { AppState, Platform, type AppStateStatus } from 'react-native';
 import type { CameraViewProps } from 'expo-camera';
 import type { ViewfinderProps } from '@/features/capture/viewfinder';
 import { ViewfinderScreen } from '@/features/capture/viewfinder-screen';
+import { discardCameraPhoto } from '@/features/capture/runtime';
 
 interface TestTree {
   root: {
@@ -96,6 +97,7 @@ jest.mock('@/features/capture/runtime', () => ({
   hasLocalNotice: () => true,
   readStartingMode: () => 'public',
   rememberLocalNotice: jest.fn(),
+  discardCameraPhoto: jest.fn(),
   getCaptures: async () => ({ thumbnailUri: async () => null }),
   captureController: (take: () => Promise<string>) =>
     new (jest.requireActual<typeof import('@/features/capture/capture')>(
@@ -149,6 +151,7 @@ beforeEach(() => {
   mounts = 0;
   mockTake.mockClear();
   mockSizes.mockClear();
+  jest.mocked(discardCameraPhoto).mockClear();
   mockPermission.mockReset().mockResolvedValue(true);
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
     changeState = listener;
@@ -192,6 +195,9 @@ describe('native viewfinder lifecycle', () => {
     await flush(() => viewfinder().props.onShutter());
     expect(mockTake).toHaveBeenCalledTimes(2);
     expect(problem()).toContain('does not match its preview bounds (3264x2448)');
+    // The matching shot keeps its file for a draft. The mismatched one is removed before the error.
+    expect(discardCameraPhoto).toHaveBeenCalledTimes(1);
+    expect(discardCameraPhoto).toHaveBeenCalledWith('file:///selfie.jpg');
   });
 
   it('waits for the resumed camera after the gallery permission prompt', async () => {
