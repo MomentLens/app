@@ -31,6 +31,7 @@ import { queryClient } from '@/lib/query-client';
 import { useNow } from '@/hooks/use-now';
 import { useAuthStore } from '@/stores/auth';
 import { admitShot, fitPreview, nativePictureSize, type CaptureMode } from './context';
+import { CameraReadiness } from './camera-readiness';
 import { useCaptureMode } from './mode-store';
 import {
   captureController,
@@ -64,6 +65,7 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   const camera = useRef<CameraView>(null);
   const [facing, setFacing] = useState<'back' | 'front'>('back');
   const [size, setSize] = useState<string | null>(null);
+  const currentSize = useRef<string | null>(null);
   const [bounds, setBounds] = useState({ width: 0, height: 0 });
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,7 +76,24 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   const mode = useCaptureMode((state) => state.mode);
   const mounted = useRef(true);
   const shooting = useRef(false);
+  const focusedRef = useRef(false);
+  const readiness = useRef(new CameraReadiness());
   const cameraGeneration = useRef(0);
+  const preparing = useRef<number | null>(null);
+  const markReady = useCallback((value: boolean) => {
+    readiness.current.setReady(value);
+    setReady(value);
+  }, []);
+  const bindCamera = useCallback(
+    (view: CameraView | null) => {
+      camera.current = view;
+      if (!view) {
+        cameraGeneration.current++;
+        markReady(false);
+      }
+    },
+    [markReady],
+  );
   const lastCaptureSubEvent = useRef<string | null>(null);
   const close = useCallback(() => {
     router.dismissTo({
@@ -87,24 +106,33 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   }, [router, eventId, live?.id]);
   useFocusEffect(
     useCallback(() => {
+      focusedRef.current = true;
       setFocused(true);
-      return () => setFocused(false);
+      return () => {
+        focusedRef.current = false;
+        cameraGeneration.current++;
+        readiness.current.cancel();
+        setReady(false);
+        setFocused(false);
+      };
     }, []),
   );
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       setActive(state === 'active');
       if (state !== 'active') {
-        setReady(false);
+        markReady(false);
         cameraGeneration.current++;
       }
     });
     return () => subscription.remove();
-  }, []);
+  }, [markReady]);
   useEffect(() => {
+    const gate = readiness.current;
     mounted.current = true;
     return () => {
       mounted.current = false;
+      gate.cancel();
     };
   }, []);
 
@@ -154,16 +182,33 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
       close();
   }, [owner, accessible, schedule.data, schedule.error, event.error, live, busy, close]);
 
-  const currentSize = useRef(size);
   useEffect(() => {
-    currentSize.current = size;
-  }, [size]);
+    if (!permission?.granted || !accessible || !schedule.data) {
+      cameraGeneration.current++;
+      readiness.current.cancel();
+    }
+  }, [permission?.granted, accessible, schedule.data]);
   const controller = useRef<ReturnType<typeof captureController> | null>(null);
   useEffect(() => {
     controller.current = captureController(async () => {
-      const photo = await camera.current?.takePictureAsync({ quality: 1, exif: true });
+      if (!mounted.current || !focusedRef.current)
+        throw new Error('The camera closed before it could take the photo.');
+      // Gallery permission can pause the camera after the shutter admits this shot.
+      await readiness.current.wait();
+      const selectedCamera = camera.current;
+      const selectedSize = currentSize.current;
+      if (
+        !mounted.current ||
+        !focusedRef.current ||
+        !readiness.current.isReady() ||
+        !selectedCamera ||
+        !selectedSize ||
+        useAuthStore.getState().userId !== owner
+      )
+        throw new Error('The camera is no longer ready to take this photo.');
+      const photo = await selectedCamera.takePictureAsync({ quality: 1, exif: true });
       if (!photo) throw new Error('The camera could not take the photo.');
-      const [w, h] = currentSize.current!.split('x').map(Number);
+      const [w, h] = selectedSize.split('x').map(Number);
       const ratio = Math.min(photo.width, photo.height) / Math.max(photo.width, photo.height);
       const expected = Math.min(w!, h!) / Math.max(w!, h!);
       if (Math.abs(ratio - expected) > 0.005)
@@ -172,9 +217,16 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
         );
       return photo.uri;
     });
-  }, []);
+  }, [owner]);
   async function shutter() {
-    if (shooting.current || !ready || !focused || !active || !controller.current) return;
+    if (
+      shooting.current ||
+      !readiness.current.isReady() ||
+      !focused ||
+      !active ||
+      !controller.current
+    )
+      return;
     if (useAuthStore.getState().userId !== owner) return;
     // Re-read account and schedule for admission. The controller retains this shot's context.
     const scheduleKey = subEventsQueryKey(eventId);
@@ -234,21 +286,34 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
   async function cameraReady() {
     const selected = facing;
     const generation = cameraGeneration.current;
+    const selectedCamera = camera.current;
+    if (!selectedCamera || !focusedRef.current || preparing.current === generation) return;
+    preparing.current = generation;
     try {
       const native =
         Platform.OS === 'ios'
           ? await cameraStillSize(selected === 'front')
-          : (size ?? nativePictureSize(await camera.current!.getAvailablePictureSizesAsync()));
-      if (!mounted.current || generation !== cameraGeneration.current) return;
+          : (size ?? nativePictureSize(await selectedCamera.getAvailablePictureSizesAsync()));
+      if (
+        !mounted.current ||
+        generation !== cameraGeneration.current ||
+        selectedCamera !== camera.current
+      )
+        return;
       if (!native) throw new Error('The camera did not report its photo dimensions.');
+      currentSize.current = native;
       setSize(native);
-      // Android remounts once with the selected output size before enabling the shutter.
-      if (Platform.OS === 'ios' || size) setReady(true);
+      // Android binds the chosen output on this same native view, then reports readiness again.
+      if (Platform.OS === 'ios' || size) markReady(true);
+      setProblem(undefined);
     } catch {
-      if (mounted.current)
-        setProblem(
-          'The camera could not prepare its native framing. Rebuild the app and try again.',
-        );
+      if (mounted.current && generation === cameraGeneration.current) {
+        markReady(false);
+        readiness.current.cancel();
+        setProblem('The camera could not prepare its photo size. Close it and try again.');
+      }
+    } finally {
+      if (preparing.current === generation) preparing.current = null;
     }
   }
   const swipe = Gesture.Pan()
@@ -277,8 +342,7 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
         <GestureDetector gesture={swipe}>
           <View style={frame}>
             <CameraView
-              key={`${facing}/${Platform.OS === 'android' ? (size ?? '') : ''}`}
-              ref={camera}
+              ref={bindCamera}
               style={{ width: '100%', height: '100%', opacity: size ? 1 : 0 }}
               facing={facing}
               mode="picture"
@@ -288,7 +352,9 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
               autofocus="on"
               onCameraReady={() => void cameraReady()}
               onMountError={() => {
-                setReady(false);
+                cameraGeneration.current++;
+                markReady(false);
+                readiness.current.cancel();
                 setProblem('The camera could not start. Close it and try again.');
               }}
             />
@@ -358,16 +424,17 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
         mode={mode}
         photos={photos}
         busy={busy}
-        ready={ready && accessible && Boolean(live)}
+        ready={ready && focused && active && accessible && Boolean(live)}
         top={insets.top}
         bottom={insets.bottom}
         onClose={close}
         onShutter={() => void shutter()}
         onMode={setMode}
         onFlip={() => {
-          if (shooting.current) return;
+          if (shooting.current || !readiness.current.isReady()) return;
           cameraGeneration.current++;
-          setReady(false);
+          markReady(false);
+          currentSize.current = null;
           setSize(null);
           setFacing((value) => (value === 'back' ? 'front' : 'back'));
         }}
