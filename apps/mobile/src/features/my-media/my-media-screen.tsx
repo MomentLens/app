@@ -1,6 +1,7 @@
 import { currentSubEvent, type SubEvent } from '@momentlens/shared-types';
-import { FlashList } from '@shopify/flash-list';
-import { useCallback, useMemo, useState } from 'react';
+import { FlashList, type FlashListRef } from '@shopify/flash-list';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Platform, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { AnchoredMenu, type MenuAnchor } from '@/components/ui/anchored-menu';
@@ -36,6 +37,9 @@ export function MyMediaScreen() {
   return <MediaContent key={`${eventId}/${userId}`} eventId={eventId} />;
 }
 function MediaContent({ eventId }: { eventId: string }) {
+  const router = useRouter();
+  const { captureSubEventId } = useLocalSearchParams<{ captureSubEventId?: string }>();
+  const list = useRef<FlashListRef<MediaListItem>>(null);
   const background = useTokenColor('background');
   const schedule = useSubEvents(eventId);
   const subEvents = schedule.data?.subEvents ?? EMPTY_SCHEDULE;
@@ -67,6 +71,23 @@ function MediaContent({ eventId }: { eventId: string }) {
   const [picking, setPicking] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
   const [problem, setProblem] = useState<string>();
+  const showCaptureSection = useCallback(() => {
+    if (!captureSubEventId || !list.current) return;
+    const index = items.findIndex(
+      (item) => item.type === 'header' && item.section.key === captureSubEventId,
+    );
+    if (index < 0) return;
+    void list.current
+      .scrollToIndex({ index, animated: false })
+      .then(() => router.setParams({ captureSubEventId: undefined }))
+      .catch(() => undefined);
+  }, [captureSubEventId, items, router]);
+  useFocusEffect(
+    useCallback(() => {
+      const frame = requestAnimationFrame(showCaptureSection);
+      return () => cancelAnimationFrame(frame);
+    }, [showCaptureSection]),
+  );
   const [menu, setMenu] = useState<{ anchor: MenuAnchor; item: MyMediaItem } | null>(null);
   // A cached schedule draws the sections offline, where adding to the queue matters most. Only
   // having no schedule at all is a load failure.
@@ -180,6 +201,8 @@ function MediaContent({ eventId }: { eventId: string }) {
       }
       renderList={({ scroll, header }) => (
         <AnimatedList
+          ref={list}
+          onLoad={showCaptureSection}
           {...scroll}
           data={items}
           keyExtractor={(item) => item.key}
