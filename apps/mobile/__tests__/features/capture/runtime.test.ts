@@ -9,7 +9,7 @@ import {
   type CaptureDraft,
   type CaptureFiles,
 } from '@/features/capture/capture-store';
-import { retryCapture, useCaptureDrafts } from '@/features/capture/runtime';
+import { discardCameraPhoto, retryCapture, useCaptureDrafts } from '@/features/capture/runtime';
 import { QueueStore, type QueueDatabase, type QueueFiles } from '@/features/upload-queue/store';
 import { useAuthStore } from '@/stores/auth';
 
@@ -57,12 +57,20 @@ const files: CaptureFiles = {
 const mockGallerySave = jest.fn(async (_uri: string) => undefined);
 const mockGetQueue = jest.fn(async () => store);
 
+const mockDelete = jest.fn((_uri: string) => undefined);
+
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'unused' }));
 jest.mock('expo-file-system', () => ({
   File: class {
-    exists = false;
+    uri: string;
+    constructor(uri: string) {
+      this.uri = uri;
+    }
+    get exists() {
+      return true;
+    }
     delete() {
-      return undefined;
+      return mockDelete(this.uri);
     }
   },
 }));
@@ -151,6 +159,16 @@ describe('retrying a Public draft', () => {
       'The gallery save did not finish. The photo stays on this phone.',
     );
     expect(galleryState()).toEqual({ galleryState: 'failed' });
+  });
+});
+
+describe('discarding a camera file', () => {
+  it('removes the file and ignores a delete that fails', () => {
+    mockDelete.mockImplementationOnce(() => {
+      throw new Error('The file is in use');
+    });
+    expect(() => discardCameraPhoto('file:///camera.jpg')).not.toThrow();
+    expect(mockDelete).toHaveBeenCalledWith('file:///camera.jpg');
   });
 });
 
