@@ -13,7 +13,8 @@ import { formatDay } from '@/features/events/format';
 import { nextStatusChange, romanNumeral } from '@/features/schedule/schedule';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { enqueue, remove } from '@/features/upload-queue/queue';
-import type { QueueItem } from '@/features/upload-queue/types';
+import { getCaptures, retryCapture, useCaptureDrafts } from '@/features/capture/runtime';
+import type { CaptureDraft } from '@/features/capture/capture-store';
 import { useQueue } from '@/features/upload-queue/use-queue';
 import { useNow } from '@/hooks/use-now';
 import { useTokenColor } from '@/hooks/use-token-color';
@@ -21,7 +22,8 @@ import { useAuthStore } from '@/stores/auth';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
 import { QueueBanner } from './queue-banner';
-import { mediaListItems, mediaSections, type MediaListItem } from './sections';
+import { mediaListItems, mediaSections, type MediaListItem, type MyMediaItem } from './sections';
+import { CameraEntry } from './camera-entry';
 import { useMediaStatus } from './use-media-status';
 
 const IOS = Platform.OS === 'ios';
@@ -40,10 +42,19 @@ function MediaContent({ eventId }: { eventId: string }) {
   const nextChange = useCallback((at: Date) => nextStatusChange(subEvents, at), [subEvents]);
   const now = useNow(nextChange);
   const queue = useQueue(eventId);
+  const captures = useCaptureDrafts(queue.userId, eventId);
   const status = useMediaStatus(queue.userId, eventId);
   const sections = useMemo(
-    () => mediaSections(subEvents, queue.items, now),
-    [subEvents, queue.items, now],
+    () =>
+      mediaSections(
+        subEvents,
+        [
+          ...queue.items,
+          ...captures.drafts.filter((draft) => !queue.items.some((item) => item.id === draft.id)),
+        ].sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id)),
+        now,
+      ),
+    [subEvents, queue.items, captures.drafts, now],
   );
   const items = useMemo(
     () => (schedule.data ? mediaListItems(sections) : []),
@@ -56,12 +67,12 @@ function MediaContent({ eventId }: { eventId: string }) {
   const [picking, setPicking] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
   const [problem, setProblem] = useState<string>();
-  const [menu, setMenu] = useState<{ anchor: MenuAnchor; item: QueueItem } | null>(null);
+  const [menu, setMenu] = useState<{ anchor: MenuAnchor; item: MyMediaItem } | null>(null);
   // A cached schedule draws the sections offline, where adding to the queue matters most. Only
   // having no schedule at all is a load failure.
   const scheduleMissing = !schedule.data && schedule.isError;
   const live = currentSubEvent(subEvents, now);
-  const subtitle = `${live ? `${live.name} is live · ` : ''}${queue.items.length} of yours`;
+  const subtitle = `${live ? `${live.name} is live · ` : ''}${queue.items.length + captures.drafts.length} of yours`;
 
   async function add(subEventId: string) {
     const owner = queue.userId;
@@ -91,7 +102,31 @@ function MediaContent({ eventId }: { eventId: string }) {
       setPicking(null);
     }
   }
-  function confirmDelete(item: QueueItem) {
+  function retry(draft: CaptureDraft) {
+    const proceed = () => {
+      void retryCapture(draft).catch((error: unknown) => {
+        if (useAuthStore.getState().userId === draft.userId)
+          setProblem(
+            error instanceof Error
+              ? error.message
+              : 'The gallery save could not finish. Try again.',
+          );
+      });
+    };
+    Alert.alert(
+      draft.galleryState === 'saved' ? 'Queue this photo?' : 'Retry the gallery save?',
+      draft.galleryState === 'uncertain' || draft.galleryState === 'failed'
+        ? 'The last save did not finish. This photo may already be in your gallery. Retrying may create another gallery copy. Upload starts only after the save succeeds.'
+        : draft.galleryState === 'saved'
+          ? 'The original is already in your gallery. This retries adding the photo to the upload queue.'
+          : 'MomentLens saves the original to your gallery before uploading. The photo stays on this phone if the save fails.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Retry', onPress: proceed },
+      ],
+    );
+  }
+  function confirmDelete(item: MyMediaItem) {
     Alert.alert(
       'Delete this photo from this phone?',
       'This removes the local copy. The photo in your gallery stays.',
@@ -102,9 +137,11 @@ function MediaContent({ eventId }: { eventId: string }) {
           style: 'destructive',
           onPress: () => {
             if (useAuthStore.getState().userId !== item.userId) return;
-            void remove(item.userId, item.id).catch(() =>
-              setProblem('This photo could not be deleted. Try again.'),
-            );
+            const deleted =
+              item.state === 'capture_draft'
+                ? getCaptures().then((store) => store.remove(item.userId, item.id))
+                : remove(item.userId, item.id);
+            void deleted.catch(() => setProblem('This photo could not be deleted. Try again.'));
           },
         },
       ],
@@ -120,23 +157,26 @@ function MediaContent({ eventId }: { eventId: string }) {
   return (
     <EventTabScreen
       overlay={
-        <AnchoredMenu
-          anchor={menu?.anchor ?? null}
-          onClose={() => setMenu(null)}
-          items={
-            menu
-              ? [
-                  {
-                    key: 'delete',
-                    label: 'Delete',
-                    glyph: GLYPH.trash,
-                    destructive: true,
-                    onPress: () => confirmDelete(menu.item),
-                  },
-                ]
-              : []
-          }
-        />
+        <>
+          <AnchoredMenu
+            anchor={menu?.anchor ?? null}
+            onClose={() => setMenu(null)}
+            items={
+              menu
+                ? [
+                    {
+                      key: 'delete',
+                      label: 'Delete',
+                      glyph: GLYPH.trash,
+                      destructive: true,
+                      onPress: () => confirmDelete(menu.item),
+                    },
+                  ]
+                : []
+            }
+          />
+          {schedule.data ? <CameraEntry eventId={eventId} schedule={subEvents} now={now} /> : null}
+        </>
       }
       renderList={({ scroll, header }) => (
         <AnimatedList
@@ -158,7 +198,10 @@ function MediaContent({ eventId }: { eventId: string }) {
                 </Text>
               </View>
               <QueueBanner counts={queue.counts} />
-              {problem || queue.error || status.error || schedule.isError ? (
+              {schedule.data ? (
+                <CameraEntry eventId={eventId} schedule={subEvents} now={now} line />
+              ) : null}
+              {problem || queue.error || captures.error || status.error || schedule.isError ? (
                 <View className="px-5 pb-3">
                   <FormMessage
                     message={
@@ -236,6 +279,9 @@ function MediaContent({ eventId }: { eventId: string }) {
                     removed={item.removed}
                     onDelete={() => confirmDelete(photo)}
                     onMenu={(anchor) => setMenu({ anchor, item: photo })}
+                    onRetry={() => {
+                      if (photo.state === 'capture_draft') retry(photo);
+                    }}
                   />
                 ))}
                 {Array.from({ length: 3 - item.items.length }, (_, i) => (
