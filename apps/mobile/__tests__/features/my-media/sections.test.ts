@@ -1,5 +1,10 @@
 import { describe, expect, it } from '@jest/globals';
-import { canDeleteLocally, mediaSections, tileStatus } from '@/features/my-media/sections';
+import {
+  canDeleteLocally,
+  mediaRows,
+  mediaSections,
+  tileStatus,
+} from '@/features/my-media/sections';
 import type { QueueItem } from '@/features/upload-queue/types';
 import type { CaptureDraft } from '@/features/capture/capture-store';
 
@@ -74,5 +79,11 @@ describe('My Media sections', () => {
     });
     expect(tileStatus({ ...item('live'), state: 'uploaded' }).kind).toBe('spinner');
     expect(tileStatus({ ...item('live'), state: 'published' }).kind).toBe('check');
+  });
+  it('starts the list with its own top row so no section header sits at the list origin', () => {
+    const rows = mediaRows(mediaSections(schedule, [item('live')], now));
+    expect(rows.map((row) => row.type)).toEqual(['top', 'header', 'photos', 'header', 'empty']);
+    expect(mediaRows(null).map((row) => row.type)).toEqual(['top', 'notice']);
+    expect(mediaRows([]).map((row) => row.type)).toEqual(['top', 'notice']);
   });
 });

@@ -35,6 +35,7 @@ Three more traps from training data. **RN 0.86 runs the New Architecture only**;
 - **FlashList v2, never FlatList.** An album can hit the 2,000-photo cap (spec §4.17). Paginate the TanStack Query behind it too.
 - v2 breaking changes: no `estimatedItemSize`, no `MasonryFlashList` (a `masonry` prop now), `FlashListRef<T>` for refs, New Architecture only.
 - **Sections are flattened into one array**, not `SectionList`. Mark headers with a `type` field, use `getItemType` to keep recycling pools clean, pass `stickyHeaderIndices`.
+- **With sticky headers, put the list's own header in `data` as its first row**, never in `ListHeaderComponent`, and jump to a section with `scrollToOffset`, never `scrollToIndex`. FlashList 2.3 measures sticky positions from its first row and assumes that row starts at the top until a scroll event says otherwise, and `scrollToIndex` records its target even when the list is too short to reach it. Either way a section header sticks while it is still on screen, and shows twice (`features/my-media/sections.ts`).
 - Grid renders 300px thumbnails **center-cropped to square** on purpose: uniform heights mean the list computes content height without measuring.
 - **The album query filters on `processed_at IS NOT NULL`** (root invariant 1). An unprocessed photo appears only in the uploader's My Media, with a spinner.
 
