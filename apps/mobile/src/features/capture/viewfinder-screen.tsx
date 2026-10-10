@@ -30,7 +30,13 @@ import { subEventsQueryKey, useSubEvents } from '@/features/schedule/use-sub-eve
 import { queryClient } from '@/lib/query-client';
 import { useNow } from '@/hooks/use-now';
 import { useAuthStore } from '@/stores/auth';
-import { admitShot, fitPreview, nativePictureSize, type CaptureMode } from './context';
+import {
+  admitShot,
+  fitPreview,
+  matchesShape,
+  nativePictureSize,
+  type CaptureMode,
+} from './context';
 import { CameraReadiness } from './camera-readiness';
 import { useCaptureMode } from './mode-store';
 import {
@@ -208,12 +214,9 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
         throw new Error('The camera is no longer ready to take this photo.');
       const photo = await selectedCamera.takePictureAsync({ quality: 1, exif: true });
       if (!photo) throw new Error('The camera could not take the photo.');
-      const [w, h] = selectedSize.split('x').map(Number);
-      const ratio = Math.min(photo.width, photo.height) / Math.max(photo.width, photo.height);
-      const expected = Math.min(w!, h!) / Math.max(w!, h!);
-      if (Math.abs(ratio - expected) > 0.005)
+      if (!matchesShape(selectedSize, photo.width, photo.height))
         throw new Error(
-          'This camera output does not match its preview bounds. Please report this phone model.',
+          `This camera output (${photo.width}x${photo.height}) does not match its preview bounds (${selectedSize}). Please report these dimensions.`,
         );
       return photo.uri;
     });
@@ -347,6 +350,8 @@ function CameraSession({ owner, eventId }: { owner: string | null; eventId: stri
               facing={facing}
               mode="picture"
               pictureSize={Platform.OS === 'ios' ? 'Photo' : (size ?? undefined)}
+              // Android applies ratio alongside pictureSize, despite the prop docs.
+              ratio={Platform.OS === 'android' ? '4:3' : undefined}
               mirror={false}
               flash="off"
               autofocus="on"

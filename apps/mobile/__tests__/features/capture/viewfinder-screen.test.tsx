@@ -10,6 +10,9 @@ interface TestTree {
   root: {
     findByType(type: 'Viewfinder'): { props: ViewfinderProps };
     findByType(type: 'Camera'): { props: CameraViewProps };
+    findAll(match: (node: { props: Record<string, unknown> }) => boolean): {
+      props: Record<string, unknown>;
+    }[];
   };
   unmount(): void;
 }
@@ -117,6 +120,8 @@ let changeState: (state: AppStateStatus) => void;
 let mounts: number;
 const viewfinder = () => tree.root.findByType('Viewfinder');
 const camera = () => tree.root.findByType('Camera');
+const problem = () =>
+  tree.root.findAll((node) => node.props.accessibilityLiveRegion === 'polite')[0]?.props.children;
 async function flush(action: () => void = () => {}) {
   await renderer.act(async () => {
     action();
@@ -169,6 +174,24 @@ describe('native viewfinder lifecycle', () => {
     expect(camera().props.pictureSize).toBe('3000x2000');
     expect(mockSizes).toHaveBeenCalledTimes(2);
     expect(viewfinder().props.ready).toBe(true);
+  });
+
+  it('shoots the front camera at the 4:3 size CameraX binds and refuses another shape', async () => {
+    await open();
+    mockSizes.mockResolvedValueOnce(['1920x1080', '3440x2448', '3264x2448']);
+    await flush(() => viewfinder().props.onFlip());
+    await flush(() => camera().props.onCameraReady!());
+    await flush(() => camera().props.onCameraReady!());
+    expect(camera().props.pictureSize).toBe('3264x2448');
+    expect(camera().props.ratio).toBe('4:3');
+    mockTake.mockResolvedValueOnce({ uri: 'file:///selfie.jpg', width: 3264, height: 2448 });
+    await flush(() => viewfinder().props.onShutter());
+    expect(mockTake).toHaveBeenCalledTimes(1);
+    expect(problem()).toBeUndefined();
+    mockTake.mockResolvedValueOnce({ uri: 'file:///selfie.jpg', width: 3440, height: 2448 });
+    await flush(() => viewfinder().props.onShutter());
+    expect(mockTake).toHaveBeenCalledTimes(2);
+    expect(problem()).toContain('does not match its preview bounds (3264x2448)');
   });
 
   it('waits for the resumed camera after the gallery permission prompt', async () => {
