@@ -15,6 +15,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useTokenColor } from '@/hooks/use-token-color';
 
+// The flip glyph, which both platforms' Viewfinders draw.
+export const FLIP = {
+  ios: 'arrow.triangle.2.circlepath.camera',
+  android: 'flip_camera_android',
+} as const;
 // Shared by both platforms' Viewfinders. They live apart from viewfinder.tsx because on iOS
 // './viewfinder' resolves to viewfinder.ios.tsx.
 // The fitted preview sits under the top bar, as both system cameras place a 4:3 frame, and the
