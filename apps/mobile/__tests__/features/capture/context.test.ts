@@ -40,4 +40,13 @@ describe('shutter context', () => {
     expect(nativePictureSize(['High', 'Medium', 'Low'])).toBeNull();
     expect(fitPreview('4000x3000', 390, 450)).toEqual({ width: 337.5, height: 450 });
   });
+  it('requests the 4:3 output CameraX binds, not a larger sensor-shaped one', () => {
+    // A Pixel front camera lists its 3440x2448 sensor, but CameraX binds 3264x2448.
+    expect(nativePictureSize(['1920x1080', '3264x2448', '3440x2448', '3264x1836'])).toBe(
+      '3264x2448',
+    );
+    // CameraX counts the back camera's 4080x3072 as 4:3.
+    expect(nativePictureSize(['4080x3072', '4000x2250', '1920x1440'])).toBe('4080x3072');
+    expect(nativePictureSize(['3000x2000', '1920x1080'])).toBe('3000x2000');
+  });
 });
