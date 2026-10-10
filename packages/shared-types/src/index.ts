@@ -15,3 +15,4 @@ export * from './join-request';
 export * from './media';
 export * from './profile';
 export * from './sub-event';
+export * from './verification';

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { MembershipRole, Timestamp } from './event';
 import { PresignedImage } from './image';
 import { FullName } from './profile';
+import { VerificationRecords } from './verification';
 
 /**
  * A photo's content hash: SHA-256 over the exact bytes the phone uploads, after the EXIF strip and
@@ -21,13 +22,16 @@ export type ContentHash = z.infer<typeof ContentHash>;
  * - `capturedAt` is the photo's EXIF capture time in UTC. The phone converts an EXIF time with no
  *   zone before sending it. Any instant is accepted, and the API uses the time of the pre-flight
  *   when it is null or left out (D-98, D-122).
- * - The verification records the device holds are not here yet. S-15 adds them along with the
- *   check that reads them and its 409 `unverified` (D-122).
+ * - `verifications` carries the GPS readings this account holds for this event, at most 15.
+ *   Each names its own sub-event, which may differ from the photo's. The API judges each reading
+ *   at its own time, and `start_upload` records accepted check-ins before its photo checks
+ *   (D-155). Omitting the list or sending an empty one supplies no new check-in.
  */
 export const PreflightUploadRequest = z.object({
   contentHash: ContentHash,
   subEventId: z.uuid(),
   capturedAt: Timestamp.nullish(),
+  verifications: VerificationRecords.optional(),
 });
 export type PreflightUploadRequest = z.infer<typeof PreflightUploadRequest>;
 
@@ -55,6 +59,8 @@ export type PreflightUploadRequest = z.infer<typeof PreflightUploadRequest>;
  * - 409 `duplicate` when a finished photo in this event has the hash, a soft-deleted one included
  *   (D-96), unless the caller has an unfinished row with the hash, which resumes first (D-122).
  *   The app drops the photo from its queue with no prompt.
+ * - 409 `unverified` when a new upload has no check-in for this user and sub-event, no manual
+ *   check-in and no exempt role. Admin and Photographer pass. A resume skips this check (D-155).
  * - 422 `event_full` when the event already holds 2,000 media rows that are not soft-deleted,
  *   unfinished ones included (spec §4.17). A resume skips this check.
  * - 422 `too_many_unfinished` when the caller already holds 50 unfinished rows in this event that
