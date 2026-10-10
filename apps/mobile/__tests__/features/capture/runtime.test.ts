@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
+import { createElement, type ReactElement } from 'react';
 
 import type { ShotContext } from '@/features/capture/context';
 import {
@@ -7,7 +9,7 @@ import {
   type CaptureDraft,
   type CaptureFiles,
 } from '@/features/capture/capture-store';
-import { retryCapture } from '@/features/capture/runtime';
+import { retryCapture, useCaptureDrafts } from '@/features/capture/runtime';
 import { QueueStore, type QueueDatabase, type QueueFiles } from '@/features/upload-queue/store';
 import { useAuthStore } from '@/stores/auth';
 
@@ -109,6 +111,26 @@ async function draftInState(): Promise<CaptureDraft> {
 const galleryState = () =>
   database.prepare('SELECT galleryState FROM capture_journal WHERE id = ?').get('capture-1');
 
+// react-test-renderer ships with jest-expo, not as a direct dependency (see viewfinder-screen.test).
+interface TestRenderer {
+  act(action: () => Promise<void>): Promise<void>;
+  create(element: ReactElement): { update(element: ReactElement): void; unmount(): void };
+}
+const renderer = jest.requireActual<TestRenderer>(
+  createRequire(require.resolve('jest-expo/package.json')).resolve('react-test-renderer'),
+);
+// Records what the hook returns on each render.
+function DraftProbe({ owner, seen }: { owner: string; seen: CaptureDraft[][] }) {
+  const { drafts } = useCaptureDrafts(owner, EVENT);
+  seen.push(drafts);
+  return null;
+}
+async function settle(done: () => boolean) {
+  for (let i = 0; i < 200 && !done(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 describe('retrying a Public draft', () => {
   it('says the photo is in the gallery when only the queue handoff fails', async () => {
     const draft = await draftInState();
@@ -129,5 +151,26 @@ describe('retrying a Public draft', () => {
       'The gallery save did not finish. The photo stays on this phone.',
     );
     expect(galleryState()).toEqual({ galleryState: 'failed' });
+  });
+});
+
+describe('the drafts My Media reads', () => {
+  it('returns the same array when a render changes nothing in the drafts or their scope', async () => {
+    await draftInState();
+    const seen: CaptureDraft[][] = [];
+    let tree: ReturnType<TestRenderer['create']> | undefined;
+    await renderer.act(async () => {
+      tree = renderer.create(createElement(DraftProbe, { owner: 'A', seen }));
+      await settle(() => (seen.at(-1)?.length ?? 0) === 1);
+    });
+    const before = seen.at(-1);
+    expect(before).toHaveLength(1);
+    await renderer.act(async () => {
+      tree?.update(createElement(DraftProbe, { owner: 'A', seen }));
+    });
+    expect(seen.at(-1)).toBe(before);
+    await renderer.act(async () => {
+      tree?.unmount();
+    });
   });
 });
