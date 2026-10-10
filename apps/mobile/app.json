@@ -81,7 +81,7 @@
         "expo-media-library",
         {
           "photosPermission": false,
-          "savePhotosPermission": "MomentLens saves the photos you download to your gallery.",
+          "savePhotosPermission": "MomentLens saves Public camera photos and downloaded photos to your gallery.",
           "isAccessMediaLocationEnabled": false,
           "granularPermissions": ["photo"]
         }
@@ -101,7 +101,8 @@
           }
         }
       ],
-      "./plugins/with-android-theme"
+      "./plugins/with-android-theme",
+      "./plugins/with-media-backup"
     ],
     "experiments": {
       "typedRoutes": true,
