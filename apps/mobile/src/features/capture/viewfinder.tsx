@@ -40,7 +40,7 @@ export default function Viewfinder(p: ViewfinderProps) {
       <View className="flex-1 items-center justify-center">{p.preview}</View>
       <View className="h-28 flex-row items-center justify-between px-8">
         <Pressable
-          disabled={p.busy}
+          disabled={p.busy || !p.ready}
           accessibilityRole="button"
           accessibilityLabel="Flip camera"
           onPress={p.onFlip}
