@@ -16,3 +16,4 @@ export * from './media';
 export * from './profile';
 export * from './sub-event';
 export * from './verification';
+export * from './venue-qr';
