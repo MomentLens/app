@@ -36,6 +36,7 @@ let store: QueueStore;
 let readings: GpsReadings;
 let user: string | null;
 let serverState: GetEventResponse['verification'];
+let serverRevision: number;
 let schedule: SubEvent[];
 let refetch: ReturnType<typeof jest.fn<(eventId: string) => void>>;
 let verification: VerificationGate;
@@ -71,11 +72,13 @@ beforeEach(() => {
   readings = new GpsReadings(store);
   user = 'A';
   serverState = { everySubEvent: false, subEventIds: [] };
+  serverRevision = 0;
   schedule = [subEvent(), subEvent(OTHER_SUB)];
   refetch = jest.fn();
   verification = new VerificationGate({
     readings: async () => readings,
     event: () => ({ verification: serverState }) as GetEventResponse,
+    eventRevision: () => serverRevision,
     schedule: () => ({ subEvents: schedule }),
     refetch,
   });
@@ -140,6 +143,66 @@ describe('the upload check-in gate', () => {
     photoUploadUrl: 'https://example.test/photo',
     thumbnailUploadUrl: 'https://example.test/thumb',
   };
+
+  it.each<[string, NonNullable<GetEventResponse['verification']>]>([
+    ['role exemption', { everySubEvent: true, subEventIds: [] }],
+    ['sub-event check-in', { everySubEvent: false, subEventIds: [SUB] }],
+  ])('does not retry an unverified refusal from a stale cached %s', async (_name, state) => {
+    const item = await store.enqueue('A', EVENT, SUB, photo);
+    serverState = { everySubEvent: state.everySubEvent, subEventIds: [...state.subEventIds] };
+    const preflight = jest
+      .fn<RunnerDeps['preflight']>()
+      .mockRejectedValueOnce({ status: 409, code: 'unverified' })
+      .mockResolvedValue(upload);
+    await runnerFor(preflight).run();
+    expect(await store.listForEvent('A', EVENT)).toMatchObject([{ state: 'waiting_verification' }]);
+    expect(preflight).toHaveBeenCalledTimes(1);
+    expect(refetch).toHaveBeenCalledWith(EVENT);
+    expect(await verification.beforePreflight(item)).toBeNull();
+    expect(await verification.coverage('A', EVENT)).toEqual([]);
+  });
+
+  it('releases a refused cached exemption after fresh server coverage arrives', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    serverState = { everySubEvent: true, subEventIds: [] };
+    const preflight = jest
+      .fn<RunnerDeps['preflight']>()
+      .mockRejectedValueOnce({ status: 409, code: 'unverified' })
+      .mockResolvedValue(upload);
+    const runner = runnerFor(preflight);
+    await runner.run();
+    expect(preflight).toHaveBeenCalledTimes(1);
+    serverState = { everySubEvent: false, subEventIds: [SUB] };
+    await store.release(
+      'A',
+      EVENT,
+      'waiting_verification',
+      await verification.coverage('A', EVENT),
+    );
+    await runner.run();
+    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(await store.listForEvent('A', EVENT)).toMatchObject([{ state: 'uploaded' }]);
+  });
+
+  it('accepts a fresh event fetch even when the cache shares its previous verification object', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    serverState = { everySubEvent: true, subEventIds: [] };
+    const preflight = jest
+      .fn<RunnerDeps['preflight']>()
+      .mockRejectedValueOnce({ status: 409, code: 'unverified' })
+      .mockResolvedValue(upload);
+    const runner = runnerFor(preflight);
+    await runner.run();
+    expect(preflight).toHaveBeenCalledTimes(1);
+    expect(await verification.coverage('A', EVENT)).toEqual([]);
+    serverRevision++;
+    const covered = await verification.coverage('A', EVENT);
+    expect(covered).toBe('all');
+    await store.release('A', EVENT, 'waiting_verification', covered);
+    await runner.run();
+    expect(preflight).toHaveBeenCalledTimes(2);
+    expect(await store.listForEvent('A', EVENT)).toMatchObject([{ state: 'uploaded' }]);
+  });
 
   it('does not strand a photo when a fix is stored and released before its waiting write', async () => {
     await store.enqueue('A', EVENT, SUB, photo);
