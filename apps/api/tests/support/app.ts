@@ -91,6 +91,10 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
       list: () => Promise.reject(new Error('no invite management store in this test')),
       regenerate: () => Promise.reject(new Error('no invite management store in this test')),
     },
+    venueQrs: {
+      list: () => Promise.reject(new Error('no venue QR store in this test')),
+      regenerate: () => Promise.reject(new Error('no venue QR store in this test')),
+    },
     subEvents: noSubEvents,
     media: noMedia,
     album: noAlbum,
