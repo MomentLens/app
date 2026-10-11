@@ -15,6 +15,7 @@ import { createMediaStore } from './services/media';
 import { createMediaImagesStore } from './services/media-images';
 import { createFindProfile } from './services/profiles';
 import { createSubEventStore } from './services/sub-events';
+import { createVenueQrStore } from './services/venue-qrs';
 
 const DEFAULT_PORT = 3000;
 
@@ -62,6 +63,7 @@ createApp({
   joinRequests: createJoinRequestStore(supabase),
   invites: createInviteStore(supabase),
   inviteManagement: createInviteManagementStore(supabase),
+  venueQrs: createVenueQrStore(supabase),
   subEvents: createSubEventStore(supabase),
   media: createMediaStore(supabase),
   album: createAlbumStore(supabase),

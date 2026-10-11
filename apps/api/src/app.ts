@@ -42,6 +42,7 @@ import {
   listSubEventsController,
   updateSubEventController,
 } from './controllers/sub-events';
+import { listVenueQrsController, regenerateVenueQrController } from './controllers/venue-qrs';
 import type { DeleteObject, ObjectExists, ObjectSize, PresignGet, PresignPut } from './lib/r2';
 import { optionalAuth, requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
@@ -54,6 +55,7 @@ import { joinRequestsRouter } from './routes/join-requests';
 import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
 import { subEventsRouter } from './routes/sub-events';
+import { venueQrsRouter } from './routes/venue-qrs';
 import type { AlbumStore } from './services/album';
 import type { AttendeeStore } from './services/attendees';
 import type { EventStore } from './services/events';
@@ -64,6 +66,7 @@ import type { MediaStore } from './services/media';
 import type { MediaImagesStore } from './services/media-images';
 import type { FindProfile } from './services/profiles';
 import type { SubEventStore } from './services/sub-events';
+import type { VenueQrStore } from './services/venue-qrs';
 
 // What the app needs from outside. index.ts builds the real ones from the environment, and tests
 // pass fakes, so no test needs a Supabase project or an R2 account.
@@ -77,6 +80,7 @@ export interface AppDeps {
   joinRequests: JoinRequestStore;
   invites: InviteStore;
   inviteManagement: InviteManagementStore;
+  venueQrs: VenueQrStore;
   subEvents: SubEventStore;
   media: MediaStore;
   album: AlbumStore;
@@ -162,6 +166,12 @@ export function createApp(deps: AppDeps): Express {
       join: joinEventController(deps.invites),
       list: listEventInvitesController(deps.inviteManagement),
       regenerate: regenerateEventInviteController(deps.inviteManagement),
+    }),
+  );
+  app.use(
+    venueQrsRouter(auth, {
+      list: listVenueQrsController(deps.venueQrs),
+      regenerate: regenerateVenueQrController(deps.venueQrs),
     }),
   );
   app.use(notFound);
