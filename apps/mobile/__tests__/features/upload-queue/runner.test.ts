@@ -893,8 +893,8 @@ describe('waiting, backoff and release', () => {
       );
       const runner = createRunner();
       await runner.run();
-      expect(await store.release('B', EVENT, state)).toBe(0);
-      expect(await store.release('A', EVENT, state)).toBe(1);
+      expect(await store.release('B', EVENT, state, [SUB])).toBe(0);
+      expect(await store.release('A', EVENT, state, [SUB])).toBe(1);
       await runner.retryNow();
       expect((await only('A', EVENT)).state).toBe('uploaded');
       expect((await only('A', OTHER_EVENT)).state).toBe(state);

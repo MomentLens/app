@@ -11,6 +11,7 @@ import { Fab } from '@/components/ui/fab';
 import { FormMessage } from '@/components/ui/form-message';
 import { GLYPH } from '@/components/ui/glyph';
 import { useEventId } from '@/features/event-shell/event-id';
+import { useEvent } from '@/features/event-shell/use-event';
 import { EventTabScreen } from '@/features/event-shell/event-tab-screen';
 import { formatDay } from '@/features/events/format';
 import { nextStatusChange, romanNumeral } from '@/features/schedule/schedule';
@@ -23,6 +24,9 @@ import { useNow } from '@/hooks/use-now';
 import { useTokenColor } from '@/hooks/use-token-color';
 import { BottomTabInset } from '@/lib/platform';
 import { useAuthStore } from '@/stores/auth';
+import { checkInNotice } from '@/features/verification/notice';
+import { useHeldReadings } from '@/features/verification/use-held-readings';
+import { CheckInBanner } from './check-in-banner';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
 import { QueueBanner } from './queue-banner';
@@ -53,10 +57,13 @@ function MediaContent({ eventId }: { eventId: string }) {
   const list = useRef<FlashListRef<MediaListItem>>(null);
   const background = useTokenColor('background');
   const schedule = useSubEvents(eventId);
+  const event = useEvent(eventId);
+  const heldIds = useHeldReadings(eventId);
   const subEvents = schedule.data?.subEvents ?? EMPTY_SCHEDULE;
   const nextChange = useCallback((at: Date) => nextStatusChange(subEvents, at), [subEvents]);
   const now = useNow(nextChange);
   const queue = useQueue(eventId);
+  const checkIn = checkInNotice(subEvents, now, event.data?.verification, heldIds, queue.items);
   const captures = useCaptureDrafts(queue.userId, eventId);
   const status = useMediaStatus(queue.userId, eventId);
   const sections = useMemo(
@@ -211,7 +218,7 @@ function MediaContent({ eventId }: { eventId: string }) {
     if (pulling) return;
     setPulling(true);
     queue.reload();
-    await Promise.allSettled([schedule.refetch(), status.refresh(true)]);
+    await Promise.allSettled([event.refetch(), schedule.refetch(), status.refresh(true)]);
     setPulling(false);
   }
   return (
@@ -269,6 +276,7 @@ function MediaContent({ eventId }: { eventId: string }) {
                     </Text>
                   </View>
                   <QueueBanner counts={queue.counts} />
+                  <CheckInBanner notice={checkIn} />
                   {schedule.data && !live ? <CameraHint schedule={subEvents} now={now} /> : null}
                   {problem || queue.error || captures.error || status.error || schedule.isError ? (
                     <View className="px-5 pb-3">

@@ -5,6 +5,7 @@ import { addNetworkStateListener, getNetworkStateAsync } from 'expo-network';
 import { openDatabaseAsync } from 'expo-sqlite';
 import { AppState } from 'react-native';
 import { createMMKV } from 'react-native-mmkv';
+import type { GetEventResponse, ListSubEventsResponse } from '@momentlens/shared-types';
 
 import { eventQueryKey, recheckEvent } from '@/features/event-shell/use-event';
 import { completeUpload, preflightUpload } from '@/lib/api';
@@ -13,13 +14,16 @@ import { supabase } from '@/lib/supabase';
 import { useAuthStore } from '@/stores/auth';
 import { CaptureStore } from '@/features/capture/capture-store';
 import { captureFiles } from '@/features/capture/capture-files';
+import { subEventsQueryKey } from '@/features/schedule/use-sub-events';
+import { VerificationGate } from '@/features/verification/gate';
+import { GpsReadings } from '@/features/verification/readings';
 
 import { queueFiles } from './files';
 import { prepareUpload } from './prepare';
 import { gateFor, UploadRunner, type NetworkGate, type PutResult } from './runner';
 import { stallGuard } from './stall';
 import { QueueStore } from './store';
-import type { QueuePatch, QueuePhoto, WaitingState } from './types';
+import type { QueuePatch, QueuePhoto, WaitingState, VerificationScope } from './types';
 
 // Opens without waiting for backup exclusion (D-153). A failed exclusion stops each capture before
 // its shot, in capture.ts, so the queue stays readable and Public uploads keep going.
@@ -45,6 +49,9 @@ export function getQueue(): Promise<QueueStore> {
 }
 export async function initializeQueue(): Promise<void> {
   await getQueue();
+}
+export async function getGpsReadings(): Promise<GpsReadings> {
+  return new GpsReadings(await getQueue());
 }
 export async function enqueue(
   userId: string,
@@ -114,6 +121,17 @@ async function put(
   }
 }
 
+const verification = new VerificationGate({
+  readings: getGpsReadings,
+  event: (eventId) => queryClient.getQueryData<GetEventResponse>(eventQueryKey(eventId)),
+  schedule: (eventId) =>
+    queryClient.getQueryData<ListSubEventsResponse>(subEventsQueryKey(eventId)),
+  refetch: (eventId) => {
+    void queryClient.invalidateQueries({ queryKey: eventQueryKey(eventId), exact: true });
+    void queryClient.invalidateQueries({ queryKey: subEventsQueryKey(eventId), exact: true });
+  },
+});
+
 // The app's one runner (D-146).
 const runner = new UploadRunner({
   store: getQueue,
@@ -127,6 +145,7 @@ const runner = new UploadRunner({
   complete: completeUpload,
   put,
   gate,
+  verification,
   lostAccess: recheckEvent,
   now: Date.now,
   schedule: (wake, delayMs) => {
@@ -148,17 +167,38 @@ export async function release(
   userId: string,
   eventId: string,
   state: WaitingState,
+  subEventIds?: VerificationScope,
 ): Promise<number> {
-  const released = await (await getQueue()).release(userId, eventId, state);
-  if (released) void runner.retryNow();
+  const released = await (await getQueue()).release(userId, eventId, state, subEventIds);
+  if (released) void (state === 'waiting_verification' ? runner.run() : runner.retryNow());
   return released;
+}
+
+async function releaseCovered(userId: string, eventId: string): Promise<void> {
+  const covered = await verification.coverage(userId, eventId);
+  if (useAuthStore.getState().userId !== userId) return;
+  await release(userId, eventId, 'waiting_verification', covered);
+}
+
+async function releaseCachedVerifications(): Promise<void> {
+  const userId = useAuthStore.getState().userId;
+  if (userId === null) return;
+  const heldEvents = await (await getGpsReadings()).eventIds(userId);
+  const cachedEvents = queryClient
+    .getQueryCache()
+    .findAll({ queryKey: ['event'] })
+    .flatMap((query) => (typeof query.queryKey[1] === 'string' ? [query.queryKey[1]] : []));
+  for (const eventId of new Set([...heldEvents, ...cachedEvents])) {
+    if (useAuthStore.getState().userId !== userId) return;
+    await releaseCovered(userId, eventId);
+  }
 }
 
 // A fresh 200 from GET /events/{eventId} releases the account's photos stopped there by
 // not_member or not_found (D-146). Only a fetch counts. A setQueryData write is marked manual, and
 // a copy restored from disk or seeded from the Events list never arrives as a success.
 function releaseOnFreshEvent(event: QueryCacheNotifyEvent): void {
-  if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
+  if (event.type !== 'updated' && event.type !== 'added') return;
   const { queryKey } = event.query;
   const eventId = queryKey[1];
   if (typeof eventId !== 'string') return;
@@ -168,6 +208,12 @@ function releaseOnFreshEvent(event: QueryCacheNotifyEvent): void {
   }
   const userId = useAuthStore.getState().userId;
   if (userId === null) return;
+  // Restoration and Events-list seeds can arrive after startUploads. A held fix and any cached
+  // verification still recover the kill between storing and releasing (D-155).
+  if (event.query.state.data !== undefined) {
+    void releaseCovered(userId, eventId).catch(() => undefined);
+  }
+  if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
   // run(), never retryNow(), which would clear the backoff the release just set.
   void getQueue()
     .then((store) => store.releaseLostAccess(userId, eventId, Date.now()))
@@ -196,6 +242,7 @@ export function startUploads(): void {
       if (state.userId === owner) return;
       owner = state.userId;
       void runner.accountChanged();
+      void releaseCachedVerifications().catch(() => undefined);
     }),
   ];
   // Foreground and reconnect retry at once (D-146).
@@ -230,5 +277,6 @@ export function startUploads(): void {
     runner.shutdown();
     for (const unsubscribe of unsubscribers) unsubscribe();
   };
+  void releaseCachedVerifications().catch(() => undefined);
   void runner.retryNow();
 }

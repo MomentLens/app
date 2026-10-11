@@ -2,7 +2,10 @@ import type {
   CompleteUploadResponse,
   PreflightUploadRequest,
   PreflightUploadResponse,
+  VerificationRecords,
 } from '@momentlens/shared-types';
+
+import type { VerificationGate } from '@/features/verification/gate';
 
 import type { PreparedUpload } from './prepare';
 import type { QueueStore } from './store';
@@ -55,6 +58,7 @@ export interface RunnerDeps {
   // A PUT of a queue file to R2. `missing` when the file is not on disk.
   put(path: string, url: string, contentType: string, signal: AbortSignal): Promise<PutResult>;
   gate(): Promise<NetworkGate>;
+  verification?: Pick<VerificationGate, 'beforePreflight' | 'settled' | 'coverage'>;
   // A 403 or 404 means the caller's place in the event changed. The Event shell checks again.
   lostAccess(eventId: string): void;
   now(): number;
@@ -78,7 +82,7 @@ export class UploadRunner {
   private running: Promise<void> | null = null;
   private again = false;
   // The next pass clears every backoff first, so each photo is tried once now. Foreground,
-  // reconnect and a release ask for one.
+  // reconnect and an album release ask for one. Verification releases wake run() (D-155).
   private fresh = false;
   // Photos whose attempt threw on a queue write this round. Each keeps the state the last write
   // left, which may still be due, so without this the pass would pick it again at once.
@@ -293,6 +297,22 @@ export class UploadRunner {
       return 'next';
     }
     if (!this.live(userId, signal)) return 'cancelled';
+    const records = this.deps.verification ? await this.deps.verification.beforePreflight(row) : [];
+    if (!this.live(userId, signal)) return 'cancelled';
+    if (records === null) {
+      await store.update(
+        userId,
+        id,
+        {
+          state: 'waiting_verification',
+          retryCount: 0,
+          nextRetryAt: null,
+        },
+        ['queued'],
+      );
+      await this.recheckVerification(store, row);
+      return 'next';
+    }
     let upload: PreflightUploadResponse;
     try {
       upload = await this.deps.preflight(
@@ -303,13 +323,22 @@ export class UploadRunner {
           subEventId: row.subEventId,
           // Always a capture time, so the album sorts every photo by it (D-147).
           capturedAt: row.capturedAt ?? new Date(row.createdAt).toISOString(),
+          ...(records.length ? { verifications: records } : {}),
         },
         signal,
       );
     } catch (error) {
       if (!this.live(userId, signal)) return 'cancelled';
-      return this.apply(store, row, 'preflight', transitionFor('preflight', error));
+      const answer = typeof error === 'object' && error !== null ? error : {};
+      await this.settleVerification(row, records, {
+        status: 'status' in answer && typeof answer.status === 'number' ? answer.status : undefined,
+        code: 'code' in answer ? answer.code : undefined,
+      });
+      if (!this.live(userId, signal)) return 'cancelled';
+      return this.apply(store, row, 'preflight', transitionFor('preflight', error), records);
     }
+    if (!this.live(userId, signal)) return 'cancelled';
+    await this.settleVerification(row, records, null);
     if (!this.live(userId, signal)) return 'cancelled';
     // The photo turns uploading only while it is still queued. My Media's Delete refuses an
     // uploading photo, so one of the two writes wins, and a deleted photo is never PUT (D-146).
@@ -347,6 +376,34 @@ export class UploadRunner {
     // pre-flight, which would send both files again (D-122).
     if (!(await store.update(userId, id, { step: 'complete' }, ['uploading']))) return 'next';
     return { ...uploading, step: 'complete' };
+  }
+
+  private async settleVerification(
+    row: QueueItem,
+    records: VerificationRecords,
+    answer: { status?: number; code?: unknown } | null,
+  ): Promise<void> {
+    try {
+      await this.deps.verification?.settled(row.userId, row.eventId, records, answer);
+    } catch {
+      // A cleanup failure keeps the fix for an idempotent retry. It must not lose a successful
+      // pre-flight or include coordinates in an error report (D-36, D-155).
+      this.deps.warn?.('The check-in reading could not be cleared', undefined);
+    }
+  }
+
+  // A fix or event fetch may have released this sub-event just before the waiting write. Check
+  // after that write too. A refused snapshot cannot release itself if its cleanup failed.
+  private async recheckVerification(
+    store: QueueStore,
+    row: QueueItem,
+    refused: VerificationRecords = [],
+  ): Promise<void> {
+    const coverage = await this.deps.verification?.coverage(row.userId, row.eventId, refused);
+    if (this.stopped || this.controller?.signal.aborted || this.deps.userId() !== row.userId)
+      return;
+    if (coverage === 'all' || coverage?.includes(row.subEventId.toLowerCase()))
+      await store.release(row.userId, row.eventId, 'waiting_verification', [row.subEventId]);
   }
 
   // A failed or timed-out PUT sends the photo back through pre-flight, which resumes its row with
@@ -408,6 +465,7 @@ export class UploadRunner {
     row: QueueItem,
     call: Call,
     transition: Transition,
+    verifications: VerificationRecords = [],
   ): Promise<Attempt> {
     const { userId, id } = row;
     switch (transition.type) {
@@ -428,6 +486,8 @@ export class UploadRunner {
           { state: transition.state, retryCount: 0, nextRetryAt: null },
           ['queued'],
         );
+        if (transition.state === 'waiting_verification')
+          await this.recheckVerification(store, row, verifications);
         return 'next';
       case 'resend': {
         const failures = row.retryCount + 1;

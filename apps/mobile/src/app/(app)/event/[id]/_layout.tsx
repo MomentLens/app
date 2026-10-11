@@ -14,6 +14,7 @@ import { redirectFor, tabHref, tabsFor, type EventTab } from '@/features/event-s
 import { lostAccess, useEvent, type LostAccess } from '@/features/event-shell/use-event';
 import { useMediaRealtime } from '@/features/event-shell/use-media-realtime';
 import { useEvents } from '@/features/events/use-events';
+import { useGpsCheck } from '@/features/verification/use-gps-check';
 
 type TabIcon = ComponentProps<typeof NativeTabs.Trigger.Icon>;
 
@@ -114,6 +115,7 @@ export default function EventShellLayout() {
 function RoleTabs({ role, eventId }: { role: MembershipRole; eventId: string }) {
   const colors = useTabBarColors();
   useMediaRealtime(eventId);
+  useGpsCheck(eventId);
   return (
     <NativeTabs key={role} {...colors} labelVisibilityMode="labeled">
       {tabsFor(role).map((name) => (
