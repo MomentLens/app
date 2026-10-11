@@ -145,6 +145,8 @@ async function open() {
   expect(viewfinder().props.ready).toBe(true);
 }
 beforeEach(() => {
+  jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
+  jest.setSystemTime(new Date('2026-10-10T01:00:00Z'));
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   Platform.OS = 'android';
   AppState.currentState = 'active';
@@ -161,6 +163,7 @@ beforeEach(() => {
 afterEach(async () => {
   if (tree) await flush(() => tree.unmount());
   jest.restoreAllMocks();
+  jest.useRealTimers();
 });
 
 describe('native viewfinder lifecycle', () => {
