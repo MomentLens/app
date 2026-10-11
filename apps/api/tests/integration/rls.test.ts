@@ -2786,6 +2786,318 @@ if (project === null) {
         });
       });
 
+      describe('S-16 venue QR schema', () => {
+        const Credential = z.object({
+          venue_id: z.uuid(),
+          venue_name: z.string(),
+          secret: z.string().regex(/^[0-9a-f]{64}$/),
+        });
+
+        async function qrList(eventId: string, actorId: string) {
+          const result = await admin.rpc('list_venue_qrs', {
+            p_event_id: eventId,
+            p_actor_id: actorId,
+          });
+          expect(result.error).toBeNull();
+          return z
+            .object({ outcome: z.string(), venue_qrs: z.array(Credential).optional() })
+            .parse(result.data);
+        }
+
+        async function rotate(eventId: string, actorId: string, venueId: string, secret: string) {
+          const result = await admin.rpc('regenerate_venue_qr', {
+            p_event_id: eventId,
+            p_actor_id: actorId,
+            p_venue_id: venueId,
+            p_expected_secret: secret,
+          });
+          expect(result.error).toBeNull();
+          return z
+            .object({ outcome: z.string(), venue_qr: Credential.optional() })
+            .parse(result.data);
+        }
+
+        async function credential(eventId: string, actorId: string, venueId: string) {
+          const listed = await qrList(eventId, actorId);
+          expect(listed.outcome).toBe('listed');
+          const qr = listed.venue_qrs?.find((item) => item.venue_id === venueId);
+          if (!qr) throw new Error('Expected a QR for the selected venue');
+          return qr;
+        }
+
+        async function scansStart(upload: NewUpload, scans: unknown[], limits = UPLOAD_LIMITS) {
+          const result = await admin.rpc('start_upload', {
+            ...startUploadParams(upload, limits),
+            p_qr_scans: scans,
+          });
+          expect(result.error).toBeNull();
+          const rows = z.array(z.object({ outcome: z.string() })).parse(result.data);
+          expect(rows).toHaveLength(1);
+          return rows[0]?.outcome;
+        }
+
+        async function qrRows(userId: string) {
+          const result = await admin
+            .from('venue_verification')
+            .select('*')
+            .eq('user_id', userId)
+            .order('sub_event_id');
+          expect(result.error).toBeNull();
+          return z
+            .array(
+              z.strictObject({
+                user_id: z.uuid(),
+                sub_event_id: z.uuid(),
+                method: z.enum(['gps', 'qr']),
+                verified_at: z.string(),
+              }),
+            )
+            .parse(result.data);
+        }
+
+        async function fixture() {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const setup = await eventWithSchedule(a.id);
+          await addMember(setup.event.id, g.id, 'guest', 'active');
+          const schedule = (await subEvents.schedule(setup.event.id)) ?? [];
+          const sub = schedule.find((item) => item.id === setup.mehndi);
+          if (!sub) throw new Error('Expected Mehndi in the schedule');
+          const qr = await credential(setup.event.id, a.id, sub.venue.id);
+          const scan = {
+            sub_event_id: sub.id,
+            venue_id: qr.venue_id,
+            secret: qr.secret,
+            recorded_at: iso(T0 + HOUR),
+          };
+          const upload = newUpload(setup.event.id, sub.id, g.id, { verifiedSubEventIds: [] });
+          return { ...setup, a, g, sub, qr, scan, upload };
+        }
+
+        it('lists one credential per venue and permits management on archived events', async () => {
+          const f = await fixture();
+          const schedule = (await subEvents.schedule(f.event.id)) ?? [];
+          const expected = [...new Set(schedule.map((item) => item.venue.id))].sort();
+          const before = await qrList(f.event.id, f.a.id);
+          expect(before.venue_qrs?.map((qr) => qr.venue_id)).toEqual(expected);
+          expect(
+            (
+              await admin
+                .from('event')
+                .update({ archived_at: iso(T0) })
+                .eq('id', f.event.id)
+            ).error,
+          ).toBeNull();
+          await expect(qrList(f.event.id, f.a.id)).resolves.toEqual(before);
+          expect((await rotate(f.event.id, f.a.id, f.qr.venue_id, f.qr.secret)).outcome).toBe(
+            'regenerated',
+          );
+        });
+
+        it('refuses wrong roles, inactive members, outsiders and another events venue without exposing a secret', async () => {
+          const f = await fixture();
+          for (const role of ['guest', 'photographer']) {
+            expect(
+              (
+                await admin
+                  .from('membership')
+                  .update({ role })
+                  .eq('event_id', f.event.id)
+                  .eq('user_id', f.g.id)
+              ).error,
+            ).toBeNull();
+            await expect(qrList(f.event.id, f.g.id)).resolves.toEqual({ outcome: 'wrong_role' });
+            await expect(rotate(f.event.id, f.g.id, f.qr.venue_id, f.qr.secret)).resolves.toEqual({
+              outcome: 'wrong_role',
+            });
+          }
+          for (const status of ['pending', 'blocked', 'removed']) {
+            expect(
+              (
+                await admin
+                  .from('membership')
+                  .update({ status })
+                  .eq('event_id', f.event.id)
+                  .eq('user_id', f.g.id)
+              ).error,
+            ).toBeNull();
+            await expect(qrList(f.event.id, f.g.id)).resolves.toEqual({ outcome: 'not_member' });
+            await expect(rotate(f.event.id, f.g.id, f.qr.venue_id, f.qr.secret)).resolves.toEqual({
+              outcome: 'not_member',
+            });
+          }
+          const outsider = await createNamedUser();
+          const other = await eventWithSchedule(outsider.id);
+          await expect(qrList(f.event.id, outsider.id)).resolves.toEqual({ outcome: 'not_member' });
+          await expect(
+            rotate(f.event.id, outsider.id, f.qr.venue_id, f.qr.secret),
+          ).resolves.toEqual({ outcome: 'not_member' });
+          const foreign = (await subEvents.schedule(other.event.id))?.[0]?.venue.id;
+          if (!foreign) throw new Error('Expected another event venue');
+          await expect(rotate(f.event.id, f.a.id, foreign, f.qr.secret)).resolves.toEqual({
+            outcome: 'not_found',
+          });
+          await expect(credential(f.event.id, f.a.id, f.qr.venue_id)).resolves.toEqual(f.qr);
+        }, 90_000);
+
+        it('refuses unknown and deleted events before membership checks', async () => {
+          const f = await fixture();
+          for (const eventId of [randomUUID(), f.event.id]) {
+            if (eventId === f.event.id) await softDeleteEvent(eventId);
+            await expect(qrList(eventId, f.g.id)).resolves.toEqual({ outcome: 'not_found' });
+            await expect(rotate(eventId, f.g.id, f.qr.venue_id, f.qr.secret)).resolves.toEqual({
+              outcome: 'not_found',
+            });
+          }
+        });
+
+        it('rotates once per displayed secret and preserves invites, memberships and recorded check-ins', async () => {
+          const f = await fixture();
+          expect(await scansStart(f.upload, [f.scan])).toBe('created');
+          const before = await qrRows(f.g.id);
+          const invites = await admin.from('invite').select('*').eq('event_id', f.event.id);
+          const memberships = await admin.from('membership').select('*').eq('event_id', f.event.id);
+          expect(invites.error).toBeNull();
+          expect(memberships.error).toBeNull();
+          const changed = await rotate(f.event.id, f.a.id, f.qr.venue_id, f.qr.secret);
+          expect(changed.outcome).toBe('regenerated');
+          expect(changed.venue_qr?.secret).not.toBe(f.qr.secret);
+          await expect(rotate(f.event.id, f.a.id, f.qr.venue_id, f.qr.secret)).resolves.toEqual({
+            outcome: 'venue_qr_changed',
+          });
+          await expect(qrRows(f.g.id)).resolves.toEqual(before);
+          expect((await admin.from('invite').select('*').eq('event_id', f.event.id)).data).toEqual(
+            invites.data,
+          );
+          expect(
+            (await admin.from('membership').select('*').eq('event_id', f.event.id)).data,
+          ).toEqual(memberships.data);
+          const late = await createNamedUser();
+          await addMember(f.event.id, late.id, 'guest', 'active');
+          expect(
+            await scansStart(
+              newUpload(f.event.id, f.mehndi, late.id, { verifiedSubEventIds: [] }),
+              [f.scan],
+            ),
+          ).toBe('unverified');
+          await expect(qrRows(late.id)).resolves.toEqual([]);
+        }, 90_000);
+
+        it('refuses wrong proof and spoofed exemption, and writes nothing for removed membership', async () => {
+          const f = await fixture();
+          for (const change of [
+            { secret: '0'.repeat(64) },
+            { venue_id: randomUUID() },
+            { sub_event_id: f.baraat },
+            { recorded_at: f.sub.endsAt },
+            { recorded_at: iso(T0 - 1) },
+          ]) {
+            expect(
+              await scansStart({ ...f.upload, role: 'photographer' }, [{ ...f.scan, ...change }]),
+            ).toBe('unverified');
+          }
+          await expect(qrRows(f.g.id)).resolves.toEqual([]);
+          expect(
+            (
+              await admin
+                .from('membership')
+                .update({ status: 'removed' })
+                .eq('event_id', f.event.id)
+                .eq('user_id', f.g.id)
+            ).error,
+          ).toBeNull();
+          expect(await scansStart(f.upload, [f.scan])).toBe('not_member');
+          await expect(qrRows(f.g.id)).resolves.toEqual([]);
+          await expect(countMedia(f.event.id)).resolves.toBe(0);
+        }, 60_000);
+
+        it('rechecks the scan-time winner after a schedule edit, includes the start and excludes the end', async () => {
+          const f = await fixture();
+          expect(
+            (
+              await admin
+                .from('sub_event')
+                .update({
+                  venue_id: f.sub.venue.id,
+                  starts_at: iso(T0 + HOUR),
+                  ends_at: iso(T0 + 2 * HOUR),
+                })
+                .eq('id', f.baraat)
+            ).error,
+          ).toBeNull();
+          expect(await scansStart(f.upload, [f.scan])).toBe('unverified');
+          expect(
+            await scansStart({ ...f.upload, subEventId: f.baraat }, [
+              { ...f.scan, sub_event_id: f.baraat },
+            ]),
+          ).toBe('created');
+          expect((await qrRows(f.g.id)).map((row) => row.sub_event_id)).toEqual([f.baraat]);
+        });
+
+        it('keeps a check-in on photo refusal, preserves its first method/time, and prefers GPS in a first-method tie', async () => {
+          const f = await fixture();
+          const full = { ...UPLOAD_LIMITS, maxMedia: 0 };
+          expect(await scansStart(f.upload, [f.scan], full)).toBe('full');
+          const before = await qrRows(f.g.id);
+          expect(before).toHaveLength(1);
+          expect(before[0]?.method).toBe('qr');
+          expect(
+            await scansStart({ ...f.upload, verifiedSubEventIds: [f.mehndi] }, [f.scan], full),
+          ).toBe('full');
+          await expect(qrRows(f.g.id)).resolves.toEqual(before);
+          const other = await createNamedUser();
+          await addMember(f.event.id, other.id, 'guest', 'active');
+          expect(await scansStart(newUpload(f.event.id, f.mehndi, other.id), [f.scan], full)).toBe(
+            'full',
+          );
+          expect((await qrRows(other.id))[0]?.method).toBe('gps');
+        }, 60_000);
+
+        it('gives the app keys no QR secrets, table writes or RPC execution', async () => {
+          const f = await fixture();
+          const clients = [
+            createServerClient(project.url, project.publishableKey),
+            await signedInClient(f.a),
+          ];
+          for (const client of clients) {
+            const read = await client.from('venue').select('qr_secret').eq('event_id', f.event.id);
+            expect(read.error).toBeNull();
+            expect(read.data).toEqual([]);
+            expect(
+              (
+                await client
+                  .from('venue_verification')
+                  .insert({ user_id: f.g.id, sub_event_id: f.mehndi, method: 'qr' })
+              ).error,
+            ).not.toBeNull();
+            expect(
+              (await client.rpc('list_venue_qrs', { p_event_id: f.event.id, p_actor_id: f.a.id }))
+                .error,
+            ).not.toBeNull();
+            expect(
+              (
+                await client.rpc('regenerate_venue_qr', {
+                  p_event_id: f.event.id,
+                  p_actor_id: f.a.id,
+                  p_venue_id: f.qr.venue_id,
+                  p_expected_secret: f.qr.secret,
+                })
+              ).error,
+            ).not.toBeNull();
+            expect(
+              (
+                await client.rpc('start_upload', {
+                  ...startUploadParams(f.upload, UPLOAD_LIMITS),
+                  p_qr_scans: [f.scan],
+                })
+              ).error,
+            ).not.toBeNull();
+          }
+          await expect(qrRows(f.g.id)).resolves.toEqual([]);
+          await expect(credential(f.event.id, f.a.id, f.qr.venue_id)).resolves.toEqual(f.qr);
+        }, 60_000);
+      });
+
       it("creates the row with the keys built from its id, and resumes the caller's unfinished row with its own id and keys", async () => {
         const a = await createNamedUser();
         const g = await createNamedUser();
