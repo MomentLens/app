@@ -1,5 +1,6 @@
 import { backoffDelay } from './transitions';
 import { CAPTURE_SCHEMA } from '@/features/capture/capture-store';
+import { GPS_SCHEMA } from '@/features/verification/readings';
 import type {
   QueueCounts,
   QueueItem,
@@ -7,6 +8,7 @@ import type {
   QueuePhoto,
   QueueState,
   WaitingState,
+  VerificationScope,
 } from './types';
 
 export interface QueueDatabase {
@@ -48,7 +50,8 @@ CREATE TABLE IF NOT EXISTS queue_item (
 );
 CREATE INDEX IF NOT EXISTS queue_owner_event ON queue_item(userId, eventId, createdAt);
 ${CAPTURE_SCHEMA}
-PRAGMA user_version = 2;
+${GPS_SCHEMA}
+PRAGMA user_version = 3;
 `;
 type StoredItem = Omit<QueueItem, 'photoUri' | 'thumbnailUri'>;
 
@@ -113,6 +116,16 @@ export class QueueStore {
       } finally {
         this.changed();
       }
+    });
+  }
+  verificationRead<T>(read: (db: QueueDatabase) => Promise<T>): Promise<T> {
+    return this.captureRead((db) => read(db));
+  }
+  verificationMutation<T>(write: (db: QueueDatabase) => Promise<T>, notify = true): Promise<T> {
+    return this.mutate(async () => {
+      const result = await write(this.db);
+      if (notify) this.changed();
+      return result;
     });
   }
   private mutate<T>(operation: () => Promise<T>): Promise<T> {
@@ -355,14 +368,24 @@ export class QueueStore {
       return true;
     });
   }
-  // Moves one event's waiting photos back to queued (D-146).
-  release(userId: string, eventId: string, state: WaitingState): Promise<number> {
+  // Album release covers the event. Verification requires a named scope, and never clears
+  // another photo's backoff (D-146, D-155).
+  release(
+    userId: string,
+    eventId: string,
+    state: WaitingState,
+    subEventIds?: VerificationScope,
+  ): Promise<number> {
+    const ids =
+      state === 'waiting_verification' && subEventIds !== 'all' ? (subEventIds ?? []) : null;
+    if (ids?.length === 0) return Promise.resolve(0);
     return this.mutate(async () => {
       const result = await this.db.runAsync(
-        `UPDATE queue_item SET state = 'queued', retryCount = 0, nextRetryAt = NULL WHERE userId = ? AND eventId = ? AND state = ?`,
+        `UPDATE queue_item SET state = 'queued', retryCount = 0, nextRetryAt = NULL WHERE userId = ? AND eventId = ? AND state = ?${ids ? ` AND lower(subEventId) IN (${ids.map(() => '?').join(',')})` : ''}`,
         userId,
         eventId,
         state,
+        ...(ids?.map((id) => id.toLowerCase()) ?? []),
       );
       if (result.changes) this.changed();
       return result.changes;

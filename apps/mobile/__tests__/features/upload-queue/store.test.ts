@@ -56,7 +56,7 @@ describe('account-owned durable queue', () => {
     const upgraded = createStore();
     await upgraded.initialize();
     expect(await upgraded.listForEvent('A', 'event')).toHaveLength(1);
-    expect(database.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 2 });
+    expect(database.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 });
   });
   it('gives account B no rows or counts belonging to A', async () => {
     await store.enqueue('A', 'event', 'sub', photo);
