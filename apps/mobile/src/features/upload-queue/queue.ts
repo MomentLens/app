@@ -124,6 +124,7 @@ async function put(
 const verification = new VerificationGate({
   readings: getGpsReadings,
   event: (eventId) => queryClient.getQueryData<GetEventResponse>(eventQueryKey(eventId)),
+  eventRevision: (eventId) => queryClient.getQueryState(eventQueryKey(eventId))?.dataUpdateCount,
   schedule: (eventId) =>
     queryClient.getQueryData<ListSubEventsResponse>(subEventsQueryKey(eventId)),
   refetch: (eventId) => {
