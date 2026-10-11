@@ -22,10 +22,11 @@ export type ContentHash = z.infer<typeof ContentHash>;
  * - `capturedAt` is the photo's EXIF capture time in UTC. The phone converts an EXIF time with no
  *   zone before sending it. Any instant is accepted, and the API uses the time of the pre-flight
  *   when it is null or left out (D-98, D-122).
- * - `verifications` carries the GPS readings this account holds for this event, at most 15.
- *   Each names its own sub-event, which may differ from the photo's. The API judges each reading
- *   at its own time, and `start_upload` records accepted check-ins before its photo checks
- *   (D-155). Omitting the list or sending an empty one supplies no new check-in.
+ * - `verifications` carries at most 15 GPS readings and 15 QR scans for this account and event.
+ *   A GPS reading names its sub-event; a QR scan names its venue and the server selects the
+ *   sub-event at the scan time. Either can cover a sub-event different from the photo's.
+ *   `start_upload` rechecks QR evidence under the event lock and records accepted check-ins before
+ *   its photo checks (D-155, D-156). An absent or empty list supplies no new check-in.
  */
 export const PreflightUploadRequest = z.object({
   contentHash: ContentHash,

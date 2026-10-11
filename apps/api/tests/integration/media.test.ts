@@ -631,7 +631,9 @@ describe('S-15 preflight verification', () => {
     media.schedules.set(eventId, [scheduled]);
   });
 
-  function reading(change: Partial<VerificationRecord> = {}): VerificationRecord {
+  type GpsRecord = Extract<VerificationRecord, { kind: 'gps' }>;
+
+  function reading(change: Partial<GpsRecord> = {}): GpsRecord {
     return {
       kind: 'gps',
       subEventId,

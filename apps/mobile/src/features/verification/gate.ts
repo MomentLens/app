@@ -124,7 +124,14 @@ export class VerificationGate {
       (answer.status === 409 &&
         ['unverified', 'duplicate', 'sub_event_missing'].includes(String(answer.code)));
     try {
-      if (consumed) await (await this.deps.readings()).consume(userId, eventId, records);
+      if (consumed)
+        await (
+          await this.deps.readings()
+        ).consume(
+          userId,
+          eventId,
+          records.filter((record) => record.kind === 'gps'),
+        );
     } finally {
       // Every answered or interrupted pre-flight carrying a fix rechecks both server decisions
       // and venue edits. The next GPS attempt keeps its one-minute cadence (D-155).
