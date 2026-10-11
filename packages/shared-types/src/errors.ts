@@ -27,6 +27,7 @@ export const ErrorCode = z.enum([
   'sub_event_missing',
   'membership_changed',
   'invite_changed',
+  'venue_qr_changed',
   // 422
   'event_full',
   'too_many_unfinished',

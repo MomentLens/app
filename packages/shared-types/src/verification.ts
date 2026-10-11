@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { MAX_SUB_EVENTS, Timestamp, VenueInput } from './event';
 import { subEventStatus } from './sub-event';
 import type { SubEvent } from './sub-event';
+import { VenueQrPayload } from './venue-qr';
 
 /**
  * One location fix for a sub-event, held by the phone until pre-flight consumes it (D-89,
@@ -17,14 +18,33 @@ export const GpsReading = z.object({
 });
 export type GpsReading = z.infer<typeof GpsReading>;
 
-/** S-16 adds a `qr` member with its venue payload and scan time (D-85, D-155). */
+/** A submitted QR scan carries its own time; the server chooses its sub-event (D-85, D-156). */
+export const QrScan = z.strictObject({
+  kind: z.literal('qr'),
+  version: VenueQrPayload.shape.version,
+  venueId: VenueQrPayload.shape.venueId,
+  secret: VenueQrPayload.shape.secret,
+  recordedAt: Timestamp,
+});
+export type QrScan = z.infer<typeof QrScan>;
+
+/** GPS and QR evidence keep their own times and fields (D-155, D-156). */
 export const VerificationRecord = z.discriminatedUnion('kind', [
   GpsReading.extend({ kind: z.literal('gps') }),
+  QrScan,
 ]);
 export type VerificationRecord = z.infer<typeof VerificationRecord>;
 
-/** A pre-flight carries at most one event's 15 sub-events' readings (spec §4.17, D-155). */
-export const VerificationRecords = z.array(VerificationRecord).max(MAX_SUB_EVENTS);
+/** A pre-flight carries at most 15 records per kind, 30 together (spec §4.17, D-156). */
+export const VerificationRecords = z
+  .array(VerificationRecord)
+  .max(2 * MAX_SUB_EVENTS)
+  .refine(
+    (records) =>
+      records.filter((record) => record.kind === 'gps').length <= MAX_SUB_EVENTS &&
+      records.filter((record) => record.kind === 'qr').length <= MAX_SUB_EVENTS,
+    { message: 'Expected at most 15 GPS records and 15 QR records' },
+  );
 export type VerificationRecords = z.infer<typeof VerificationRecords>;
 
 interface Coordinates {

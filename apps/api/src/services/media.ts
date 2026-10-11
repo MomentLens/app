@@ -327,6 +327,8 @@ export async function preflightUpload(
     }
     const subEvents = new Map(schedule.map((subEvent) => [subEvent.id.toLowerCase(), subEvent]));
     for (const record of request.verifications) {
+      // S-16's API build forwards QR selections to the new RPC argument. This consumer is GPS-only.
+      if (record.kind !== 'gps') continue;
       const subEvent = subEvents.get(record.subEventId.toLowerCase());
       if (subEvent !== undefined && readingMatches(record, subEvent)) {
         verifiedSubEventIds.add(subEvent.id.toLowerCase());

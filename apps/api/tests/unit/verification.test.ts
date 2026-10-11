@@ -68,7 +68,7 @@ describe('GPS contracts', () => {
     );
   });
 
-  it('refuses an unknown record kind and a GPS record missing its accuracy', () => {
+  it('refuses an incomplete QR record and a GPS record missing its accuracy', () => {
     expect(VerificationRecords.safeParse([{ ...record, kind: 'qr' }]).success).toBe(false);
     expect(VerificationRecords.safeParse([{ ...record, accuracyM: undefined }]).success).toBe(
       false,
