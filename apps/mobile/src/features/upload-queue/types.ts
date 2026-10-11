@@ -11,6 +11,7 @@ export type QueueState =
 export type QueueStep = 'prepare' | 'preflight' | 'put_photo' | 'put_thumbnail' | 'complete';
 // The two states a release moves back to queued: S-31 for the album, S-15 for verification (D-146).
 export type WaitingState = 'waiting_album' | 'waiting_verification';
+export type VerificationScope = readonly string[] | 'all';
 export type StoppedReason =
   | 'event_full'
   | 'too_many_unfinished'

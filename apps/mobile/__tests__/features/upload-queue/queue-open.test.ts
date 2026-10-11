@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { DatabaseSync } from 'node:sqlite';
+import { QueryClient } from '@tanstack/react-query';
+import { GpsReadings } from '@/features/verification/readings';
 
 import type * as AuthModule from '@/stores/auth';
 import type * as QueueModule from '@/features/upload-queue/queue';
@@ -8,6 +10,8 @@ import type { QueueDatabase } from '@/features/upload-queue/store';
 const EVENT = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
 const SUB = '7c8d9e0f-1a2b-4c3d-9e4f-5a6b7c8d9e0f';
 const MEDIA = '11111111-1111-4111-8111-111111111111';
+const OTHER_SUB = '11111111-1111-4111-8111-111111111112';
+const mockQueryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
 // The queue's database, opened on node's SQLite as store.test.ts does.
 let database: DatabaseSync;
@@ -63,7 +67,7 @@ jest.mock('react-native-mmkv', () => ({
   }),
 }));
 jest.mock('@/lib/query-client', () => ({
-  queryClient: { getQueryCache: () => ({ subscribe: () => () => undefined }) },
+  queryClient: mockQueryClient,
 }));
 jest.mock('@/lib/supabase', () => ({
   supabase: {
@@ -106,12 +110,123 @@ beforeEach(() => {
   mockExclude.mockRejectedValue(new Error('Backup exclusion failed'));
   mockPreflight.mockClear();
   mockComplete.mockClear();
+  (
+    globalThis as typeof globalThis & { __momentlensStopUploads?: () => void }
+  ).__momentlensStopUploads?.();
+  mockQueryClient.clear();
   // A fresh module graph per test, so the queue's open promise starts unopened each time.
   jest.isolateModules(() => {
     queue = jest.requireActual<typeof QueueModule>('@/features/upload-queue/queue');
     auth = jest.requireActual<typeof AuthModule>('@/stores/auth');
   });
   auth.useAuthStore.setState({ status: 'signedIn', userId: 'A' });
+});
+
+async function until(check: () => Promise<boolean>) {
+  for (let i = 0; i < 100; i++) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('The queue never reached the expected state');
+}
+
+describe('S-15 queue lifecycle', () => {
+  it('recovers a kill after storing a fix but before releasing its waiting photo', async () => {
+    const store = await queue.getQueue();
+    const item = await store.enqueue('A', EVENT, SUB, {
+      uri: 'file:///photo.jpg',
+      capturedAt: null,
+    });
+    await store.update('A', item.id, { state: 'waiting_verification' });
+    await new GpsReadings(store).save(
+      'A',
+      EVENT,
+      [
+        {
+          subEventId: SUB,
+          lat: 31,
+          lng: 74,
+          accuracyM: 10,
+          recordedAt: '2026-10-11T12:30:00.000Z',
+        },
+      ],
+      [SUB],
+    );
+    queue.startUploads();
+    await until(async () => (await store.listForEvent('A', EVENT))[0]?.state === 'uploaded');
+    expect(mockPreflight).toHaveBeenCalledWith(
+      'A',
+      EVENT,
+      expect.objectContaining({
+        verifications: [expect.objectContaining({ kind: 'gps', subEventId: SUB })],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(await new GpsReadings(store).list('A', EVENT)).toEqual([]);
+  });
+
+  it("releases only a fresh event answer's sub-events without clearing another photo backoff", async () => {
+    const store = await queue.getQueue();
+    const first = await store.enqueue('A', EVENT, SUB, {
+      uri: 'file:///first.jpg',
+      capturedAt: null,
+    });
+    const second = await store.enqueue('A', EVENT, OTHER_SUB, {
+      uri: 'file:///second.jpg',
+      capturedAt: null,
+    });
+    const backingOff = await store.enqueue('A', 'another-event', SUB, {
+      uri: 'file:///third.jpg',
+      capturedAt: null,
+    });
+    for (const item of [first, second])
+      await store.update('A', item.id, { state: 'waiting_verification' });
+    queue.startUploads();
+    await queue.runUploads();
+    await store.update('A', backingOff.id, {
+      state: 'queued',
+      step: 'preflight',
+      nextRetryAt: Date.now() + 300_000,
+      retryCount: 6,
+    });
+    const due = (await store.listForEvent('A', 'another-event'))[0]!.nextRetryAt;
+    await mockQueryClient.fetchQuery({
+      queryKey: ['event', EVENT],
+      queryFn: async () => ({ verification: { everySubEvent: false, subEventIds: [SUB] } }),
+    });
+    await until(async () =>
+      (await store.listForEvent('A', EVENT)).some(
+        (item) => item.id === first.id && item.state === 'uploaded',
+      ),
+    );
+    expect(await store.listForEvent('A', EVENT)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: second.id, state: 'waiting_verification' }),
+      ]),
+    );
+    expect(await store.listForEvent('A', 'another-event')).toMatchObject([
+      { nextRetryAt: due, retryCount: 6 },
+    ]);
+  });
+
+  it('releases every waiting sub-event after the server reports a manual check-in', async () => {
+    const store = await queue.getQueue();
+    for (const subEventId of [SUB, OTHER_SUB]) {
+      const item = await store.enqueue('A', EVENT, subEventId, {
+        uri: 'file:///photo.jpg',
+        capturedAt: null,
+      });
+      await store.update('A', item.id, { state: 'waiting_verification' });
+    }
+    queue.startUploads();
+    await mockQueryClient.fetchQuery({
+      queryKey: ['event', EVENT],
+      queryFn: async () => ({ verification: { everySubEvent: true, subEventIds: [] } }),
+    });
+    await until(async () =>
+      (await store.listForEvent('A', EVENT)).every((item) => item.state === 'uploaded'),
+    );
+  });
 });
 
 describe('a failed backup exclusion', () => {
