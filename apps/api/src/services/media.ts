@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 
-import { readingMatches } from '@momentlens/shared-types';
+import { currentSubEvent, readingMatches } from '@momentlens/shared-types';
 import type {
   CompleteUploadResponse,
   MediaStatusRequest,
@@ -64,6 +64,15 @@ export interface NewUpload {
   uploadThumbKey: string;
   // Only ids accepted by the API's schedule check. SQL stores no GPS data (D-155).
   verifiedSubEventIds?: string[];
+  // SQL rechecks the current secret and scan-time winner under the event lock (D-156).
+  qrScans?: SelectedQrScan[];
+}
+
+export interface SelectedQrScan {
+  subEventId: string;
+  venueId: string;
+  secret: string;
+  recordedAt: string;
 }
 
 // What start_upload did (supabase/migrations/..._media_upload.sql). `created` inserted the row
@@ -208,6 +217,12 @@ export function startUploadParams(upload: NewUpload, limits: UploadLimits) {
     p_max_media: limits.maxMedia,
     p_max_unfinished: limits.maxUnfinished,
     p_verified_sub_event_ids: upload.verifiedSubEventIds ?? [],
+    p_qr_scans: (upload.qrScans ?? []).map((scan) => ({
+      sub_event_id: scan.subEventId,
+      venue_id: scan.venueId,
+      secret: scan.secret,
+      recorded_at: scan.recordedAt,
+    })),
   };
 }
 
@@ -304,7 +319,8 @@ export async function mediaStatus(
 
 // POST /events/{eventId}/media/preflight, for every active role alike (D-58). `created` is false
 // for a resume. The event comes from the path and the role from the membership, never the body.
-// The API judges readings with one schedule read after access and album checks (D-155).
+// The API judges GPS and selects QR targets with one schedule read after access and album checks
+// (D-155, D-156). Only SQL accepts a QR secret, under the lock shared by rotation and schedule writes.
 // start_upload records accepted check-ins, then checks the photo's sub-event, resume, duplicate,
 // verification and limits under the event lock (arch §4.1, D-122).
 export async function preflightUpload(
@@ -320,6 +336,7 @@ export async function preflightUpload(
   }
 
   const verifiedSubEventIds = new Set<string>();
+  const qrScans: SelectedQrScan[] = [];
   if (request.verifications?.length) {
     const schedule = await deps.media.verificationSchedule(eventId);
     if (schedule === null) {
@@ -327,32 +344,52 @@ export async function preflightUpload(
     }
     const subEvents = new Map(schedule.map((subEvent) => [subEvent.id.toLowerCase(), subEvent]));
     for (const record of request.verifications) {
-      // S-16's API build forwards QR selections to the new RPC argument. This consumer is GPS-only.
-      if (record.kind !== 'gps') continue;
-      const subEvent = subEvents.get(record.subEventId.toLowerCase());
-      if (subEvent !== undefined && readingMatches(record, subEvent)) {
-        verifiedSubEventIds.add(subEvent.id.toLowerCase());
+      if (record.kind === 'gps') {
+        const subEvent = subEvents.get(record.subEventId.toLowerCase());
+        if (subEvent !== undefined && readingMatches(record, subEvent)) {
+          verifiedSubEventIds.add(subEvent.id.toLowerCase());
+        }
+      } else {
+        const venueSchedule = schedule.filter(
+          (subEvent) => subEvent.venue.id.toLowerCase() === record.venueId.toLowerCase(),
+        );
+        const target = currentSubEvent(venueSchedule, new Date(record.recordedAt));
+        if (target !== null) {
+          qrScans.push({
+            subEventId: target.id.toLowerCase(),
+            venueId: target.venue.id.toLowerCase(),
+            secret: record.secret,
+            recordedAt: record.recordedAt,
+          });
+        }
       }
     }
   }
 
   const mediaId = randomUUID();
   const keys = uploadKeys(mediaId);
-  const result = await deps.media.start(
-    {
-      mediaId,
-      eventId,
-      subEventId: request.subEventId,
-      userId,
-      role,
-      contentHash: request.contentHash,
-      capturedAt: request.capturedAt ?? null,
-      uploadKey: keys.photo,
-      uploadThumbKey: keys.thumbnail,
-      verifiedSubEventIds: [...verifiedSubEventIds],
-    },
-    UPLOAD_LIMITS,
-  );
+  let result: StartResult;
+  try {
+    result = await deps.media.start(
+      {
+        mediaId,
+        eventId,
+        subEventId: request.subEventId,
+        userId,
+        role,
+        contentHash: request.contentHash,
+        capturedAt: request.capturedAt ?? null,
+        uploadKey: keys.photo,
+        uploadThumbKey: keys.thumbnail,
+        verifiedSubEventIds: [...verifiedSubEventIds],
+        qrScans,
+      },
+      UPLOAD_LIMITS,
+    );
+  } catch {
+    // A database error can echo a submitted secret. Never send it to logs or Sentry (D-156).
+    throw new Error('start_upload failed');
+  }
 
   switch (result.outcome) {
     case 'created':

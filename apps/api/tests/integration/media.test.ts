@@ -25,7 +25,12 @@ import type {
 import { uploadKeys } from '../../src/lib/keys';
 import type { VerifyToken } from '../../src/middleware/auth';
 import type { EventStore, MemberAccess } from '../../src/services/events';
-import { createMediaStore, preflightUpload, UPLOAD_LIMITS } from '../../src/services/media';
+import {
+  createMediaStore,
+  preflightUpload,
+  startUploadParams,
+  UPLOAD_LIMITS,
+} from '../../src/services/media';
 import type {
   CompleteResult,
   MediaDeps,
@@ -424,6 +429,7 @@ describe('POST /events/{eventId}/media/preflight', () => {
             uploadKey: keys.photo,
             uploadThumbKey: keys.thumbnail,
             verifiedSubEventIds: [],
+            qrScans: [],
           },
           limits: UPLOAD_LIMITS,
         },
@@ -822,6 +828,293 @@ describe('S-15 preflight verification', () => {
     expect(response.status).toBe(400);
     expect(media.scheduleReads).toEqual([]);
     expect(media.starts).toEqual([]);
+  });
+});
+
+describe('S-16 QR preflight', () => {
+  let scheduled: SubEvent;
+  type Scan = Extract<VerificationRecord, { kind: 'qr' }>;
+
+  beforeEach(() => {
+    scheduled = {
+      id: subEventId,
+      name: 'Mehndi',
+      description: null,
+      startsAt: '2026-12-10T14:00:00.000Z',
+      endsAt: '2026-12-10T18:00:00.000Z',
+      verificationRadiusM: 200,
+      venue: { id: randomUUID(), name: 'Hall', lat: 0, lng: 0 },
+    };
+    media.schedules.set(eventId, [scheduled]);
+  });
+  function scan(change: Partial<Scan> = {}): Scan {
+    return {
+      kind: 'qr',
+      version: 1,
+      venueId: scheduled.venue.id,
+      secret: 'ab'.repeat(32),
+      recordedAt: '2026-12-10T15:00:00.000Z',
+      ...change,
+    };
+  }
+  function selected(proof: Scan, target = scheduled) {
+    return {
+      subEventId: target.id,
+      venueId: target.venue.id,
+      secret: proof.secret,
+      recordedAt: proof.recordedAt,
+    };
+  }
+
+  it('selects at the scan time and forwards QR proof separately from accepted GPS ids', async () => {
+    const proof = scan({ venueId: scheduled.venue.id.toUpperCase() });
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({
+        capturedAt: '2026-12-11T15:00:00.000Z',
+        verifications: [proof],
+      }),
+    );
+    expect(response.status).toBe(201);
+    expect(media.scheduleReads).toEqual([eventId]);
+    expect(media.starts[0]?.upload).toMatchObject({
+      verifiedSubEventIds: [],
+      qrScans: [selected(proof)],
+    });
+    const params = startUploadParams(media.starts[0]!.upload, UPLOAD_LIMITS);
+    expect(params).toMatchObject({
+      p_verified_sub_event_ids: [],
+      p_qr_scans: [
+        {
+          sub_event_id: scheduled.id,
+          venue_id: scheduled.venue.id,
+          secret: proof.secret,
+          recorded_at: proof.recordedAt,
+        },
+      ],
+    });
+    expect(logs).toEqual([]);
+  });
+
+  it.each([
+    ['another event venue', { venueId: randomUUID() }],
+    ['before a live sub-event', { recordedAt: '2026-12-10T13:59:59.999Z' }],
+    ['at the excluded end', { recordedAt: '2026-12-10T18:00:00.000Z' }],
+  ] as const)('omits a scan %s without granting GPS verification', async (_case, change) => {
+    media.startAnswer = { outcome: 'unverified' };
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: [scan(change)] }),
+    );
+    expect(response.status).toBe(409);
+    await expect(errorCode(response)).resolves.toBe('unverified');
+    expect(media.starts[0]?.upload).toMatchObject({ verifiedSubEventIds: [], qrScans: [] });
+    expect(media.rows.size).toBe(0);
+    expect(puts).toEqual([]);
+  });
+
+  it('includes the scan-time start boundary', async () => {
+    const proof = scan({ recordedAt: scheduled.startsAt });
+    expect(
+      (
+        await send(
+          'POST',
+          preflightPath(),
+          'token-guest',
+          preflightBody({ verifications: [proof] }),
+        )
+      ).status,
+    ).toBe(201);
+    expect(media.starts[0]?.upload.qrScans).toEqual([selected(proof)]);
+  });
+
+  it('chooses the latest start, earliest end and lower id at the scanned venue only', async () => {
+    const first = {
+      ...scheduled,
+      id: 'a0000000-0000-4000-8000-000000000002',
+      startsAt: '2026-12-10T15:00:00.000Z',
+      endsAt: '2026-12-10T17:00:00.000Z',
+    };
+    const winner = { ...first, id: 'a0000000-0000-4000-8000-000000000001' };
+    const laterEnd = { ...first, id: randomUUID(), endsAt: scheduled.endsAt };
+    const foreign = {
+      ...first,
+      id: randomUUID(),
+      startsAt: '2026-12-10T15:30:00.000Z',
+      venue: { ...first.venue, id: randomUUID() },
+    };
+    media.schedules.set(eventId, [foreign, laterEnd, first, scheduled, winner]);
+    const proof = scan({ recordedAt: '2026-12-10T16:00:00.000Z' });
+    expect(
+      (
+        await send(
+          'POST',
+          preflightPath(),
+          'token-guest',
+          preflightBody({ verifications: [proof] }),
+        )
+      ).status,
+    ).toBe(201);
+    expect(media.starts[0]?.upload.qrScans).toEqual([selected(proof, winner)]);
+  });
+
+  it.each(NOT_MEMBERS)('refuses %s before reading or forwarding QR proof', async (_case, token) => {
+    const response = await send(
+      'POST',
+      preflightPath(),
+      token,
+      preflightBody({ verifications: [scan()] }),
+    );
+    expect(response.status).toBe(403);
+    expect(media.scheduleReads).toEqual([]);
+    expect(media.starts).toEqual([]);
+  });
+
+  it('checks album access before reading or forwarding QR proof', async () => {
+    await expect(
+      preflightUpload(
+        serviceDeps(),
+        GUEST,
+        eventId,
+        { ...preflightBody(), verifications: [scan()] },
+        true,
+      ),
+    ).rejects.toMatchObject({ code: 'album_closed' });
+    expect(media.scheduleReads).toEqual([]);
+    expect(media.starts).toEqual([]);
+  });
+
+  it('leaves QR secret validation to SQL and preserves an unverified refusal without signing', async () => {
+    media.startAnswer = { outcome: 'unverified' };
+    const proof = scan({ secret: '00'.repeat(32) });
+    const response = await send(
+      'POST',
+      preflightPath(),
+      'token-guest',
+      preflightBody({ verifications: [proof], role: 'photographer', verified: true }),
+    );
+    expect(response.status).toBe(409);
+    await expect(errorCode(response)).resolves.toBe('unverified');
+    expect(media.starts[0]?.upload).toMatchObject({
+      role: 'guest',
+      userId: GUEST,
+      verifiedSubEventIds: [],
+      qrScans: [selected(proof)],
+    });
+    expect(media.rows.size).toBe(0);
+    expect(puts).toEqual([]);
+  });
+
+  it.each([
+    ['unverified', 409, 'unverified'],
+    ['sub_event_missing', 409, 'sub_event_missing'],
+    ['duplicate', 409, 'duplicate'],
+    ['full', 422, 'event_full'],
+    ['too_many', 422, 'too_many_unfinished'],
+  ] as const)(
+    'forwards check-in evidence despite a photo %s refusal',
+    async (outcome, status, code) => {
+      media.startAnswer = { outcome };
+      const proof = scan();
+      const response = await send(
+        'POST',
+        preflightPath(),
+        'token-guest',
+        preflightBody({ verifications: [proof] }),
+      );
+      expect(response.status).toBe(status);
+      await expect(errorCode(response)).resolves.toBe(code);
+      expect(media.starts[0]?.upload.qrScans).toEqual([selected(proof)]);
+      expect(puts).toEqual([]);
+    },
+  );
+
+  it('accepts 30 mixed records in one schedule read and separates each method', async () => {
+    const gps = {
+      kind: 'gps' as const,
+      subEventId,
+      lat: 0,
+      lng: 0,
+      accuracyM: 20,
+      recordedAt: scheduled.startsAt,
+    };
+    const verifications = [
+      ...Array.from({ length: 15 }, () => gps),
+      ...Array.from({ length: 15 }, () => scan()),
+    ];
+    expect(
+      (await send('POST', preflightPath(), 'token-guest', preflightBody({ verifications }))).status,
+    ).toBe(201);
+    expect(media.scheduleReads).toEqual([eventId]);
+    expect(media.starts[0]?.upload.verifiedSubEventIds).toEqual([subEventId]);
+    expect(media.starts[0]?.upload.qrScans).toHaveLength(15);
+  });
+
+  it.each(['qr', 'mixed'] as const)(
+    'refuses excessive %s records before a schedule read or write',
+    async (kind) => {
+      const verifications: VerificationRecord[] = Array.from({ length: 16 }, () => scan());
+      if (kind === 'mixed')
+        verifications.push(
+          ...Array.from({ length: 15 }, () => ({
+            kind: 'gps' as const,
+            subEventId,
+            lat: 0,
+            lng: 0,
+            accuracyM: 20,
+            recordedAt: scheduled.startsAt,
+          })),
+        );
+      const response = await send(
+        'POST',
+        preflightPath(),
+        'token-guest',
+        preflightBody({ verifications }),
+      );
+      expect(response.status).toBe(400);
+      expect(media.scheduleReads).toEqual([]);
+      expect(media.starts).toEqual([]);
+    },
+  );
+
+  it.each([{ version: 2 }, { secret: 'bad' }, { subEventId: randomUUID() }, { verified: true }])(
+    'refuses malformed or client-selected QR fields %j before any write',
+    async (change) => {
+      const response = await send(
+        'POST',
+        preflightPath(),
+        'token-guest',
+        preflightBody({ verifications: [{ ...scan(), ...change }] }),
+      );
+      expect(response.status).toBe(400);
+      expect(media.scheduleReads).toEqual([]);
+      expect(media.starts).toEqual([]);
+    },
+  );
+
+  it('keeps QR proof out of logs when the upload transaction fails', async () => {
+    const proof = scan();
+    const start = jest
+      .spyOn(media, 'start')
+      .mockRejectedValueOnce(new Error(`DB refused ${proof.secret}`));
+    try {
+      const response = await send(
+        'POST',
+        preflightPath(),
+        'token-guest',
+        preflightBody({ verifications: [proof] }),
+      );
+      expect(response.status).toBe(500);
+      const body = await response.text();
+      expect(body).not.toContain(proof.secret);
+      expect(JSON.stringify(logs)).not.toContain(proof.secret);
+    } finally {
+      start.mockRestore();
+    }
   });
 });
 
