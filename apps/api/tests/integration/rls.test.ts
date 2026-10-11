@@ -77,6 +77,7 @@ import {
   createSubEventStore,
   updateSubEventParams,
 } from '../../src/services/sub-events';
+import { createVenueQrStore } from '../../src/services/venue-qrs';
 
 // A test here makes up to about 20 requests in sequence to the dev project in Frankfurt, two of
 // them account creations, and from a GitHub runner that passed Jest's default 5 seconds.
@@ -2794,27 +2795,37 @@ if (project === null) {
         });
 
         async function qrList(eventId: string, actorId: string) {
-          const result = await admin.rpc('list_venue_qrs', {
-            p_event_id: eventId,
-            p_actor_id: actorId,
-          });
-          expect(result.error).toBeNull();
-          return z
-            .object({ outcome: z.string(), venue_qrs: z.array(Credential).optional() })
-            .parse(result.data);
+          const result = await createVenueQrStore(admin).list(eventId, actorId);
+          return z.object({ outcome: z.string(), venue_qrs: z.array(Credential).optional() }).parse(
+            result.outcome === 'listed'
+              ? {
+                  outcome: result.outcome,
+                  venue_qrs: result.venueQrs.map((qr) => ({
+                    venue_id: qr.venueId,
+                    venue_name: qr.venueName,
+                    secret: qr.payload.secret,
+                  })),
+                }
+              : result,
+          );
         }
 
         async function rotate(eventId: string, actorId: string, venueId: string, secret: string) {
-          const result = await admin.rpc('regenerate_venue_qr', {
-            p_event_id: eventId,
-            p_actor_id: actorId,
-            p_venue_id: venueId,
-            p_expected_secret: secret,
+          const result = await createVenueQrStore(admin).regenerate(eventId, actorId, venueId, {
+            expectedSecret: secret,
           });
-          expect(result.error).toBeNull();
-          return z
-            .object({ outcome: z.string(), venue_qr: Credential.optional() })
-            .parse(result.data);
+          return z.object({ outcome: z.string(), venue_qr: Credential.optional() }).parse(
+            result.outcome === 'regenerated'
+              ? {
+                  outcome: result.outcome,
+                  venue_qr: {
+                    venue_id: result.venueQr.venueId,
+                    venue_name: result.venueQr.venueName,
+                    secret: result.venueQr.payload.secret,
+                  },
+                }
+              : result,
+          );
         }
 
         async function credential(eventId: string, actorId: string, venueId: string) {
@@ -2873,6 +2884,200 @@ if (project === null) {
           const upload = newUpload(setup.event.id, sub.id, g.id, { verifiedSubEventIds: [] });
           return { ...setup, a, g, sub, qr, scan, upload };
         }
+
+        const qrApiDeps = (mediaStore = media) => ({
+          events: store,
+          media: mediaStore,
+          logger: silent,
+          presignPut: () => Promise.resolve('https://uploads.invalid/signed'),
+          objectSize: () => Promise.resolve(null),
+          deleteObject: () => Promise.resolve(),
+        });
+
+        it('accepts QR through API preflight and retains the server method and time on a GPS retry', async () => {
+          const f = await fixture();
+          const request = {
+            contentHash: hash(),
+            subEventId: f.mehndi,
+            verifications: [
+              {
+                kind: 'qr' as const,
+                version: 1 as const,
+                venueId: f.qr.venue_id,
+                secret: f.qr.secret,
+                recordedAt: f.scan.recorded_at,
+              },
+            ],
+          };
+          await expect(
+            preflightUpload(qrApiDeps(), f.g.id, f.event.id, request),
+          ).resolves.toMatchObject({ created: true });
+          const before = await qrRows(f.g.id);
+          expect(before).toEqual([
+            {
+              user_id: f.g.id,
+              sub_event_id: f.mehndi,
+              method: 'qr',
+              verified_at: expect.any(String),
+            },
+          ]);
+          await expect(
+            preflightUpload(qrApiDeps(), f.g.id, f.event.id, {
+              ...request,
+              verifications: [
+                {
+                  kind: 'gps',
+                  subEventId: f.mehndi,
+                  lat: f.sub.venue.lat,
+                  lng: f.sub.venue.lng,
+                  accuracyM: 0,
+                  recordedAt: f.scan.recorded_at,
+                },
+              ],
+            }),
+          ).resolves.toMatchObject({ created: false });
+          await expect(qrRows(f.g.id)).resolves.toEqual(before);
+        });
+
+        it('retains a QR check-in for Y when API preflight refuses the photo in X', async () => {
+          const f = await fixture();
+          await expect(
+            preflightUpload(qrApiDeps(), f.g.id, f.event.id, {
+              contentHash: hash(),
+              subEventId: f.baraat,
+              verifications: [
+                {
+                  kind: 'qr',
+                  version: 1,
+                  venueId: f.qr.venue_id,
+                  secret: f.qr.secret,
+                  recordedAt: f.scan.recorded_at,
+                },
+              ],
+            }),
+          ).rejects.toMatchObject({ code: 'unverified', status: 409 });
+          expect((await qrRows(f.g.id)).map((row) => [row.sub_event_id, row.method])).toEqual([
+            [f.mehndi, 'qr'],
+          ]);
+          await expect(countMedia(f.event.id)).resolves.toBe(0);
+        });
+
+        it('refuses another events real QR and accepts valid GPS alongside an incorrect QR secret', async () => {
+          const f = await fixture();
+          const foreign = await eventWithSchedule(f.a.id);
+          const foreignSub = (await subEvents.schedule(foreign.event.id))?.[0];
+          if (!foreignSub) throw new Error('Expected the foreign event schedule');
+          const foreignQr = await credential(foreign.event.id, f.a.id, foreignSub.venue.id);
+          await expect(
+            preflightUpload(qrApiDeps(), f.g.id, f.event.id, {
+              contentHash: hash(),
+              subEventId: f.mehndi,
+              verifications: [
+                {
+                  kind: 'qr',
+                  version: 1,
+                  venueId: foreignQr.venue_id,
+                  secret: foreignQr.secret,
+                  recordedAt: foreignSub.startsAt,
+                },
+              ],
+            }),
+          ).rejects.toMatchObject({ code: 'unverified' });
+          await expect(qrRows(f.g.id)).resolves.toEqual([]);
+          const wrongSecret = (f.qr.secret.startsWith('0') ? '1' : '0') + f.qr.secret.slice(1);
+          await expect(
+            preflightUpload(qrApiDeps(), f.g.id, f.event.id, {
+              contentHash: hash(),
+              subEventId: f.mehndi,
+              verifications: [
+                {
+                  kind: 'qr',
+                  version: 1,
+                  venueId: f.qr.venue_id,
+                  secret: wrongSecret,
+                  recordedAt: f.scan.recorded_at,
+                },
+                {
+                  kind: 'gps',
+                  subEventId: f.mehndi,
+                  lat: f.sub.venue.lat,
+                  lng: f.sub.venue.lng,
+                  accuracyM: 0,
+                  recordedAt: f.scan.recorded_at,
+                },
+              ],
+            }),
+          ).resolves.toMatchObject({ created: true });
+          expect((await qrRows(f.g.id)).map((row) => row.method)).toEqual(['gps']);
+        });
+
+        it('gives two concurrent API rotations of one displayed secret one winner', async () => {
+          const f = await fixture();
+          const qrStore = createVenueQrStore(admin);
+          const results = await Promise.all([
+            qrStore.regenerate(f.event.id, f.a.id, f.qr.venue_id, { expectedSecret: f.qr.secret }),
+            qrStore.regenerate(f.event.id, f.a.id, f.qr.venue_id, { expectedSecret: f.qr.secret }),
+          ]);
+          expect(results.map((result) => result.outcome).sort()).toEqual([
+            'regenerated',
+            'venue_qr_changed',
+          ]);
+          const winner = results.find((result) => result.outcome === 'regenerated');
+          expect(winner?.venueQr.payload.secret).not.toBe(f.qr.secret);
+          expect((await credential(f.event.id, f.a.id, f.qr.venue_id)).secret).toBe(
+            winner?.venueQr.payload.secret,
+          );
+        });
+
+        it.each(['rotation', 'schedule', 'removal'] as const)(
+          'refuses a %s between API schedule selection and SQL acceptance',
+          async (change) => {
+            const f = await fixture();
+            const raced = {
+              ...media,
+              async verificationSchedule(eventId: string) {
+                const snapshot = await media.verificationSchedule(eventId);
+                if (change === 'rotation') {
+                  expect(
+                    (await rotate(f.event.id, f.a.id, f.qr.venue_id, f.qr.secret)).outcome,
+                  ).toBe('regenerated');
+                } else if (change === 'schedule') {
+                  const updated = await subEvents.update(f.event.id, f.baraat, {
+                    venue: { id: f.sub.venue.id },
+                    startsAt: iso(T0 + HOUR),
+                    endsAt: iso(T0 + 2 * HOUR),
+                  });
+                  expect(updated.outcome).toBe('updated');
+                } else {
+                  const removed = await admin
+                    .from('membership')
+                    .update({ status: 'removed' })
+                    .eq('event_id', f.event.id)
+                    .eq('user_id', f.g.id);
+                  expect(removed.error).toBeNull();
+                }
+                return snapshot;
+              },
+            };
+            await expect(
+              preflightUpload(qrApiDeps(raced), f.g.id, f.event.id, {
+                contentHash: hash(),
+                subEventId: f.mehndi,
+                verifications: [
+                  {
+                    kind: 'qr',
+                    version: 1,
+                    venueId: f.qr.venue_id,
+                    secret: f.qr.secret,
+                    recordedAt: f.scan.recorded_at,
+                  },
+                ],
+              }),
+            ).rejects.toMatchObject({ code: change === 'removal' ? 'not_member' : 'unverified' });
+            await expect(qrRows(f.g.id)).resolves.toEqual([]);
+            await expect(countMedia(f.event.id)).resolves.toBe(0);
+          },
+        );
 
         it('lists one credential per venue and permits management on archived events', async () => {
           const f = await fixture();
