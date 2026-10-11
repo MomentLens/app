@@ -19,4 +19,5 @@ module.exports = {
   },
   // Expo dropped Watchman for Metro in SDK 56, and apps/api turns it off for the same reason.
   watchman: false,
+  maxWorkers: 2,
 };
