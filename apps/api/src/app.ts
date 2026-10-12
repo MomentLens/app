@@ -4,7 +4,11 @@ import type { Express } from 'express';
 import helmet from 'helmet';
 import type { Logger } from 'pino';
 
-import { attendeeMutationController, listAttendeesController } from './controllers/attendees';
+import {
+  attendeeMutationController,
+  forceVerifyAttendeeController,
+  listAttendeesController,
+} from './controllers/attendees';
 import {
   createCoverUploadController,
   createEventController,
@@ -127,6 +131,7 @@ export function createApp(deps: AppDeps): Express {
       role: attendeeMutationController(deps.events, deps.attendees, 'role'),
       remove: attendeeMutationController(deps.events, deps.attendees, 'remove'),
       block: attendeeMutationController(deps.events, deps.attendees, 'block'),
+      forceVerify: forceVerifyAttendeeController(deps.events, deps.attendees),
     }),
   );
   app.use(

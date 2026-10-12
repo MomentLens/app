@@ -5,6 +5,8 @@ import {
   BlockAttendeeResponse,
   ChangeAttendeeRoleRequest,
   ChangeAttendeeRoleResponse,
+  ForceVerifyAttendeeRequest,
+  ForceVerifyAttendeeResponse,
   ListAttendeesRequest,
   ListAttendeesResponse,
   RemoveAttendeeRequest,
@@ -13,7 +15,7 @@ import {
 
 import { authenticatedUser } from '../middleware/auth';
 import { parseInput, PathId } from '../middleware/body';
-import { listAttendees, mutateAttendee } from '../services/attendees';
+import { forceVerifyAttendee, listAttendees, mutateAttendee } from '../services/attendees';
 import type { AttendeeAction, AttendeeStore } from '../services/attendees';
 import type { EventStore } from '../services/events';
 
@@ -63,5 +65,23 @@ export function attendeeMutationController(
           ? RemoveAttendeeResponse
           : BlockAttendeeResponse;
     res.set('Cache-Control', 'no-store').json(response.parse(result));
+  };
+}
+
+export function forceVerifyAttendeeController(events: EventStore, attendees: AttendeeStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const userId = parseInput(PathId, req.params.userId);
+    const request = parseInput(ForceVerifyAttendeeRequest, req.body);
+    const result = await forceVerifyAttendee(
+      events,
+      attendees,
+      eventId,
+      id,
+      userId,
+      request.expectedVersion,
+    );
+    res.set('Cache-Control', 'no-store').json(ForceVerifyAttendeeResponse.parse(result));
   };
 }
