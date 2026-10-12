@@ -5,8 +5,16 @@ import type { QueueCounts } from '@/features/upload-queue/types';
 
 export function QueueBanner({ counts }: { counts: QueueCounts }) {
   const [expanded, setExpanded] = useState(true);
-  if (!counts.waiting && !counts.uploading) return null;
-  const label = `${counts.waiting} waiting · ${counts.uploading} uploading`;
+  const label = [
+    { count: counts.queued, text: 'queued' },
+    { count: counts.waitingAlbum, text: 'waiting for album' },
+    { count: counts.waitingVerification, text: 'waiting to check in' },
+    { count: counts.uploading, text: 'uploading' },
+  ]
+    .filter((segment) => segment.count > 0)
+    .map((segment) => segment.count + ' ' + segment.text)
+    .join(' · ');
+  if (!label) return null;
   return (
     <View className="mx-5 mb-4 overflow-hidden rounded-3xl ios:bg-surface android:mx-4 android:bg-surfaceContainer">
       <Pressable
