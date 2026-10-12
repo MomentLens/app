@@ -52,7 +52,7 @@ jobs:
       # numbers and ids, a note naming a slice that does not exist, a spec section nothing points
       # at, a Codex agent copy that drifted, and a crash in the brief builder. Retrieval never
       # fails the build; only this does. Then the format check, and lint, typecheck, test and the
-      # API build for every workspace package.
+      # API build for every workspace package, as many at once as the runner has cores.
       - run: node scripts/verify.mjs --strict docs format packages
 
   worker:
@@ -128,7 +128,9 @@ jobs:
 
       # test:rls sets REQUIRE_SUPABASE and --dev-sql fails without DATABASE_URL, so a missing
       # secret fails the run instead of skipping. Each SQL test makes its own pgmq queue inside a
-      # transaction that rolls back, so it never reads `jobs`.
+      # transaction that rolls back, so it never reads `jobs`. The two run at once, and test:rls
+      # runs the tests of each describe block side by side, since nearly all of the time is spent
+      # waiting on the dev project in Frankfurt.
       - name: Run the RLS and worker SQL tests that apply
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
