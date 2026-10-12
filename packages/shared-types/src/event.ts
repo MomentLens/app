@@ -237,6 +237,17 @@ export const ListEventsResponse = z.object({
 export type ListEventsResponse = z.infer<typeof ListEventsResponse>;
 
 /**
+ * Server coverage for one member in one event (D-155, D-157). `everySubEvent` covers a manual
+ * check-in or an exempt Admin or Photographer role. `subEventIds` names the member's recorded
+ * venue check-ins in this event. Evidence held only on a phone does not count here.
+ */
+export const VerificationState = z.object({
+  everySubEvent: z.boolean(),
+  subEventIds: z.array(z.uuid()).max(MAX_SUB_EVENTS),
+});
+export type VerificationState = z.infer<typeof VerificationState>;
+
+/**
  * GET /events/{eventId}. The event as GET /events lists it, read for one event by the Event shell
  * through `useEvent(id)`, which every tab shares (D-118). The request has no body.
  *
@@ -254,12 +265,7 @@ export type ListEventsResponse = z.infer<typeof ListEventsResponse>;
  */
 export const GetEventResponse = z.object({
   event: EventSummary,
-  verification: z
-    .object({
-      everySubEvent: z.boolean(),
-      subEventIds: z.array(z.uuid()).max(MAX_SUB_EVENTS),
-    })
-    .optional(),
+  verification: VerificationState.optional(),
 });
 export type GetEventResponse = z.infer<typeof GetEventResponse>;
 
