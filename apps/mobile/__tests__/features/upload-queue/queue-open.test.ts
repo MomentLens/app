@@ -131,6 +131,49 @@ async function until(check: () => Promise<boolean>) {
 }
 
 describe('S-15 queue lifecycle', () => {
+  it('recovers a kill after storing a QR scan and before releasing its waiting photo', async () => {
+    const store = await queue.getQueue();
+    const item = await store.enqueue('A', EVENT, SUB, {
+      uri: 'file:///photo.jpg',
+      capturedAt: null,
+    });
+    await store.update('A', item.id, { state: 'waiting_verification' });
+    await (
+      await queue.getQrScans()
+    ).save(
+      'A',
+      EVENT,
+      {
+        kind: 'qr',
+        version: 1,
+        venueId: EVENT,
+        secret: 'a'.repeat(64),
+        recordedAt: '2026-10-11T12:30:00.000Z',
+      },
+      [
+        {
+          id: SUB,
+          name: 'Mehndi',
+          description: null,
+          startsAt: '2026-10-11T12:00:00.000Z',
+          endsAt: '2026-10-11T13:00:00.000Z',
+          verificationRadiusM: 200,
+          venue: { id: EVENT, name: 'Hall', lat: 31, lng: 74 },
+        },
+      ],
+    );
+    queue.startUploads();
+    await until(async () => (await store.listForEvent('A', EVENT))[0]?.state === 'uploaded');
+    expect(mockPreflight).toHaveBeenCalledWith(
+      'A',
+      EVENT,
+      expect.objectContaining({
+        verifications: [expect.objectContaining({ kind: 'qr', venueId: EVENT })],
+      }),
+      expect.any(AbortSignal),
+    );
+    expect(await (await queue.getQrScans()).list('A', EVENT)).toEqual([]);
+  });
   it('recovers a kill after storing a fix but before releasing its waiting photo', async () => {
     const store = await queue.getQueue();
     const item = await store.enqueue('A', EVENT, SUB, {

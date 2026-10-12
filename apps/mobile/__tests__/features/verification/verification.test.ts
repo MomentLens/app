@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { GetEventResponse, GpsReading, SubEvent } from '@momentlens/shared-types';
+import {
+  VerificationRecords,
+  type GetEventResponse,
+  type GpsReading,
+  type SubEvent,
+} from '@momentlens/shared-types';
 import { DatabaseSync } from 'node:sqlite';
 
 import { VerificationGate } from '@/features/verification/gate';
 import { GpsCheck, type GpsCheckDeps } from '@/features/verification/gps-check';
 import { GpsReadings } from '@/features/verification/readings';
+import { QrScans } from '@/features/verification/qr-scans';
 import { QueueStore, type QueueDatabase } from '@/features/upload-queue/store';
 import { UploadRunner, type RunnerDeps } from '@/features/upload-queue/runner';
 import type { QueueItem } from '@/features/upload-queue/types';
@@ -34,6 +40,7 @@ const photo = { uri: 'file:///picker.jpg', capturedAt: null };
 let database: DatabaseSync;
 let store: QueueStore;
 let readings: GpsReadings;
+let scans: QrScans;
 let user: string | null;
 let serverState: GetEventResponse['verification'];
 let serverRevision: number;
@@ -70,6 +77,7 @@ beforeEach(() => {
   database = new DatabaseSync(':memory:');
   store = createStore();
   readings = new GpsReadings(store);
+  scans = new QrScans(store);
   user = 'A';
   serverState = { everySubEvent: false, subEventIds: [] };
   serverRevision = 0;
@@ -77,6 +85,7 @@ beforeEach(() => {
   refetch = jest.fn();
   verification = new VerificationGate({
     readings: async () => readings,
+    scans: async () => scans,
     event: () => ({ verification: serverState }) as GetEventResponse,
     eventRevision: () => serverRevision,
     schedule: () => ({ subEvents: schedule }),
@@ -122,6 +131,81 @@ describe('account-owned GPS records', () => {
 });
 
 describe('the upload check-in gate', () => {
+  const scan = {
+    kind: 'qr' as const,
+    version: 1 as const,
+    venueId: EVENT,
+    secret: 'a'.repeat(64),
+    recordedAt: new Date(AT).toISOString(),
+  };
+
+  it('sends mixed GPS and QR evidence without the local QR sub-event id', async () => {
+    await readings.save('A', EVENT, [reading()], [SUB, OTHER_SUB]);
+    await scans.save('A', EVENT, scan, schedule);
+    const item = await store.enqueue('A', EVENT, SUB, photo);
+    expect(await verification.beforePreflight(item)).toEqual([{ ...reading(), kind: 'gps' }, scan]);
+  });
+
+  it('carries 15 GPS and 15 QR snapshots, and refuses a sixteenth kind or thirty-first record', async () => {
+    schedule = Array.from({ length: 15 }, (_, i) => ({
+      ...subEvent(`10000000-0000-4000-8000-${String(i).padStart(12, '0')}`),
+      venue: { ...subEvent().venue, id: `20000000-0000-4000-8000-${String(i).padStart(12, '0')}` },
+    }));
+    await readings.save(
+      'A',
+      EVENT,
+      schedule.map((sub) => reading(sub.id)),
+      schedule.map((sub) => sub.id),
+    );
+    for (const sub of schedule)
+      await scans.save('A', EVENT, { ...scan, venueId: sub.venue.id }, schedule);
+    const item = await store.enqueue('A', EVENT, schedule[0]!.id, photo);
+    const records = (await verification.beforePreflight(item))!;
+    expect(records).toHaveLength(30);
+    expect(VerificationRecords.safeParse(records).success).toBe(true);
+    expect(VerificationRecords.safeParse([...records, records[0]]).success).toBe(false);
+    const gps = records.filter((record) => record.kind === 'gps');
+    const qr = records.filter((record) => record.kind === 'qr');
+    expect(VerificationRecords.safeParse([...gps, gps[0]]).success).toBe(false);
+    expect(VerificationRecords.safeParse([...qr, qr[0]]).success).toBe(false);
+  });
+
+  it.each([
+    { status: 401 },
+    { status: 403 },
+    { status: 404 },
+    { status: 409, code: 'album_closed' },
+    {},
+    { status: 503 },
+  ])('retains QR evidence after %j', async (answer) => {
+    await scans.save('A', EVENT, scan, schedule);
+    await verification.settled('A', EVENT, [scan], answer);
+    expect(await scans.list('A', EVENT)).toHaveLength(1);
+  });
+
+  it.each([
+    null,
+    { status: 201 },
+    { status: 200 },
+    { status: 409, code: 'unverified' },
+    { status: 409, code: 'duplicate' },
+    { status: 409, code: 'sub_event_missing' },
+    { status: 422 },
+  ])('consumes exact QR evidence after %j', async (answer) => {
+    await scans.save('A', EVENT, scan, schedule);
+    await verification.settled('A', EVENT, [scan], answer);
+    expect(await scans.list('A', EVENT)).toEqual([]);
+  });
+
+  it('does not release a refused QR snapshot when local consumption fails', async () => {
+    await scans.save('A', EVENT, scan, schedule);
+    jest.spyOn(scans, 'consume').mockRejectedValue(new Error('disk unavailable'));
+    await expect(
+      verification.settled('A', EVENT, [scan], { status: 409, code: 'unverified' }),
+    ).rejects.toThrow();
+    expect(await verification.coverage('A', EVENT, [scan])).not.toContain(SUB);
+    expect(await verification.coverage('B', EVENT)).toEqual([]);
+  });
   function runnerFor(preflight: RunnerDeps['preflight']) {
     return new UploadRunner({
       store: async () => store,
@@ -390,6 +474,7 @@ describe('foreground GPS checks', () => {
       active: () => true,
       context: () => ({ eventId: EVENT, verification: serverState, subEvents: schedule }),
       readings: async () => readings,
+      scans: async () => scans,
       permission: async () => ({ granted: true, canAskAgain: true, status: 'granted' }),
       requestPermission: async () => ({ granted: false, canAskAgain: true, status: 'denied' }),
       asked: () => asked,
@@ -425,6 +510,25 @@ describe('foreground GPS checks', () => {
     expect(await check.pending()).toBe(false);
     await check.run();
     expect(position).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not ask for GPS for a sub-event already covered by a durable QR scan', async () => {
+    schedule = [subEvent()];
+    await scans.save(
+      'A',
+      EVENT,
+      {
+        kind: 'qr',
+        version: 1,
+        venueId: EVENT,
+        secret: 'a'.repeat(64),
+        recordedAt: new Date(AT).toISOString(),
+      },
+      schedule,
+    );
+    const permission = jest.fn(deps.permission);
+    await new GpsCheck({ ...deps, permission }).run();
+    expect(permission).not.toHaveBeenCalled();
   });
 
   it.each(['mocked', 'poor accuracy', 'unknown accuracy', 'outside', 'before start', 'at end'])(

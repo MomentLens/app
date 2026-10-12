@@ -21,11 +21,17 @@ describe('My Media check-in notice', () => {
     expect(checkInNotice([sub], at, state, [], [])).toEqual({
       liveNames: ['Mehndi'],
       endedPhotos: 0,
+      liveVenues: ['Hall'],
+      waitingPhotos: 0,
+      localNames: [],
     });
   });
-  it('hides check-in notices for server-exempt or locally covered sub-events', () => {
+  it('hides confirmed check-ins and distinguishes local recording', () => {
     expect(checkInNotice([sub], at, { everySubEvent: true, subEventIds: [] }, [], [])).toBeNull();
-    expect(checkInNotice([sub], at, state, ['sub'], [])).toBeNull();
+    expect(checkInNotice([sub], at, state, ['sub'], [])).toMatchObject({
+      liveNames: [],
+      localNames: ['Mehndi'],
+    });
     expect(
       checkInNotice([sub], at, { everySubEvent: false, subEventIds: ['sub'] }, [], []),
     ).toBeNull();
@@ -36,9 +42,23 @@ describe('My Media check-in notice', () => {
   it('shows the organizer notice only for photos waiting on an ended sub-event', () => {
     const photos = [{ subEventId: 'sub', state: 'waiting_verification' }] as QueueItem[];
     const end = new Date(sub.endsAt);
-    expect(checkInNotice([sub], end, state, [], photos)).toEqual({ liveNames: [], endedPhotos: 1 });
+    expect(checkInNotice([sub], end, state, [], photos)).toMatchObject({
+      liveNames: [],
+      endedPhotos: 1,
+    });
     expect(checkInNotice([sub], end, state, [], [])).toBeNull();
     expect(checkInNotice([sub], end, state, ['sub'], photos)).toBeNull();
     expect(checkInNotice([], end, state, [], photos)).toBeNull();
+  });
+  it("counts only this notice's uncovered live photos and deduplicates venue names", () => {
+    const photos = [
+      { subEventId: 'sub', state: 'waiting_verification' },
+      { subEventId: 'another', state: 'waiting_verification' },
+      { subEventId: 'sub', state: 'uploaded' },
+    ] as QueueItem[];
+    expect(checkInNotice([sub], at, state, [], photos)).toMatchObject({
+      waitingPhotos: 1,
+      liveVenues: ['Hall'],
+    });
   });
 });
