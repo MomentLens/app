@@ -3768,7 +3768,7 @@ if (project === null) {
     describe('attendee management (D-143)', () => {
       const attendees = createAttendeeStore(admin);
       const invites = createInviteStore(admin);
-      const page = { search: '', role: null, after: null };
+      const page = { search: '', role: null, subEventId: null, checkIn: null, after: null };
       async function row(eventId: string, userId: string) {
         const result = await admin
           .from('membership')
@@ -3886,6 +3886,7 @@ if (project === null) {
           'requestedAt',
           'role',
           'userId',
+          'verification',
           'version',
         ]);
         await expect(
@@ -4143,6 +4144,526 @@ if (project === null) {
         await expect(call(event.id, a.id, t.id, 'role', expected, 'guest')).resolves.toMatchObject({
           outcome: 'updated',
         });
+      });
+    });
+
+    describe('S-17 manual check-in and coverage (D-157)', () => {
+      const attendees = createAttendeeStore(admin);
+      const invites = createInviteStore(admin);
+      const page = { search: '', role: null, subEventId: null, checkIn: null, after: null };
+
+      async function member(eventId: string, userId: string) {
+        const result = await admin
+          .from('membership')
+          .select('*')
+          .eq('event_id', eventId)
+          .eq('user_id', userId)
+          .single();
+        expect(result.error).toBeNull();
+        return result.data as {
+          id: string;
+          access_version: number;
+          role: string;
+          status: string;
+          admin_verified_at: string | null;
+          requested_at: string;
+        };
+      }
+      async function edit(eventId: string, userId: string, fields: Record<string, unknown>) {
+        const result = await admin
+          .from('membership')
+          .update(fields)
+          .eq('event_id', eventId)
+          .eq('user_id', userId);
+        expect(result.error).toBeNull();
+      }
+      const version = (row: Awaited<ReturnType<typeof member>>) => ({
+        id: row.id,
+        version: String(row.access_version),
+      });
+      async function fixture() {
+        const a = await createNamedUser('Admin');
+        const t = await createNamedUser('Guest');
+        const x = await createNamedUser('Other');
+        const event = await createdEvent(a.id);
+        await addMember(event.id, t.id, 'guest', 'active');
+        const schedule = await admin
+          .from('sub_event')
+          .select('id')
+          .eq('event_id', event.id)
+          .order('starts_at');
+        expect(schedule.error).toBeNull();
+        const subEvents = (schedule.data ?? []).map((row: { id: string }) => row.id);
+        const before = await member(event.id, t.id);
+        return { a, t, x, event, subEvents, before, expected: version(before) };
+      }
+      async function verificationRows(userId: string) {
+        const result = await admin
+          .from('venue_verification')
+          .select('*')
+          .eq('user_id', userId)
+          .order('sub_event_id');
+        expect(result.error).toBeNull();
+        return result.data;
+      }
+      async function guestLink(eventId: string) {
+        const result = await admin
+          .from('invite')
+          .select('token')
+          .eq('event_id', eventId)
+          .eq('role', 'guest')
+          .single();
+        expect(result.error).toBeNull();
+        return result.data as { token: string };
+      }
+
+      it('refuses wrong-role, inactive, outsider and other-event actors without writing', async () => {
+        const { a, t, x, event, before, expected } = await fixture();
+        await createdEvent(x.id);
+        for (const state of [null, 'pending', 'removed', 'blocked', 'guest', 'photographer']) {
+          if (state === 'pending') await addMember(event.id, x.id, 'guest', 'pending');
+          else if (state !== null)
+            await edit(event.id, x.id, {
+              role: state === 'photographer' ? 'photographer' : 'guest',
+              status: ['guest', 'photographer'].includes(state) ? 'active' : state,
+            });
+          const outcome =
+            state === 'guest' || state === 'photographer' ? 'wrong_role' : 'not_member';
+          await expect(attendees.forceVerify(event.id, x.id, t.id, expected)).resolves.toEqual({
+            outcome,
+          });
+          await expect(attendees.list(event.id, x.id, page)).resolves.toEqual({ outcome });
+          await expect(member(event.id, t.id)).resolves.toEqual(before);
+        }
+        const deleted = await admin
+          .from('event')
+          .update({ deleted_at: iso(T0) })
+          .eq('id', event.id);
+        expect(deleted.error).toBeNull();
+        for (const eventId of [event.id, randomUUID()]) {
+          await expect(attendees.forceVerify(eventId, a.id, t.id, expected)).resolves.toEqual({
+            outcome: 'not_found',
+          });
+          await expect(attendees.list(eventId, a.id, page)).resolves.toEqual({
+            outcome: 'not_found',
+          });
+        }
+        await expect(member(event.id, t.id)).resolves.toEqual(before);
+      }, 120_000);
+
+      it('refuses absent, Admin, inactive and stale targets without a grant', async () => {
+        const { a, t, x, event, before, expected } = await fixture();
+        const other = await createdEvent(x.id);
+        await addMember(other.id, t.id, 'guest', 'active');
+        await expect(attendees.forceVerify(event.id, a.id, x.id, expected)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(attendees.forceVerify(event.id, a.id, a.id, expected)).resolves.toEqual({
+          outcome: 'invalid_request',
+        });
+        for (const stale of [
+          { ...expected, id: randomUUID() },
+          { ...expected, version: '2' },
+        ]) {
+          await expect(attendees.forceVerify(event.id, a.id, t.id, stale)).resolves.toEqual({
+            outcome: 'membership_changed',
+          });
+          await expect(member(event.id, t.id)).resolves.toEqual(before);
+        }
+        for (const status of ['pending', 'removed', 'blocked']) {
+          await edit(event.id, t.id, { status });
+          const current = await member(event.id, t.id);
+          await expect(
+            attendees.forceVerify(event.id, a.id, t.id, version(current)),
+          ).resolves.toEqual({ outcome: 'membership_changed' });
+          await expect(member(event.id, t.id)).resolves.toEqual(current);
+        }
+      }, 120_000);
+
+      it('preserves the first timestamp, counter, membership fields and venue rows across concurrent repeats', async () => {
+        const { a, t, event, subEvents, expected } = await fixture();
+        await edit(event.id, t.id, { last_viewed_at: iso(T0) });
+        expect(
+          (
+            await admin
+              .from('venue_verification')
+              .insert({ user_id: t.id, sub_event_id: subEvents[0]!, method: 'qr' })
+          ).error,
+        ).toBeNull();
+        const before = await member(event.id, t.id);
+        const venueBefore = await verificationRows(t.id);
+        const [first, second] = await Promise.all([
+          attendees.forceVerify(event.id, a.id, t.id, expected),
+          attendees.forceVerify(event.id, a.id, t.id, expected),
+        ]);
+        expect(first.outcome).toBe('verified');
+        expect(second).toEqual(first);
+        if (first.outcome !== 'verified') throw new Error('Manual grant refused');
+        expect(Number.isNaN(Date.parse(first.adminVerifiedAt))).toBe(false);
+        const after = await member(event.id, t.id);
+        expect(after).toEqual({ ...before, admin_verified_at: after.admin_verified_at });
+        expect(after.admin_verified_at).not.toBeNull();
+        await expect(attendees.forceVerify(event.id, a.id, t.id, expected)).resolves.toEqual(first);
+        await expect(verificationRows(t.id)).resolves.toEqual(venueBefore);
+        expect((await store.findForCaller(event.id, t.id))?.verification).toEqual({
+          everySubEvent: true,
+          subEventIds: [subEvents[0]!],
+        });
+        await edit(event.id, t.id, { role: 'photographer' });
+        const photographer = await member(event.id, t.id);
+        await expect(
+          attendees.forceVerify(event.id, a.id, t.id, version(photographer)),
+        ).resolves.toMatchObject({
+          outcome: 'verified',
+          adminVerifiedAt: first.adminVerifiedAt,
+          membership: { role: 'photographer' },
+        });
+      });
+
+      it('invalidates old actions after role changes, removal, blocking, rejoin and row recreation', async () => {
+        const { a, t, event, subEvents, expected } = await fixture();
+        expect(
+          (
+            await admin
+              .from('venue_verification')
+              .insert({ user_id: t.id, sub_event_id: subEvents[0]!, method: 'gps' })
+          ).error,
+        ).toBeNull();
+        const venueBefore = await verificationRows(t.id);
+        await expect(attendees.forceVerify(event.id, a.id, t.id, expected)).resolves.toMatchObject({
+          outcome: 'verified',
+        });
+        for (const fields of [
+          { role: 'photographer' },
+          { role: 'guest' },
+          { status: 'removed' },
+          { status: 'blocked' },
+        ]) {
+          await edit(event.id, t.id, fields);
+          await expect(attendees.forceVerify(event.id, a.id, t.id, expected)).resolves.toEqual({
+            outcome: 'membership_changed',
+          });
+        }
+        await edit(event.id, t.id, { status: 'removed' });
+        const link = await guestLink(event.id);
+        await expect(invites.join(t.id, link, 150)).resolves.toMatchObject({ outcome: 'rejoined' });
+        const rejoined = await member(event.id, t.id);
+        expect(rejoined.admin_verified_at).toBeNull();
+        await expect(verificationRows(t.id)).resolves.toEqual(venueBefore);
+        await expect(attendees.forceVerify(event.id, a.id, t.id, expected)).resolves.toEqual({
+          outcome: 'membership_changed',
+        });
+        expect((await admin.from('membership').delete().eq('id', rejoined.id)).error).toBeNull();
+        await addMember(event.id, t.id, 'guest', 'active');
+        await expect(
+          attendees.forceVerify(event.id, a.id, t.id, version(rejoined)),
+        ).resolves.toEqual({ outcome: 'membership_changed' });
+      }, 120_000);
+
+      it.each(['remove', 'block'] as const)(
+        'serializes manual check-in against %s without granting an inactive target',
+        async (action) => {
+          const { a, t, event, before, expected } = await fixture();
+          const [grant, change] = await Promise.all([
+            attendees.forceVerify(event.id, a.id, t.id, expected),
+            attendees.mutate(event.id, a.id, t.id, action, expected, null, 150),
+          ]);
+          expect(change.outcome).toBe('updated');
+          expect(['verified', 'membership_changed']).toContain(grant.outcome);
+          const after = await member(event.id, t.id);
+          expect(after.status).toBe(action === 'remove' ? 'removed' : 'blocked');
+          expect(after.access_version).toBe(before.access_version + 1);
+          expect(after.admin_verified_at === null).toBe(grant.outcome !== 'verified');
+          await expect(
+            attendees.forceVerify(event.id, a.id, t.id, version(after)),
+          ).resolves.toEqual({ outcome: 'membership_changed' });
+        },
+      );
+
+      it('refuses an old manual action during remove and rejoin while clearing only manual coverage', async () => {
+        const { a, t, event, subEvents, expected } = await fixture();
+        expect(
+          (
+            await admin
+              .from('venue_verification')
+              .insert({ user_id: t.id, sub_event_id: subEvents[0]!, method: 'qr' })
+          ).error,
+        ).toBeNull();
+        await attendees.forceVerify(event.id, a.id, t.id, expected);
+        await attendees.mutate(event.id, a.id, t.id, 'remove', expected, null, 150);
+        const link = await guestLink(event.id);
+        const [grant, join] = await Promise.all([
+          attendees.forceVerify(event.id, a.id, t.id, expected),
+          invites.join(t.id, link, 150),
+        ]);
+        expect(grant).toEqual({ outcome: 'membership_changed' });
+        expect(join.outcome).toBe('rejoined');
+        expect((await member(event.id, t.id)).admin_verified_at).toBeNull();
+        expect((await store.findForCaller(event.id, t.id))?.verification).toEqual({
+          everySubEvent: false,
+          subEventIds: [subEvents[0]!],
+        });
+      });
+
+      it('shares the upload lock and permits every sub-event after the grant without fabricating venue rows', async () => {
+        const { a, t, event, subEvents, expected } = await fixture();
+        const media = createMediaStore(admin);
+        const offer = (subEventId: string): NewUpload => {
+          const mediaId = randomUUID();
+          const keys = uploadKeys(mediaId);
+          return {
+            mediaId,
+            eventId: event.id,
+            subEventId,
+            userId: t.id,
+            role: 'guest',
+            contentHash: randomBytes(32).toString('hex'),
+            capturedAt: null,
+            uploadKey: keys.photo,
+            uploadThumbKey: keys.thumbnail,
+            verifiedSubEventIds: [],
+          };
+        };
+        const upload = offer(subEvents[0]!);
+        await expect(media.start(upload, UPLOAD_LIMITS)).resolves.toEqual({
+          outcome: 'unverified',
+        });
+        const [grant, concurrent] = await Promise.all([
+          attendees.forceVerify(event.id, a.id, t.id, expected),
+          media.start(upload, UPLOAD_LIMITS),
+        ]);
+        expect(grant.outcome).toBe('verified');
+        expect(['created', 'unverified']).toContain(concurrent.outcome);
+        const retry = await media.start(upload, UPLOAD_LIMITS);
+        expect(retry.outcome).toBe(concurrent.outcome === 'created' ? 'resumed' : 'created');
+        for (const subEventId of subEvents.slice(1)) {
+          await expect(media.start(offer(subEventId), UPLOAD_LIMITS)).resolves.toMatchObject({
+            outcome: 'created',
+          });
+        }
+        await expect(verificationRows(t.id)).resolves.toEqual([]);
+      });
+
+      it('filters one selected sub-event with manual coverage, role exemptions and event-scoped GPS or QR rows', async () => {
+        const { a, t, x, event, subEvents, expected } = await fixture();
+        const p = await createNamedUser('Photographer');
+        const u = await createNamedUser('Unverified');
+        await addMember(event.id, x.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        await addMember(event.id, u.id, 'guest', 'active');
+        const other = await createdEvent(a.id);
+        const foreign = await admin
+          .from('sub_event')
+          .select('id')
+          .eq('event_id', other.id)
+          .limit(1)
+          .single();
+        expect(foreign.error).toBeNull();
+        const foreignId = (foreign.data as { id: string }).id;
+        expect(
+          (
+            await admin.from('venue_verification').insert([
+              { user_id: x.id, sub_event_id: subEvents[0]!, method: 'gps' },
+              { user_id: x.id, sub_event_id: foreignId, method: 'qr' },
+            ])
+          ).error,
+        ).toBeNull();
+        await attendees.forceVerify(event.id, a.id, t.id, expected);
+        const ids = async (subEventId: string, checkIn: 'checked_in' | 'not_checked_in') => {
+          const result = await attendees.list(event.id, a.id, { ...page, subEventId, checkIn });
+          if (result.outcome !== 'listed') throw new Error('List refused');
+          return result.rows.map((row) => row.userId).sort();
+        };
+        await expect(ids(subEvents[0]!, 'checked_in')).resolves.toEqual(
+          [a.id, t.id, x.id, p.id].sort(),
+        );
+        await expect(ids(subEvents[0]!, 'not_checked_in')).resolves.toEqual([u.id]);
+        await expect(ids(subEvents[1]!, 'checked_in')).resolves.toEqual([a.id, t.id, p.id].sort());
+        await expect(ids(subEvents[1]!, 'not_checked_in')).resolves.toEqual([u.id, x.id].sort());
+        expect(
+          (
+            await admin
+              .from('venue_verification')
+              .insert({ user_id: x.id, sub_event_id: subEvents[1]!, method: 'qr' })
+          ).error,
+        ).toBeNull();
+        await expect(ids(subEvents[1]!, 'checked_in')).resolves.toEqual(
+          [a.id, t.id, x.id, p.id].sort(),
+        );
+        const listed = await attendees.list(event.id, a.id, {
+          ...page,
+          search: 'oThEr',
+          role: 'guest',
+          subEventId: subEvents[0]!,
+          checkIn: 'checked_in',
+        });
+        expect(listed).toMatchObject({
+          outcome: 'listed',
+          rows: [
+            {
+              userId: x.id,
+              verification: { everySubEvent: false, subEventIds: subEvents.slice(0, 2).sort() },
+            },
+          ],
+        });
+        for (const status of ['pending', 'removed', 'blocked']) {
+          await edit(event.id, x.id, { status });
+          const result = await attendees.list(event.id, a.id, page);
+          if (result.outcome !== 'listed') throw new Error('List refused');
+          expect(result.rows.some((row) => row.userId === x.id)).toBe(false);
+        }
+        const result = await attendees.list(event.id, a.id, page);
+        if (result.outcome !== 'listed') throw new Error('List refused');
+        expect(Object.keys(result.rows[0]!).sort()).toEqual([
+          'fullName',
+          'id',
+          'requestedAt',
+          'role',
+          'userId',
+          'verification',
+          'version',
+        ]);
+      }, 120_000);
+
+      it('refuses foreign, unknown and deleted filter targets and invalid direct filter arguments', async () => {
+        const { a, event, subEvents } = await fixture();
+        const other = await createdEvent(a.id);
+        const foreign = await admin
+          .from('sub_event')
+          .select('id')
+          .eq('event_id', other.id)
+          .limit(1)
+          .single();
+        expect(foreign.error).toBeNull();
+        expect((await admin.from('sub_event').delete().eq('id', subEvents[0]!)).error).toBeNull();
+        for (const subEventId of [
+          subEvents[0]!,
+          (foreign.data as { id: string }).id,
+          randomUUID(),
+        ]) {
+          await expect(attendees.list(event.id, a.id, { ...page, subEventId })).resolves.toEqual({
+            outcome: 'not_found',
+          });
+        }
+        await expect(
+          attendees.list(event.id, a.id, { ...page, checkIn: 'checked_in' }),
+        ).resolves.toEqual({ outcome: 'invalid_request' });
+        const direct = await admin.rpc('list_attendees', {
+          p_event_id: event.id,
+          p_actor_id: a.id,
+          p_search: '',
+          p_role: null,
+          p_after_name: null,
+          p_after_user_id: null,
+          p_sub_event_id: subEvents[1]!,
+          p_check_in: 'unknown',
+        });
+        expect(direct.error).toBeNull();
+        expect(direct.data).toEqual({ outcome: 'invalid_request' });
+      });
+
+      it('keeps literal search and name/user pagination bounded at 0, 1, 50 and 51 rows', async () => {
+        const { a, t, event } = await fixture();
+        const filtered = { ...page, role: 'photographer' as const };
+        await expect(attendees.list(event.id, a.id, filtered)).resolves.toMatchObject({ rows: [] });
+        await edit(event.id, t.id, { role: 'photographer' });
+        await expect(attendees.list(event.id, a.id, filtered)).resolves.toMatchObject({
+          rows: [{ userId: t.id }],
+        });
+        expect(
+          (await admin.from('profile').update({ full_name: 'Duplicate Name' }).eq('user_id', t.id))
+            .error,
+        ).toBeNull();
+        const people = await Promise.all(
+          Array.from({ length: 51 }, () => createNamedUser('Duplicate Name')),
+        );
+        expect(
+          (
+            await admin.from('membership').insert(
+              people.slice(0, 49).map((person) => ({
+                event_id: event.id,
+                user_id: person.id,
+                role: 'photographer',
+                status: 'active',
+              })),
+            )
+          ).error,
+        ).toBeNull();
+        const fifty = await attendees.list(event.id, a.id, filtered);
+        if (fifty.outcome !== 'listed') throw new Error('List refused');
+        expect(fifty.rows).toHaveLength(50);
+        await addMember(event.id, people[49]!.id, 'photographer', 'active');
+        const fiftyOne = await attendees.list(event.id, a.id, filtered);
+        if (fiftyOne.outcome !== 'listed') throw new Error('List refused');
+        expect(fiftyOne.rows).toHaveLength(51);
+        await addMember(event.id, people[50]!.id, 'photographer', 'active');
+        const first = await attendees.list(event.id, a.id, filtered);
+        if (first.outcome !== 'listed') throw new Error('List refused');
+        expect(first.rows).toHaveLength(51);
+        const last = first.rows[49]!;
+        const second = await attendees.list(event.id, a.id, {
+          ...filtered,
+          after: { name: last.fullName, userId: last.userId },
+        });
+        if (second.outcome !== 'listed') throw new Error('List refused');
+        expect(second.rows).toHaveLength(2);
+        expect([...first.rows.slice(0, 50), ...second.rows].map((row) => row.userId)).toEqual(
+          [t.id, ...people.map((person) => person.id)].sort(),
+        );
+      }, 120_000);
+
+      it('permits archived grants but denies anon and authenticated RPC execution and table access', async () => {
+        const { a, t, event, subEvents, expected } = await fixture();
+        expect(
+          (
+            await admin
+              .from('event')
+              .update({ archived_at: iso(T0) })
+              .eq('id', event.id)
+          ).error,
+        ).toBeNull();
+        const params = attendeeMutationParams(event.id, a.id, t.id, expected);
+        for (const client of [
+          createServerClient(project.url, project.publishableKey),
+          await signedInClient(a),
+        ]) {
+          const base = {
+            p_event_id: event.id,
+            p_actor_id: a.id,
+            p_search: '',
+            p_role: null,
+            p_after_name: null,
+            p_after_user_id: null,
+          };
+          for (const [name, args] of [
+            ['force_verify_attendee', params],
+            ['list_attendees', base],
+            [
+              'list_attendees',
+              { ...base, p_sub_event_id: subEvents[0]!, p_check_in: 'checked_in' },
+            ],
+          ] as const) {
+            const result = await client.rpc(name, args);
+            expect(result.data).toBeNull();
+            expect(result.error?.code).toBe('42501');
+          }
+          for (const table of ['membership', 'venue_verification']) {
+            const result = await client.from(table).select('*');
+            expect(result.error).toBeNull();
+            expect(result.data).toEqual([]);
+          }
+        }
+        expect((await member(event.id, t.id)).admin_verified_at).toBeNull();
+        await expect(attendees.forceVerify(event.id, a.id, t.id, expected)).resolves.toMatchObject({
+          outcome: 'verified',
+        });
+        await expect(
+          attendees.list(event.id, a.id, {
+            ...page,
+            subEventId: subEvents[0]!,
+            checkIn: 'checked_in',
+          }),
+        ).resolves.toMatchObject({ outcome: 'listed' });
       });
     });
 
