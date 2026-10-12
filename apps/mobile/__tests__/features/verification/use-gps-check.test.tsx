@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { GetEventResponse, GpsReading, SubEvent } from '@momentlens/shared-types';
 import { createRequire } from 'node:module';
-import { createElement, type ReactElement } from 'react';
+import { createElement, useEffect, type ReactElement } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import type { LocationObject } from 'expo-location';
 
-import { useGpsCheck } from '@/features/verification/use-gps-check';
+import { useGpsCheck, useLocationCheck } from '@/features/verification/use-gps-check';
 
 const EVENT = '00000000-0000-4000-8000-000000000001';
 const SUB = '00000000-0000-4000-8000-000000000003';
@@ -30,6 +30,7 @@ let mockChanged: (() => void) | undefined;
 const mockPermission = jest.fn(async () => ({ granted: true, canAskAgain: true }));
 const mockRequest = jest.fn(async () => ({ granted: false, canAskAgain: false }));
 const mockPosition = jest.fn<() => Promise<LocationObject>>();
+const mockServices = jest.fn(async () => true);
 const mockRelease = jest.fn<(...args: unknown[]) => Promise<number>>().mockResolvedValue(1);
 const mockSave = jest.fn(async (_owner: string, _eventId: string, fixes: readonly GpsReading[]) => {
   mockHeld = [...fixes];
@@ -41,6 +42,7 @@ jest.mock('expo-location', () => ({
   getForegroundPermissionsAsync: () => mockPermission(),
   requestForegroundPermissionsAsync: () => mockRequest(),
   getCurrentPositionAsync: () => mockPosition(),
+  hasServicesEnabledAsync: () => mockServices(),
 }));
 jest.mock('react-native-mmkv', () => ({
   createMMKV: () => ({
@@ -63,6 +65,7 @@ jest.mock('@/stores/auth', () => ({
 }));
 jest.mock('@/features/upload-queue/queue', () => ({
   getGpsReadings: async () => ({ list: async () => mockHeld, save: mockSave }),
+  getQrScans: async () => ({ list: async () => [] }),
   getQueue: async () => ({
     subscribe: (listener: () => void) => {
       mockChanged = listener;
@@ -126,6 +129,7 @@ beforeEach(() => {
   mockRelease.mockClear();
   mockSave.mockClear();
   mockPosition.mockReset().mockImplementation(async () => fix());
+  mockServices.mockReset().mockResolvedValue(true);
   jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
     changeState = listener;
     return { remove: jest.fn() };
@@ -139,6 +143,42 @@ afterEach(async () => {
 });
 
 describe('GPS lifecycle and cadence', () => {
+  it('shows location off after a refused permission without requesting it again', async () => {
+    let location!: ReturnType<typeof useLocationCheck>;
+    function PermissionProbe() {
+      const state = useLocationCheck(true);
+      useEffect(() => {
+        location = state;
+      }, [state]);
+      return null;
+    }
+    mockPermission.mockResolvedValue({ granted: false, canAskAgain: false });
+    await flush(() => {
+      tree = renderer.create(createElement(PermissionProbe));
+    });
+    expect(location.off).toBe(true);
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+  it('the location action prompts only after an explicit tap and wakes a new check', async () => {
+    let location!: ReturnType<typeof useLocationCheck>;
+    function PermissionProbe() {
+      const state = useLocationCheck(true);
+      useEffect(() => {
+        location = state;
+      }, [state]);
+      return null;
+    }
+    mockPermission.mockResolvedValue({ granted: false, canAskAgain: true });
+    await flush(() => {
+      tree = renderer.create(createElement(PermissionProbe));
+    });
+    expect(mockRequest).not.toHaveBeenCalled();
+    await renderer.act(async () => {
+      await location.enable();
+    });
+    expect(mockRequest).toHaveBeenCalledTimes(1);
+    expect(mockAsked).toBe(true);
+  });
   it('reads once on open and every 60 seconds despite cache and queue updates', async () => {
     await open();
     expect(mockPosition).toHaveBeenCalledTimes(1);

@@ -8,6 +8,7 @@ import {
 import type { LocationObject, LocationPermissionResponse } from 'expo-location';
 
 import type { GpsReadings } from './readings';
+import type { QrScans } from './qr-scans';
 
 export interface GpsContext {
   eventId: string;
@@ -20,6 +21,7 @@ export interface GpsCheckDeps {
   active(): boolean;
   context(): GpsContext;
   readings(): Promise<GpsReadings>;
+  scans(): Promise<QrScans>;
   permission(): Promise<Permission>;
   requestPermission(): Promise<Permission>;
   asked(): boolean;
@@ -58,7 +60,13 @@ export class GpsCheck {
       context.subEvents.map((sub) => sub.id),
     );
     const covered = new Set(
-      [...state.subEventIds, ...held.map((fix) => fix.subEventId)].map((id) => id.toLowerCase()),
+      [
+        ...state.subEventIds,
+        ...held.map((fix) => fix.subEventId),
+        ...(await (await this.deps.scans()).list(userId, context.eventId, context.subEvents)).map(
+          (scan) => scan.subEventId,
+        ),
+      ].map((id) => id.toLowerCase()),
     );
     return context.subEvents.filter(
       (sub) =>
