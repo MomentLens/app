@@ -422,10 +422,12 @@ export class QueueStore {
   }
 }
 export function queueCounts(rows: readonly QueueItem[]): QueueCounts {
-  return {
-    waiting: rows.filter((row) =>
-      ['queued', 'waiting_album', 'waiting_verification'].includes(row.state),
-    ).length,
-    uploading: rows.filter((row) => row.state === 'uploading').length,
-  };
+  const counts = { queued: 0, waitingAlbum: 0, waitingVerification: 0, uploading: 0 };
+  for (const row of rows) {
+    if (row.state === 'queued') counts.queued++;
+    else if (row.state === 'waiting_album') counts.waitingAlbum++;
+    else if (row.state === 'waiting_verification') counts.waitingVerification++;
+    else if (row.state === 'uploading') counts.uploading++;
+  }
+  return counts;
 }

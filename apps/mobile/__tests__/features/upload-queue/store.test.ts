@@ -71,7 +71,9 @@ describe('account-owned durable queue', () => {
     await store.enqueue('A', 'event', 'sub', photo);
     expect(await store.listForEvent('B', 'event')).toEqual([]);
     expect(queueCounts(await store.listForEvent('B', 'event'))).toEqual({
-      waiting: 0,
+      queued: 0,
+      waitingAlbum: 0,
+      waitingVerification: 0,
       uploading: 0,
     });
     expect(await store.remove('B', 'item-1')).toBe(false);
@@ -223,5 +225,50 @@ describe('account-owned durable queue', () => {
     });
     expect([...files].sort()).toEqual(['A/item-1/thumb.webp', 'A/item-1/upload.jpg']);
     expect(await store.prepared('A', 'item-1', 'A/item-1/upload.jpg', 'e'.repeat(64))).toBe(false);
+  });
+});
+
+describe('S-17 four stored queue counts', () => {
+  it('counts each state once and excludes retained, stopped and Local Only rows', async () => {
+    for (const state of [
+      'queued',
+      'waiting_album',
+      'waiting_verification',
+      'uploading',
+      'uploaded',
+      'published',
+      'stopped',
+      'local_only',
+    ] as const) {
+      const row = await store.enqueue('A', 'event', 'sub', photo);
+      await store.update('A', row.id, {
+        state,
+        ...(state === 'uploaded' || state === 'published' ? { mediaId: 'media-' + state } : {}),
+        ...(state === 'stopped' ? { stoppedReason: 'event_full' as const } : {}),
+      });
+    }
+    await store.enqueue('B', 'event', 'sub', photo);
+    await store.enqueue('A', 'other-event', 'sub', photo);
+    const expected = { queued: 1, waitingAlbum: 1, waitingVerification: 1, uploading: 1 };
+    expect(queueCounts(await store.listForEvent('A', 'event'))).toEqual(expected);
+    expect(queueCounts(await createStore().listForEvent('A', 'event'))).toEqual(expected);
+    expect(queueCounts(await store.listForEvent('B', 'event'))).toEqual({
+      ...expected,
+      waitingAlbum: 0,
+      waitingVerification: 0,
+      uploading: 0,
+    });
+    expect(queueCounts(await store.listForEvent('A', 'other-event'))).toEqual({
+      ...expected,
+      waitingAlbum: 0,
+      waitingVerification: 0,
+      uploading: 0,
+    });
+    expect(queueCounts(await store.listForEvent('B', 'other-event'))).toEqual({
+      queued: 0,
+      waitingAlbum: 0,
+      waitingVerification: 0,
+      uploading: 0,
+    });
   });
 });
