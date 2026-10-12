@@ -51,6 +51,8 @@ export interface QueuePhoto {
   capturedAt: string | null;
 }
 export interface QueueCounts {
-  waiting: number;
+  queued: number;
+  waitingAlbum: number;
+  waitingVerification: number;
   uploading: number;
 }
