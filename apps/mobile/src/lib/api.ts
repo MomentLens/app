@@ -11,6 +11,7 @@ import {
   ErrorResponse,
   GetEventResponse,
   GetEventSettingsResponse,
+  ForceVerifyAttendeeResponse,
   HealthResponse,
   JoinEventResponse,
   ListAlbumResponse,
@@ -41,6 +42,7 @@ import {
   type ChangeAttendeeRoleRequest,
   type CreateEventRequest,
   type ErrorCode,
+  type ForceVerifyAttendeeRequest,
   type JoinEventRequest,
   type ListAttendeesRequest,
   type MediaImagesRequest,
@@ -517,6 +519,22 @@ export async function blockAttendee(
   });
   if (response.status !== 200) throw await errorFrom('POST attendee block', response);
   return parseBody('POST attendee block', response, BlockAttendeeResponse);
+}
+
+export async function forceVerifyAttendee(
+  eventId: string,
+  userId: string,
+  body: ForceVerifyAttendeeRequest,
+): Promise<ForceVerifyAttendeeResponse> {
+  const path =
+    '/events/' +
+    encodeURIComponent(eventId) +
+    '/attendees/' +
+    encodeURIComponent(userId) +
+    '/force-verify';
+  const response = await authenticatedRequest(path, { method: 'POST', body });
+  if (response.status !== 200) throw await errorFrom('POST attendee force-verify', response);
+  return parseBody('POST attendee force-verify', response, ForceVerifyAttendeeResponse);
 }
 
 export async function listPendingRequests(
