@@ -20,7 +20,7 @@
 // .github/workflows/ci.yml, with the dev project's keys as repository secrets (D-106).
 import { randomBytes, randomUUID } from 'node:crypto';
 
-import { afterAll, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, describe, expect, it as jestIt, jest } from '@jest/globals';
 import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
 import { z } from 'zod';
@@ -83,6 +83,13 @@ import { createVenueQrStore } from '../../src/services/venue-qrs';
 // them account creations, and from a GitHub runner that passed Jest's default 5 seconds.
 jest.setTimeout(30_000);
 
+// Every test makes its own accounts and events, so the tests of one describe block run side by
+// side, up to test:rls's --maxConcurrency. Jest still runs the blocks one after another, and a
+// nested block before its parent's tests. One test at a time, the file took seven minutes on a
+// GitHub runner. A test added here must not depend on another test's rows, or on running before or
+// after it.
+const it = jestIt.concurrent;
+
 function projectFromEnv() {
   const url = process.env.SUPABASE_URL;
   const secretKey = process.env.SUPABASE_SECRET_KEY;
@@ -95,32 +102,35 @@ const required = process.env.REQUIRE_SUPABASE === '1';
 
 if (project === null) {
   if (required) {
-    it('has the dev project settings it needs', () => {
+    jestIt('has the dev project settings it needs', () => {
       throw new Error(
         'Set SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the dev project in the root .env',
       );
     });
   } else {
-    it.skip('needs the dev project; run pnpm --filter api test:rls', () => undefined);
+    jestIt.skip('needs the dev project; run pnpm --filter api test:rls', () => undefined);
   }
 } else {
   const silent = pino({ level: 'silent' });
   const admin = createServerClient(project.url, project.secretKey);
   const created: string[] = [];
 
-  // One delete per account the file made, in sequence. With S-04's tests that ran past the 30
-  // seconds above from a laptop, which failed the suite after every test had passed. A failed
-  // delete fails the suite. An account whose media rows outlived their event cannot be deleted, and
-  // would otherwise stay on the shared dev project unnoticed. An account a test already deleted
-  // answers 404.
+  // One delete per account the file made, ten at a time. One at a time, the 200 or so accounts
+  // took a minute from a GitHub runner. A failed delete fails the suite. An account whose media
+  // rows outlived their event cannot be deleted, and would otherwise stay on the shared dev project
+  // unnoticed. An account a test already deleted answers 404.
   afterAll(async () => {
     const failed: string[] = [];
-    for (const id of created) {
-      const { error } = await admin.auth.admin.deleteUser(id);
-      if (error && error.status !== 404) {
-        failed.push(`${id}: ${error.message}`);
+    const queue = [...created];
+    const deleteNext = async () => {
+      for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+        const { error } = await admin.auth.admin.deleteUser(id);
+        if (error && error.status !== 404) {
+          failed.push(`${id}: ${error.message}`);
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: 10 }, deleteNext));
     if (failed.length > 0) {
       throw new Error(`Could not delete ${failed.length} test accounts:\n${failed.join('\n')}`);
     }
@@ -1494,21 +1504,32 @@ if (project === null) {
         }
       });
 
+      // The events are read before their invites, because create_event writes both in one
+      // transaction and other tests create events meanwhile: read the other way round, an event
+      // created between the two reads would have no invites. Another run's cleanup may delete an
+      // event between them, so an event missing an invite is read again before it counts.
       it('has a Guest and a Photographer invite for every event, the ones older than S-03 included', async () => {
-        const [eventRows, inviteRows] = await Promise.all([
-          admin.from('event').select('id'),
-          admin.from('invite').select('event_id, role'),
-        ]);
+        const eventRows = await admin.from('event').select('id');
         expect(eventRows.error).toBeNull();
-        expect(inviteRows.error).toBeNull();
-        const issued = new Set(
-          ((inviteRows.data ?? []) as { event_id: string; role: string }[]).map(
-            (i) => `${i.event_id}:${i.role}`,
-          ),
-        );
-        const missing = ((eventRows.data ?? []) as { id: string }[]).filter(
-          (e) => !issued.has(`${e.id}:guest`) || !issued.has(`${e.id}:photographer`),
-        );
+        const ids = ((eventRows.data ?? []) as { id: string }[]).map((e) => e.id);
+        const issued = new Set<string>();
+        for (let start = 0; start < ids.length; start += 100) {
+          const inviteRows = await admin
+            .from('invite')
+            .select('event_id, role')
+            .in('event_id', ids.slice(start, start + 100));
+          expect(inviteRows.error).toBeNull();
+          for (const i of (inviteRows.data ?? []) as { event_id: string; role: string }[]) {
+            issued.add(`${i.event_id}:${i.role}`);
+          }
+        }
+        const missing: string[] = [];
+        for (const id of ids) {
+          if (issued.has(`${id}:guest`) && issued.has(`${id}:photographer`)) continue;
+          const event = await admin.from('event').select('id').eq('id', id).maybeSingle();
+          expect(event.error).toBeNull();
+          if (event.data !== null) missing.push(id);
+        }
         expect(missing).toEqual([]);
       });
 
