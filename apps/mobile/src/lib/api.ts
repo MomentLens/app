@@ -25,6 +25,8 @@ import {
   CompleteUploadResponse,
   PreflightUploadResponse,
   RegenerateInviteResponse,
+  ListVenueQrsResponse,
+  RegenerateVenueQrResponse,
   ResolveInviteResponse,
   RemoveAttendeeResponse,
   SetEventCoverResponse,
@@ -46,6 +48,7 @@ import {
   type PreflightUploadRequest,
   type RemoveAttendeeRequest,
   type RegenerateInviteRequest,
+  type RegenerateVenueQrRequest,
   type ResolveInviteRequest,
   type UpdateEventSettingsRequest,
   type UpdateSubEventRequest,
@@ -395,6 +398,34 @@ export async function listInvites(
   );
   if (response.status !== 200) throw await errorFrom('GET event invites', response);
   return parseBody('GET event invites', response, ListInvitesResponse);
+}
+
+export async function listVenueQrs(
+  owner: string,
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<ListVenueQrsResponse> {
+  const response = await authenticatedRequest(`/events/${eventId}/venue-qrs`, { signal }, owner);
+  if (response.status !== 200) throw await errorFrom('GET venue QRs', response);
+  return parseBody('GET venue QRs', response, ListVenueQrsResponse);
+}
+
+export async function regenerateVenueQr(
+  owner: string,
+  eventId: string,
+  venueId: string,
+  body: RegenerateVenueQrRequest,
+): Promise<RegenerateVenueQrResponse> {
+  const response = await authenticatedRequest(
+    `/events/${eventId}/venue-qrs/${venueId}/regenerate`,
+    { method: 'POST', body },
+    owner,
+  );
+  if (response.status !== 200) throw await errorFrom('POST venue QR regeneration', response);
+  const parsed = await parseBody('POST venue QR regeneration', response, RegenerateVenueQrResponse);
+  if (parsed.venueQr.venueId.toLowerCase() !== venueId.toLowerCase())
+    throw new ApiError('The response names another venue.', response.status);
+  return parsed;
 }
 
 // The API replaces the displayed id atomically. Only a refused 401 permits a resend.

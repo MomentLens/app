@@ -26,6 +26,7 @@ import { BottomTabInset } from '@/lib/platform';
 import { useAuthStore } from '@/stores/auth';
 import { checkInNotice } from '@/features/verification/notice';
 import { useHeldReadings } from '@/features/verification/use-held-readings';
+import { useLocationCheck } from '@/features/verification/use-gps-check';
 import { CheckInBanner } from './check-in-banner';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
@@ -64,6 +65,7 @@ function MediaContent({ eventId }: { eventId: string }) {
   const now = useNow(nextChange);
   const queue = useQueue(eventId);
   const checkIn = checkInNotice(subEvents, now, event.data?.verification, heldIds, queue.items);
+  const location = useLocationCheck(Boolean(checkIn?.liveNames.length));
   const captures = useCaptureDrafts(queue.userId, eventId);
   const status = useMediaStatus(queue.userId, eventId);
   const sections = useMemo(
@@ -276,7 +278,13 @@ function MediaContent({ eventId }: { eventId: string }) {
                     </Text>
                   </View>
                   <QueueBanner counts={queue.counts} />
-                  <CheckInBanner notice={checkIn} />
+                  <CheckInBanner
+                    notice={checkIn}
+                    location={location}
+                    onScan={() =>
+                      router.push({ pathname: '/scan-venue/[eventId]', params: { eventId } })
+                    }
+                  />
                   {schedule.data && !live ? <CameraHint schedule={subEvents} now={now} /> : null}
                   {problem || queue.error || captures.error || status.error || schedule.isError ? (
                     <View className="px-5 pb-3">

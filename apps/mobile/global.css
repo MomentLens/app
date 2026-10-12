@@ -45,6 +45,8 @@
   /* Over a photo, white on a dark shade in both modes. */
   --color-onPhoto: 255 255 255; /* #FFFFFF */
   --color-scrim: 0 0 0; /* #000000 */
+  --color-printInk: 0 0 0;
+  --color-printPaper: 255 255 255;
 }
 
 .dark:root {
