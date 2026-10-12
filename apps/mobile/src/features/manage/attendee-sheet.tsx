@@ -1,4 +1,4 @@
-import type { InviteRole } from '@momentlens/shared-types';
+import { subEventStatus, type InviteRole } from '@momentlens/shared-types';
 import { onlineManager } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  Pressable,
   ScrollView,
   Text,
   View,
@@ -22,6 +23,8 @@ import { eventHref } from '@/features/event-shell/tabs';
 import { useEvent } from '@/features/event-shell/use-event';
 import {
   attendeeActionsReady,
+  attendeeCheckInLabel,
+  canManuallyCheckIn,
   attendeeInitials,
   attendeeSheetExit,
   findAttendee,
@@ -31,6 +34,8 @@ import {
   type AttendeeAction,
   type AttendeeFilters,
 } from '@/features/manage/use-attendees';
+import { romanNumeral } from '@/features/schedule/schedule';
+import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useSheetBottomPadding } from '@/features/schedule/sheet-inset';
 
 const IOS = Platform.OS === 'ios';
@@ -67,6 +72,7 @@ export function AttendeeSheet({
   const [hadTarget] = useState(() => loadedAttendee(eventId, filters, userId) !== undefined);
   const query = useAttendees(eventId, filters, hadTarget);
   const event = useEvent(eventId);
+  const schedule = useSubEvents(eventId);
   const target = findAttendee(query.data, userId);
   // attendeeActionsReady reads the connection when it runs. Subscribing redraws the sheet when it
   // changes, so the rows disable as soon as the phone goes offline.
@@ -91,7 +97,12 @@ export function AttendeeSheet({
     router.dismissTo({ pathname: '/event/[id]/manage/attendees', params: { id: eventId } });
   }, [router, eventId]);
 
-  const found = hadTarget && target !== undefined;
+  const found =
+    hadTarget &&
+    target !== undefined &&
+    (!filters.subEventId ||
+      !schedule.data ||
+      schedule.data.subEvents.some((sub) => sub.id === filters.subEventId));
   useEffect(() => {
     const exit = attendeeSheetExit(found, eventRole, event.error);
     if (exit === 'list') returnToList();
@@ -113,6 +124,18 @@ export function AttendeeSheet({
       if (result.returnToList) returnToList();
       else setProblem(result.problem);
     } else if (action.kind !== 'role') returnToList();
+  }
+
+  function confirmManualCheckIn() {
+    if (!target || !ready || !canManuallyCheckIn(target)) return;
+    Alert.alert(
+      'Check in ' + target.fullName + ' manually?',
+      'This permits uploads to every past and future sub-event in this event. Their phone learns the check-in the next time it refreshes.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Check in', onPress: () => void act({ kind: 'verify' }) },
+      ],
+    );
   }
 
   function confirm(kind: 'remove' | 'block') {
@@ -206,6 +229,71 @@ export function AttendeeSheet({
             />
           </View>
         ) : null}
+        {target.role === 'guest' ? (
+          <Section
+            header="Check-in"
+            footer={
+              target.verification.everySubEvent
+                ? 'Checked in manually. Uploads are permitted for every sub-event, past and future.'
+                : 'Check-in counts per sub-event. Photos wait on their phone until the session they belong to is checked in.'
+            }>
+            {schedule.data?.subEvents.map((sub, index) => {
+              const covered = attendeeCheckInLabel(target, sub.id) !== 'Not checked in';
+              const upcoming = subEventStatus(sub, new Date()) === 'upcoming';
+              const label = covered ? 'Checked in' : upcoming ? 'Not started' : 'Not yet';
+              return (
+                <Row
+                  key={sub.id}
+                  title={romanNumeral(index + 1) + ' · ' + sub.name}
+                  value={label}
+                  leading={
+                    <Icon
+                      name={covered ? 'check' : upcoming ? 'calendar' : 'clock'}
+                      className={covered ? 'text-success' : 'text-textMuted'}
+                    />
+                  }
+                  accessibilityLabel={sub.name + ', ' + label}
+                />
+              );
+            }) ?? (
+              <Row
+                title={schedule.isError ? 'Check-ins could not be loaded' : 'Loading check-ins'}
+              />
+            )}
+            {schedule.data?.subEvents.length === 0 ? <Row title="No sub-events" /> : null}
+          </Section>
+        ) : (
+          <Text className="px-6 font-body text-body text-textSecondary">
+            Check-in not required.
+          </Text>
+        )}
+        {canManuallyCheckIn(target) ? (
+          IOS ? (
+            <Section footer="Counts for every sub-event, past and future. Use it when GPS and the venue QR both fail. Their phone picks it up the next time it refreshes.">
+              <Row
+                title="Check in manually"
+                action
+                leading={<Icon name="check" className="text-accentText" />}
+                onPress={confirmManualCheckIn}
+                disabled={!ready}
+              />
+            </Section>
+          ) : (
+            <View className="gap-2 px-4">
+              <Button
+                label="Check in manually"
+                icon="check"
+                variant="tonal"
+                onPress={confirmManualCheckIn}
+                disabled={!ready}
+              />
+              <Text className="px-4 font-caption text-caption text-textSecondary">
+                Counts for every sub-event, past and future. Use it when GPS and the venue QR both
+                fail. Their phone picks it up the next time it refreshes.
+              </Text>
+            </View>
+          )
+        ) : null}
         {target.role === 'admin' ? (
           <Text className="px-6 font-body text-body text-textSecondary">
             The creator remains the Admin. Their role and access cannot be changed here.
@@ -213,32 +301,86 @@ export function AttendeeSheet({
         ) : (
           <>
             <View ref={roleField} collapsable={false}>
-              <Section footer="For someone who joined through the wrong link.">
+              {IOS ? (
+                <Section footer="For someone who joined through the wrong link.">
+                  <Row
+                    title="Role"
+                    value={roleLabel}
+                    onPress={roleMenu}
+                    disabled={!ready}
+                    trailing={<Icon name="chevron-down" className="text-textMuted" size={16} />}
+                  />
+                </Section>
+              ) : (
+                <View className="gap-2 px-4">
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={'Role, ' + roleLabel}
+                    accessibilityState={{ disabled: !ready }}
+                    onPress={roleMenu}
+                    disabled={!ready}
+                    className="min-h-14 flex-row items-center gap-3 rounded-lg border border-borderStrong px-4 py-3">
+                    <View className="flex-1 gap-1">
+                      <Text className="font-caption text-caption text-textSecondary">Role</Text>
+                      <Text className="font-body text-body text-textPrimary">{roleLabel}</Text>
+                    </View>
+                    <Icon name="chevron-down" className="text-textSecondary" size={16} />
+                  </Pressable>
+                  <Text className="px-4 font-caption text-caption text-textSecondary">
+                    For someone who joined through the wrong link.
+                  </Text>
+                </View>
+              )}
+            </View>
+            {IOS ? (
+              <Section footer="Someone you remove can rejoin with a live invite. Someone you block cannot. Their photos stay in the album.">
                 <Row
-                  title="Role"
-                  value={roleLabel}
-                  onPress={roleMenu}
+                  title="Remove from event"
+                  destructive
+                  leading={<Icon name="user" className="text-danger" />}
+                  onPress={() => confirm('remove')}
                   disabled={!ready}
-                  trailing={<Icon name="chevron-down" className="text-textMuted" size={16} />}
+                />
+                <Row
+                  title="Block"
+                  destructive
+                  leading={<Icon name="ban" className="text-danger" />}
+                  onPress={() => confirm('block')}
+                  disabled={!ready}
                 />
               </Section>
-            </View>
-            <Section footer="Someone you remove can rejoin with a live invite. Someone you block cannot. Their photos stay in the album.">
-              <Row
-                title="Remove from event"
-                destructive
-                leading={<Icon name="user" className="text-danger" />}
-                onPress={() => confirm('remove')}
-                disabled={!ready}
-              />
-              <Row
-                title="Block"
-                destructive
-                leading={<Icon name="ban" className="text-danger" />}
-                onPress={() => confirm('block')}
-                disabled={!ready}
-              />
-            </Section>
+            ) : (
+              <View className="gap-2 px-4">
+                <View className="flex-row gap-2">
+                  {(['remove', 'block'] as const).map((kind) => (
+                    <Pressable
+                      key={kind}
+                      accessibilityRole="button"
+                      accessibilityLabel={kind === 'remove' ? 'Remove from event' : 'Block'}
+                      accessibilityState={{ disabled: !ready }}
+                      disabled={!ready}
+                      onPress={() => confirm(kind)}
+                      className={
+                        'min-h-14 flex-1 flex-row items-center justify-center gap-2 rounded-full border border-borderStrong px-3 ' +
+                        (!ready ? 'opacity-50' : 'active:opacity-70')
+                      }>
+                      <Icon
+                        name={kind === 'remove' ? 'user' : 'ban'}
+                        className="text-danger"
+                        size={20}
+                      />
+                      <Text className="font-body text-body text-danger">
+                        {kind === 'remove' ? 'Remove' : 'Block'}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <Text className="px-4 font-caption text-caption text-textSecondary">
+                  Someone you remove can rejoin with a live invite. Someone you block cannot. Their
+                  photos stay in the album.
+                </Text>
+              </View>
+            )}
             {busy ? (
               <ActivityIndicator
                 accessibilityLabel="Updating attendee"

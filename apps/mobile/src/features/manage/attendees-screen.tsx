@@ -1,8 +1,14 @@
-import { FULL_NAME_MAX, type Attendee, type MembershipRole } from '@momentlens/shared-types';
+import {
+  FULL_NAME_MAX,
+  type AttendeeWithVerification,
+  type ListAttendeesRequest,
+  type MembershipRole,
+} from '@momentlens/shared-types';
 import { FlashList } from '@shopify/flash-list';
 import { Stack, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActionSheetIOS,
   ActivityIndicator,
   Platform,
   Pressable,
@@ -13,13 +19,20 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AnchoredMenu, type MenuAnchor } from '@/components/ui/anchored-menu';
 import { BarIconButton } from '@/components/ui/bar-icon-button';
 import { Button } from '@/components/ui/button';
 import { FormMessage } from '@/components/ui/form-message';
 import { GLYPH, Glyph } from '@/components/ui/glyph';
 import { SearchField } from '@/components/ui/search-field';
 import { AttendeeInitials } from '@/features/manage/attendee-sheet';
-import { attendeeListItems, useAttendees } from '@/features/manage/use-attendees';
+import {
+  attendeeCheckInLabel,
+  attendeeListItems,
+  attendeeSubEvent,
+  useAttendees,
+} from '@/features/manage/use-attendees';
+import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useTokenColor } from '@/hooks/use-token-color';
 import { useAuthStore } from '@/stores/auth';
 
@@ -40,7 +53,54 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
   const [search, setSearch] = useState('');
   const [role, setRole] = useState<MembershipRole | undefined>();
   const [pulling, setPulling] = useState(false);
-  const query = useAttendees(eventId, { search, role });
+  const [checkIn, setCheckIn] = useState<ListAttendeesRequest['checkIn']>();
+  const schedule = useSubEvents(eventId);
+  const [selection, setSelection] = useState<{ eventId: string; id: string | null }>({
+    eventId,
+    id: null,
+  });
+  const selectedSubEvent = attendeeSubEvent(
+    schedule.data?.subEvents ?? [],
+    new Date(),
+    selection.eventId === eventId ? selection.id : null,
+  );
+  // Store the first resolved choice as UI state. Schedule changes keep it until that id disappears.
+  if (
+    schedule.data &&
+    (selection.eventId !== eventId || selection.id !== (selectedSubEvent?.id ?? null))
+  )
+    setSelection({ eventId, id: selectedSubEvent?.id ?? null });
+  const filters = {
+    search,
+    role,
+    subEventId: selectedSubEvent?.id,
+    checkIn: selectedSubEvent ? checkIn : undefined,
+  };
+  const query = useAttendees(eventId, filters, schedule.data !== undefined);
+  const selector = useRef<View>(null);
+  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
+  const subEvents = schedule.data?.subEvents ?? [];
+
+  function chooseSubEvent() {
+    if (!subEvents.length) return;
+    if (IOS) {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: 'Check-in coverage for',
+          options: ['Cancel', ...subEvents.map((sub) => sub.name)],
+          cancelButtonIndex: 0,
+        },
+        (index) => {
+          const selected = subEvents[index - 1];
+          if (selected) setSelection({ eventId, id: selected.id });
+        },
+      );
+    } else {
+      selector.current?.measureInWindow((x, y, width, height) =>
+        setAnchor({ x, y, width, height }),
+      );
+    }
+  }
 
   useEffect(() => {
     const next = typed.trim();
@@ -57,10 +117,17 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
     [items],
   );
 
-  function open(attendee: Attendee) {
+  function open(attendee: AttendeeWithVerification) {
     router.push({
       pathname: '/attendee/[eventId]/[userId]',
-      params: { eventId, userId: attendee.userId, search, role: role ?? '' },
+      params: {
+        eventId,
+        userId: attendee.userId,
+        search,
+        role: role ?? '',
+        subEventId: selectedSubEvent?.id ?? '',
+        checkIn: checkIn ?? '',
+      },
     });
   }
 
@@ -137,12 +204,75 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
             );
           })}
         </ScrollView>
+        <View ref={selector} collapsable={false}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={
+              'Check-in coverage for ' + (selectedSubEvent?.name ?? 'no sub-events')
+            }
+            accessibilityHint="Choose the sub-event whose upload coverage the list shows."
+            disabled={!subEvents.length}
+            onPress={chooseSubEvent}
+            android_ripple={{ color: ripple }}
+            className="min-h-14 flex-row items-center gap-3 rounded-2xl bg-surface px-4 py-3">
+            <Glyph name={GLYPH.subEvents} size={22} tone="accentText" />
+            <View className="flex-1 gap-0.5">
+              <Text className="font-caption text-caption text-textSecondary">
+                Check-in coverage for
+              </Text>
+              <Text className="font-body text-body text-textPrimary">
+                {selectedSubEvent?.name ?? 'No sub-events'}
+              </Text>
+            </View>
+            {subEvents.length ? <Glyph name={GLYPH.chevron} size={14} tone="textMuted" /> : null}
+          </Pressable>
+        </View>
+        {selectedSubEvent ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8 }}>
+            {[
+              { value: undefined, label: 'All check-ins' },
+              { value: 'checked_in' as const, label: 'Checked in' },
+              { value: 'not_checked_in' as const, label: 'Not checked in' },
+            ].map((choice) => (
+              <Pressable
+                key={choice.label}
+                accessibilityRole="button"
+                accessibilityLabel={'Filter ' + choice.label}
+                accessibilityState={{ selected: checkIn === choice.value }}
+                onPress={() => setCheckIn(choice.value)}
+                android_ripple={{ color: ripple }}
+                className={
+                  'min-h-11 justify-center overflow-hidden px-4 ios:rounded-full android:rounded-lg ' +
+                  (checkIn === choice.value
+                    ? 'ios:bg-textPrimary android:bg-accentTint'
+                    : 'ios:bg-surfaceMuted android:border android:border-borderStrong')
+                }>
+                <Text
+                  className={
+                    'font-bodySecondary text-bodySecondary ' +
+                    (checkIn === choice.value
+                      ? 'ios:text-background android:text-accentText'
+                      : 'text-textSecondary')
+                  }>
+                  {choice.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
+        <Text className="font-caption text-caption text-textSecondary">
+          Check-in permits uploads. This list shows server records.
+        </Text>
         {query.isError && items.length > 0 ? (
           <FormMessage message="Attendees could not be refreshed. Refresh before changing anyone." />
         ) : null}
       </View>
       <FlashList
-        key={`${search}/${role ?? 'all'}`}
+        key={JSON.stringify(filters)}
+        extraData={selectedSubEvent?.id}
         data={items}
         keyExtractor={(item) => item.key}
         getItemType={(item) => item.type}
@@ -156,7 +286,9 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
           // Only a pull shows the spinner. Background refetches on foreground, on reconnect and
           // after a write keep the list still.
           setPulling(true);
-          void query.refetch().finally(() => setPulling(false));
+          void Promise.allSettled([query.refetch(), schedule.refetch()]).finally(() =>
+            setPulling(false),
+          );
         }}
         onEndReachedThreshold={0.5}
         onEndReached={() => {
@@ -174,12 +306,15 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
               </View>
             );
           const person = item.attendee;
+          const coverage = attendeeCheckInLabel(person, selectedSubEvent?.id);
           const subtitle = `${person.userId === owner ? 'You · ' : ''}${person.role === 'admin' ? 'Admin' : person.role === 'guest' ? 'Guest' : 'Photographer'}`;
           return (
             <View className="ios:mx-5 android:mx-4 android:pb-0.5">
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`${person.fullName}, ${subtitle}`}
+                accessibilityLabel={[person.fullName, subtitle, coverage]
+                  .filter(Boolean)
+                  .join(', ')}
                 accessibilityHint="Opens attendee details."
                 onPress={() => open(person)}
                 android_ripple={{ color: ripple }}
@@ -209,6 +344,9 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
                   <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
                     {subtitle}
                   </Text>
+                  {coverage ? (
+                    <Text className="font-caption text-caption text-textSecondary">{coverage}</Text>
+                  ) : null}
                 </View>
                 {IOS ? <Glyph name={GLYPH.chevron} size={14} tone="textMuted" /> : null}
               </Pressable>
@@ -217,24 +355,26 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
         }}
         ListEmptyComponent={
           <View className="items-center gap-4 px-8 py-16">
-            {query.isPending ? (
+            {query.isPending && !schedule.isError ? (
               <ActivityIndicator className="text-textSecondary" />
             ) : (
               <>
                 <Text className="text-center font-h2 text-h2 text-textPrimary">
-                  {query.isError ? 'Attendees could not be loaded' : 'No attendees match'}
+                  {query.isError || schedule.isError
+                    ? 'Attendees could not be loaded'
+                    : 'No attendees match'}
                 </Text>
                 <Text className="text-center font-body text-body text-textSecondary">
-                  {query.isError
+                  {query.isError || schedule.isError
                     ? 'Check the connection and try again.'
-                    : 'Try another name or role.'}
+                    : 'Try another name, role or check-in filter.'}
                 </Text>
-                {query.isError ? (
+                {query.isError || schedule.isError ? (
                   <Button
                     label="Try again"
                     variant="secondary"
                     busy={query.isFetching}
-                    onPress={() => void query.refetch()}
+                    onPress={() => void Promise.allSettled([query.refetch(), schedule.refetch()])}
                   />
                 ) : null}
               </>
@@ -264,6 +404,16 @@ export function AttendeesScreen({ eventId }: { eventId: string }) {
             ) : null}
           </View>
         }
+      />
+      <AnchoredMenu
+        anchor={anchor}
+        onClose={() => setAnchor(null)}
+        matchAnchorWidth
+        items={subEvents.map((sub) => ({
+          key: sub.id,
+          label: sub.name,
+          onPress: () => setSelection({ eventId, id: sub.id }),
+        }))}
       />
     </View>
   );
