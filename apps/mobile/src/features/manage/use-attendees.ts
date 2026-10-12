@@ -1,10 +1,14 @@
-import type {
-  Attendee,
-  GetEventResponse,
-  InviteRole,
-  ListAttendeesRequest,
-  ListAttendeesResponse,
-  MembershipRole,
+import {
+  currentSubEvent,
+  subEventStatus,
+  type AttendeeWithVerification,
+  type GetEventResponse,
+  type InviteRole,
+  type ListAttendeesRequest,
+  type ListAttendeesResponse,
+  type MembershipRole,
+  type SubEvent,
+  type ListSubEventsResponse,
 } from '@momentlens/shared-types';
 import { onlineManager, useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 
@@ -19,11 +23,54 @@ import {
   blockAttendee,
   changeAttendeeRole,
   listAttendees,
+  listSubEvents,
+  forceVerifyAttendee,
   removeAttendee,
 } from '@/lib/api';
-import { queryClient } from '@/lib/query-client';
+import { subEventsQueryKey } from '@/features/schedule/use-sub-events';
+import { PERSISTED_QUERY, queryClient } from '@/lib/query-client';
 
 export type AttendeeFilters = Omit<ListAttendeesRequest, 'cursor'>;
+
+// Keep a valid Admin selection. Only the first selection or a deleted target uses the default
+// order; a new live session does not replace a session the Admin is reviewing (D-157).
+export function attendeeSubEvent(
+  subEvents: readonly SubEvent[],
+  at: Date,
+  selectedId?: string | null,
+): SubEvent | null {
+  const selected = subEvents.find((sub) => sub.id === selectedId);
+  if (selected) return selected;
+  const live = currentSubEvent(subEvents, at);
+  if (live) return live;
+  const completed = subEvents
+    .filter((sub) => subEventStatus(sub, at) === 'completed')
+    .sort((a, b) => Date.parse(b.endsAt) - Date.parse(a.endsAt) || a.id.localeCompare(b.id));
+  if (completed[0]) return completed[0];
+  return (
+    [...subEvents].sort(
+      (a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt) || a.id.localeCompare(b.id),
+    )[0] ?? null
+  );
+}
+
+export function canManuallyCheckIn(attendee: AttendeeWithVerification): boolean {
+  return attendee.role === 'guest' && !attendee.verification.everySubEvent;
+}
+
+export function attendeeCheckInLabel(
+  attendee: AttendeeWithVerification,
+  subEventId?: string,
+): string | null {
+  if (attendee.role !== 'guest') return 'Check-in not required';
+  if (attendee.verification.everySubEvent) return 'Checked in manually';
+  if (!subEventId) return null;
+  return attendee.verification.subEventIds.some(
+    (id) => id.toLowerCase() === subEventId.toLowerCase(),
+  )
+    ? 'Checked in'
+    : 'Not checked in';
+}
 
 export function attendeeInitials(fullName: string): string {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -33,11 +80,17 @@ export function attendeeInitials(fullName: string): string {
 
 type AttendeeListItem =
   | { type: 'header'; key: string; title: string }
-  | { type: 'attendee'; key: string; attendee: Attendee; first: boolean; last: boolean };
+  | {
+      type: 'attendee';
+      key: string;
+      attendee: AttendeeWithVerification;
+      first: boolean;
+      last: boolean;
+    };
 
 // The list groups only loaded rows. A changed name between page reads can repeat a user, so
 // keep the later page's row once. Filters show labels without inventing whole-event counts.
-export function attendeeListItems(attendees: Attendee[]): AttendeeListItem[] {
+export function attendeeListItems(attendees: AttendeeWithVerification[]): AttendeeListItem[] {
   const unique = [...new Map(attendees.map((person) => [person.userId, person])).values()];
   const groups = [
     { role: 'admin', title: 'Organizer' },
@@ -62,13 +115,32 @@ export function attendeeListItems(attendees: Attendee[]): AttendeeListItem[] {
 }
 
 export function attendeesQueryKey(eventId: string, filters: AttendeeFilters = {}) {
-  return ['attendees', eventId, filters.search ?? '', filters.role ?? 'all'] as const;
+  return [
+    'attendees',
+    eventId,
+    filters.search ?? '',
+    filters.role ?? 'all',
+    filters.subEventId ?? '',
+    filters.checkIn ?? 'all',
+  ] as const;
 }
 
 function recheckAfterRefusal(eventId: string, error: unknown) {
   if (error instanceof ApiError && (error.status === 403 || error.status === 404)) {
     recheckEvent(eventId);
   }
+}
+
+async function refreshAttendeeSchedule(eventId: string): Promise<ListSubEventsResponse> {
+  const queryKey = subEventsQueryKey(eventId);
+  await queryClient.cancelQueries({ queryKey, exact: true });
+  await queryClient.invalidateQueries({ queryKey, exact: true, refetchType: 'none' });
+  return queryClient.fetchQuery({
+    queryKey,
+    queryFn: ({ signal }) => listSubEvents(eventId, signal),
+    retry: retryUnlessRefused,
+    ...PERSISTED_QUERY,
+  });
 }
 
 export function attendeeQueryOptions(eventId: string, filters: AttendeeFilters = {}) {
@@ -82,10 +154,25 @@ export function attendeeQueryOptions(eventId: string, filters: AttendeeFilters =
       pageParam: string | undefined;
       signal: AbortSignal;
     }) => {
+      if (filters.subEventId) {
+        const queryKey = subEventsQueryKey(eventId);
+        const state = queryClient.getQueryState(queryKey);
+        const schedule =
+          state?.isInvalidated || state?.error
+            ? await refreshAttendeeSchedule(eventId)
+            : queryClient.getQueryData<ListSubEventsResponse>(queryKey);
+        if (schedule && !schedule.subEvents.some((sub) => sub.id === filters.subEventId))
+          throw new ApiError('The selected sub-event is no longer available.', 404, 'not_found');
+      }
       try {
         return await listAttendees(eventId, { ...filters, cursor: pageParam }, signal);
       } catch (error) {
         recheckAfterRefusal(eventId, error);
+        if (filters.subEventId && error instanceof ApiError && error.status === 404) {
+          // The API validates this filter against its current schedule. Refresh that schedule
+          // before the next filtered read so the screen can replace a deleted selection.
+          await refreshAttendeeSchedule(eventId);
+        }
         throw error;
       }
     },
@@ -106,7 +193,7 @@ export function useAttendees(eventId: string, filters: AttendeeFilters = {}, ena
 export function findAttendee(
   data: InfiniteData<ListAttendeesResponse> | undefined,
   userId: string,
-): Attendee | undefined {
+): AttendeeWithVerification | undefined {
   return data?.pages
     .flatMap((page) => page.attendees)
     .reverse()
@@ -137,7 +224,7 @@ export function attendeeSheetExit(
 }
 
 export type AttendeeAction =
-  { kind: 'role'; role: InviteRole } | { kind: 'remove' } | { kind: 'block' };
+  { kind: 'role'; role: InviteRole } | { kind: 'remove' } | { kind: 'block' } | { kind: 'verify' };
 export type AttendeeActionResult =
   { ok: true } | { ok: false; problem: string; returnToList?: boolean };
 const writing = new Set<string>();
@@ -187,7 +274,7 @@ async function refreshAttendees(eventId: string) {
 export async function saveAttendeeAction(
   eventId: string,
   filters: AttendeeFilters,
-  target: Attendee,
+  target: AttendeeWithVerification,
   action: AttendeeAction,
 ): Promise<AttendeeActionResult> {
   if (!onlineManager.isOnline())
@@ -205,13 +292,20 @@ export async function saveAttendeeAction(
     return { ok: false, problem: 'Refresh the attendee list before another action.' };
   }
 
+  if (action.kind === 'verify' && (!canManuallyCheckIn(target) || !canManuallyCheckIn(current)))
+    return {
+      ok: false,
+      problem: 'This attendee already has upload coverage. Review the refreshed list.',
+    };
+
   writing.add(eventId);
   try {
     const body = { expectedVersion: target.accessVersion };
     if (action.kind === 'role')
       await changeAttendeeRole(eventId, target.userId, { ...body, role: action.role });
     else if (action.kind === 'remove') await removeAttendee(eventId, target.userId, body);
-    else await blockAttendee(eventId, target.userId, body);
+    else if (action.kind === 'block') await blockAttendee(eventId, target.userId, body);
+    else await forceVerifyAttendee(eventId, target.userId, body);
     await refreshAttendees(eventId);
     return { ok: true };
   } catch (error) {
