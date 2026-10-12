@@ -25,6 +25,80 @@ jest.mock('@/lib/supabase', () => ({ supabase: { auth: mockAuth } }));
 const BASE_URL = 'https://api.example.test/';
 const originalFetch = globalThis.fetch;
 
+describe('Admin venue QR endpoints (D-156)', () => {
+  const eventId = '11111111-1111-4111-8111-111111111111';
+  const venueId = '22222222-2222-4222-8222-222222222222';
+  const qr = {
+    venueId,
+    venueName: 'Hall',
+    payload: { kind: 'venue_check_in', version: 1, venueId, secret: 'a'.repeat(64) },
+  };
+  function signIn(id = 'A') {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token', user: { id } } } as SessionResult['data'],
+      error: null,
+    });
+  }
+  it('reads account-bound credentials and posts only the displayed secret', async () => {
+    signIn();
+    const api = loadApi(BASE_URL);
+    const fetched = answers(200, { venueQrs: [qr] });
+    globalThis.fetch = fetched;
+    await expect(api.listVenueQrs('A', eventId)).resolves.toEqual({ venueQrs: [qr] });
+    expect(fetched.mock.calls[0]?.[0]).toBe(`https://api.example.test/events/${eventId}/venue-qrs`);
+    const rotated = answers(200, { venueQr: qr });
+    globalThis.fetch = rotated;
+    await api.regenerateVenueQr('A', eventId, venueId, { expectedSecret: qr.payload.secret });
+    expect(rotated.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/events/${eventId}/venue-qrs/${venueId}/regenerate`,
+    );
+    expect(rotated.mock.calls[0]?.[1]?.body).toBe(
+      JSON.stringify({ expectedSecret: qr.payload.secret }),
+    );
+  });
+  it('refuses another account before either endpoint sends a request', async () => {
+    signIn('B');
+    const api = loadApi(BASE_URL);
+    const fetched = answers(200, { venueQrs: [qr] });
+    globalThis.fetch = fetched;
+    await expect(api.listVenueQrs('A', eventId)).rejects.toBeInstanceOf(api.AccountChangedError);
+    await expect(
+      api.regenerateVenueQr('A', eventId, venueId, { expectedSecret: qr.payload.secret }),
+    ).rejects.toBeInstanceOf(api.AccountChangedError);
+    expect(fetched).not.toHaveBeenCalled();
+  });
+  it.each<[number, string]>([
+    [403, 'not_member'],
+    [403, 'wrong_role'],
+    [404, 'not_found'],
+    [409, 'venue_qr_changed'],
+  ])('preserves %i %s without retry', async (status, code) => {
+    signIn();
+    const fetched = answers(status, { error: { code, message: 'refused' } });
+    globalThis.fetch = fetched;
+    await expect(
+      loadApi(BASE_URL).regenerateVenueQr('A', eventId, venueId, {
+        expectedSecret: qr.payload.secret,
+      }),
+    ).rejects.toMatchObject({ status, code });
+    expect(fetched).toHaveBeenCalledTimes(1);
+  });
+  it('refuses a malformed secret or a replacement for another venue', async () => {
+    signIn();
+    const api = loadApi(BASE_URL);
+    globalThis.fetch = answers(200, {
+      venueQrs: [{ ...qr, payload: { ...qr.payload, secret: 'bad' } }],
+    });
+    await expect(api.listVenueQrs('A', eventId)).rejects.toBeInstanceOf(api.ApiError);
+    globalThis.fetch = answers(200, {
+      venueQr: { ...qr, venueId: eventId, payload: { ...qr.payload, venueId: eventId } },
+    });
+    await expect(
+      api.regenerateVenueQr('A', eventId, venueId, { expectedSecret: qr.payload.secret }),
+    ).rejects.toBeInstanceOf(api.ApiError);
+  });
+});
+
 describe('Admin invite management endpoints (D-152)', () => {
   const owner = 'admin-a';
   const eventId = '11111111-1111-4111-8111-111111111111';

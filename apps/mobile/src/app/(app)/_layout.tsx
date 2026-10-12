@@ -57,6 +57,12 @@ export default function AppLayout() {
         options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
       />
       <Stack.Screen name="join/confirm" />
+      <Stack.Screen
+        name="scan-venue/[eventId]"
+        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+      />
+      <Stack.Screen name="scan-result/[eventId]" options={sheet} />
+      <Stack.Screen name="venue-qr/[eventId]/[venueId]" />
       <Stack.Screen name="join/pending/[eventId]" />
       {/* Sheets that fit their content, over the whole Event shell. A formSheet draws inside the
           navigator that presents it, so from a tab's Stack the Android scrim stopped at the Event
