@@ -408,6 +408,7 @@ describe('attendee endpoints', () => {
   const target = {
     userId,
     fullName: 'Hamza Siddiqui',
+    verification: { everySubEvent: false, subEventIds: [] },
     role: 'guest',
     requestedAt: '2026-10-02T13:00:00.000Z',
     accessVersion: 'opaque-1',
@@ -433,6 +434,100 @@ describe('attendee endpoints', () => {
       `https://api.example.test/events/${eventId}/attendees?search=%25%20%26Ali_%2B&role=guest&cursor=a%2Fb%2B%3D`,
     );
     expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
+  });
+
+  it('carries the selected sub-event and check-in filter, and rejects missing server coverage', async () => {
+    signIn();
+    const fetchMock = answers(200, { attendees: [target], nextCursor: null });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    await api.listAttendees(eventId, { subEventId: userId, checkIn: 'not_checked_in' });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.example.test/events/' +
+        eventId +
+        '/attendees?subEventId=' +
+        userId +
+        '&checkIn=not_checked_in',
+    );
+    const { verification: _coverage, ...missingCoverage } = target;
+    globalThis.fetch = answers(200, { attendees: [missingCoverage], nextCursor: null });
+    await expect(api.listAttendees(eventId)).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it('posts manual check-in with only the expected version and parses the first timestamp', async () => {
+    signIn();
+    const grant = {
+      membership: { userId, role: 'guest', status: 'active', accessVersion: 'opaque-1' },
+      adminVerifiedAt: '2026-10-12T12:30:00.000Z',
+    };
+    const fetchMock = answers(200, grant);
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    await expect(
+      api.forceVerifyAttendee(eventId, userId, { expectedVersion: 'opaque-1' }),
+    ).resolves.toEqual(grant);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      'https://api.example.test/events/' + eventId + '/attendees/' + userId + '/force-verify',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toEqual({
+      expectedVersion: 'opaque-1',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    globalThis.fetch = answers(200, { ...grant, adminVerifiedAt: 'invalid' });
+    await expect(
+      api.forceVerifyAttendee(eventId, userId, { expectedVersion: 'opaque-1' }),
+    ).rejects.toBeInstanceOf(api.ApiError);
+  });
+
+  it.each([
+    [403, 'not_member'],
+    [403, 'wrong_role'],
+    [404, 'not_found'],
+    [409, 'membership_changed'],
+    [500, 'internal_error'],
+  ])('preserves manual check-in refusal %i %s without another write', async (status, code) => {
+    signIn();
+    const fetchMock = answers(status as number, { error: { code, message: 'Refused' } });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    const error = await api
+      .forceVerifyAttendee(eventId, userId, { expectedVersion: 'old' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(api.ApiError);
+    expect(error).toMatchObject({ status, code });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('resends manual check-in once after a 401 with the same version', async () => {
+    signIn();
+    mockAuth.refreshSession.mockResolvedValue({
+      data: { session: { access_token: 'fresh' } },
+      error: null,
+    });
+    let calls = 0;
+    const grant = {
+      membership: { userId, role: 'guest', status: 'active', accessVersion: 'opaque-1' },
+      adminVerifiedAt: '2026-10-12T12:30:00.000Z',
+    };
+    const fetchMock = jest.fn<typeof fetch>(() => {
+      const first = calls++ === 0;
+      return Promise.resolve({
+        status: first ? 401 : 200,
+        json: () =>
+          Promise.resolve(first ? { error: { code: 'no_session', message: 'No session' } } : grant),
+      } as Response);
+    });
+    globalThis.fetch = fetchMock;
+    const api = loadApi(BASE_URL);
+    await expect(
+      api.forceVerifyAttendee(eventId, userId, { expectedVersion: 'opaque-1' }),
+    ).resolves.toEqual(grant);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map((call) => JSON.parse(call[1]?.body as string))).toEqual([
+      { expectedVersion: 'opaque-1' },
+      { expectedVersion: 'opaque-1' },
+    ]);
   });
 
   it.each(['changeAttendeeRole', 'removeAttendee', 'blockAttendee'] as const)(

@@ -351,6 +351,44 @@ describe('the upload check-in gate', () => {
     expect(await verification.beforePreflight({ ...item, mediaId: SUB })).toEqual([]);
   });
 
+  it('releases a refreshed manual grant for past and future sessions after restart, preserving other waits and backoff', async () => {
+    const past = await store.enqueue('A', EVENT, SUB, photo);
+    const future = await store.enqueue('A', EVENT, OTHER_SUB, photo);
+    const album = await store.enqueue('A', EVENT, SUB, photo);
+    const backingOff = await store.enqueue('A', EVENT, SUB, photo);
+    const otherAccount = await store.enqueue('B', EVENT, SUB, photo);
+    const otherEvent = await store.enqueue('A', OTHER_EVENT, SUB, photo);
+    for (const row of [past, future, otherAccount, otherEvent])
+      await store.update(row.userId, row.id, { state: 'waiting_verification' });
+    await store.update('A', album.id, { state: 'waiting_album' });
+    await store.update('A', backingOff.id, { retryCount: 4, nextRetryAt: AT + 60_000 });
+    const restarted = createStore();
+    serverState = { everySubEvent: true, subEventIds: [] };
+    serverRevision++;
+    expect(
+      await restarted.release(
+        'A',
+        EVENT,
+        'waiting_verification',
+        await verification.coverage('A', EVENT),
+      ),
+    ).toBe(2);
+    expect(await restarted.listForEvent('A', EVENT)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: past.id, state: 'queued' }),
+        expect.objectContaining({ id: future.id, state: 'queued' }),
+        expect.objectContaining({ id: album.id, state: 'waiting_album' }),
+        expect.objectContaining({ id: backingOff.id, nextRetryAt: AT + 60_000, retryCount: 4 }),
+      ]),
+    );
+    expect(await restarted.listForEvent('B', EVENT)).toMatchObject([
+      { state: 'waiting_verification' },
+    ]);
+    expect(await restarted.listForEvent('A', OTHER_EVENT)).toMatchObject([
+      { state: 'waiting_verification' },
+    ]);
+  });
+
   it('leaves a removed sub-event to the existing sub_event_missing answer', async () => {
     const item = await store.enqueue('A', EVENT, SUB, photo);
     schedule = [];

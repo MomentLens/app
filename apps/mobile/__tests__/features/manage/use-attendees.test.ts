@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
-import type { Attendee, ListAttendeesResponse } from '@momentlens/shared-types';
+import type {
+  AttendeeWithVerification,
+  ListAttendeesResponse,
+  SubEvent,
+} from '@momentlens/shared-types';
 import { InfiniteQueryObserver, onlineManager, type InfiniteData } from '@tanstack/react-query';
 
 import { eventQueryKey } from '@/features/event-shell/use-event';
 import {
   attendeeInitials,
+  attendeeCheckInLabel,
+  attendeeSubEvent,
+  canManuallyCheckIn,
   attendeeListItems,
   attendeeQueryOptions,
   attendeeSheetExit,
@@ -17,6 +24,8 @@ import {
   blockAttendee,
   changeAttendeeRole,
   listAttendees,
+  listSubEvents,
+  forceVerifyAttendee,
   removeAttendee,
 } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
@@ -28,19 +37,22 @@ jest.mock('@/lib/supabase', () => ({ supabase: { auth: {} } }));
 jest.mock('@/lib/api', () => ({
   ...jest.requireActual<object>('@/lib/api'),
   listAttendees: jest.fn(),
+  listSubEvents: jest.fn(),
+  forceVerifyAttendee: jest.fn(),
   changeAttendeeRole: jest.fn(),
   removeAttendee: jest.fn(),
   blockAttendee: jest.fn(),
 }));
 
 const EVENT = '0b6f1c2a-3d4e-4f5a-8b9c-0d1e2f3a4b5c';
-const TARGET: Attendee = {
+const TARGET: AttendeeWithVerification = {
   userId: '11111111-1111-4111-8111-111111111111',
   fullName: 'Hamza Siddiqui',
   role: 'guest',
   requestedAt: '2026-10-02T13:00:00.000Z',
   accessVersion: 'opaque-1',
   avatar: null,
+  verification: { everySubEvent: false, subEventIds: [] },
 };
 const get = jest.mocked(listAttendees);
 const remove = jest.mocked(removeAttendee);
@@ -335,4 +347,202 @@ describe('attendee actions', () => {
     await first;
     expect(block).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('S-17 selected sub-event coverage', () => {
+  const FIRST = '00000000-0000-4000-8000-000000000003';
+  const SECOND = '00000000-0000-4000-8000-000000000004';
+  const THIRD = '00000000-0000-4000-8000-000000000005';
+  const at = new Date('2026-10-12T12:30:00.000Z');
+  const session = (id: string, start: string, end: string): SubEvent => ({
+    id,
+    name: 'Mehndi',
+    description: null,
+    startsAt: start,
+    endsAt: end,
+    verificationRadiusM: 200,
+    venue: { id: EVENT, name: 'Hall', lat: 31, lng: 74 },
+  });
+  const past = session(FIRST, '2026-10-12T10:00:00Z', '2026-10-12T11:00:00Z');
+  const live = session(SECOND, '2026-10-12T12:00:00Z', '2026-10-12T13:00:00Z');
+  const next = session(THIRD, '2026-10-12T14:00:00Z', '2026-10-12T15:00:00Z');
+
+  it('chooses the shared overlapping winner, then the latest completed, then the next upcoming', () => {
+    const overlap = { ...live, id: FIRST, startsAt: '2026-10-12T12:15:00Z' };
+    expect(attendeeSubEvent([next, live, overlap], at)?.id).toBe(FIRST);
+    expect(attendeeSubEvent([next, past], at)?.id).toBe(FIRST);
+    expect(attendeeSubEvent([next], at)?.id).toBe(THIRD);
+    expect(attendeeSubEvent([], at)).toBeNull();
+  });
+
+  it('keeps a valid selection and chooses again when that sub-event disappears', () => {
+    expect(attendeeSubEvent([past, live, next], at, FIRST)?.id).toBe(FIRST);
+    expect(attendeeSubEvent([live, next], at, FIRST)?.id).toBe(SECOND);
+  });
+
+  it('binds sub-event and check-in filters to separate queries and restarts their cursors', async () => {
+    const selected = {
+      search: 'Hamza',
+      role: 'guest' as const,
+      subEventId: FIRST,
+      checkIn: 'checked_in' as const,
+    };
+    const otherSub = { ...selected, subEventId: SECOND };
+    const otherFilter = { ...selected, checkIn: 'not_checked_in' as const };
+    const options = attendeeQueryOptions(EVENT, selected);
+    expect(options.queryKey).not.toEqual(attendeesQueryKey(EVENT, otherSub));
+    expect(options.queryKey).not.toEqual(attendeesQueryKey(EVENT, otherFilter));
+    get.mockResolvedValue({ attendees: [TARGET], nextCursor: 'bound-cursor' });
+    await queryClient.fetchInfiniteQuery(options);
+    await queryClient.fetchInfiniteQuery(attendeeQueryOptions(EVENT, otherSub));
+    expect(get.mock.calls.map((call) => call[1]?.cursor)).toEqual([undefined, undefined]);
+    expect(loadedAttendee(EVENT, otherFilter, TARGET.userId)).toBeUndefined();
+    await options.queryFn({ pageParam: 'bound-cursor', signal: new AbortController().signal });
+    expect(get).toHaveBeenLastCalledWith(
+      EVENT,
+      { ...selected, cursor: 'bound-cursor' },
+      expect.anything(),
+    );
+  });
+
+  it('refreshes the schedule after a deleted filter target before another filtered read', async () => {
+    const selected = { subEventId: FIRST, checkIn: 'checked_in' as const };
+    queryClient.setQueryData(['sub-events', EVENT], { subEvents: [past, live] });
+    get.mockRejectedValue(new ApiError('deleted session', 404, 'not_found'));
+    jest.mocked(listSubEvents).mockResolvedValue({ subEvents: [live] });
+    await expect(
+      queryClient.fetchInfiniteQuery(attendeeQueryOptions(EVENT, selected)),
+    ).rejects.toThrow();
+    expect(listSubEvents).toHaveBeenCalledTimes(1);
+    expect(
+      queryClient.getQueryCache().find({ queryKey: ['sub-events', EVENT] })?.meta?.persist,
+    ).toBe(true);
+    const schedule = queryClient.getQueryData<{ subEvents: SubEvent[] }>(['sub-events', EVENT]);
+    expect(attendeeSubEvent(schedule!.subEvents, at, FIRST)?.id).toBe(SECOND);
+    const reads = get.mock.calls.length;
+    await expect(
+      queryClient.fetchInfiniteQuery(attendeeQueryOptions(EVENT, selected)),
+    ).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(reads);
+  });
+
+  it('reports only server coverage for the selected session and identifies manual and exempt coverage', () => {
+    const checked = { ...TARGET, verification: { everySubEvent: false, subEventIds: [FIRST] } };
+    expect(attendeeCheckInLabel(checked, FIRST)).toBe('Checked in');
+    expect(attendeeCheckInLabel(checked, SECOND)).toBe('Not checked in');
+    expect(attendeeCheckInLabel(TARGET, FIRST)).toBe('Not checked in');
+    const manual = { ...TARGET, verification: { everySubEvent: true, subEventIds: [] } };
+    expect(attendeeCheckInLabel(manual, SECOND)).toBe('Checked in manually');
+    expect(canManuallyCheckIn(manual)).toBe(false);
+    expect(canManuallyCheckIn(TARGET)).toBe(true);
+    for (const role of ['admin', 'photographer'] as const) {
+      expect(attendeeCheckInLabel({ ...TARGET, role }, FIRST)).toBe('Check-in not required');
+      expect(canManuallyCheckIn({ ...TARGET, role })).toBe(false);
+    }
+  });
+
+  it.each([0, 1, 50, 51])(
+    'keeps %i paginated attendees without duplicates or invented coverage',
+    (count) => {
+      const rows = Array.from({ length: count }, (_, i) => ({ ...TARGET, userId: String(i) }));
+      expect(attendeeListItems(rows).filter((item) => item.type === 'attendee')).toHaveLength(
+        count,
+      );
+    },
+  );
+});
+
+describe('S-17 conditional manual check-in', () => {
+  const grant = {
+    membership: {
+      userId: TARGET.userId,
+      role: 'guest' as const,
+      status: 'active' as const,
+      accessVersion: TARGET.accessVersion,
+    },
+    adminVerifiedAt: '2026-10-12T12:30:00.000Z',
+  };
+
+  it('sends only the loaded version once, cancels old reads and invalidates every loaded filter', async () => {
+    await seed();
+    const other = { subEventId: EVENT, checkIn: 'not_checked_in' as const };
+    await queryClient.fetchInfiniteQuery(attendeeQueryOptions(EVENT, other));
+    const cancel = jest.spyOn(queryClient, 'cancelQueries');
+    jest.mocked(forceVerifyAttendee).mockResolvedValue(grant);
+    expect(await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' })).toEqual({
+      ok: true,
+    });
+    expect(forceVerifyAttendee).toHaveBeenCalledTimes(1);
+    expect(forceVerifyAttendee).toHaveBeenCalledWith(EVENT, TARGET.userId, {
+      expectedVersion: TARGET.accessVersion,
+    });
+    expect(cancel).toHaveBeenCalledWith({ queryKey: ['attendees', EVENT] });
+    expect(queryClient.getQueryState(attendeesQueryKey(EVENT, other))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryData(eventQueryKey(EVENT))).toEqual({ event: { role: 'admin' } });
+    cancel.mockRestore();
+  });
+
+  it('refuses manual check-in offline without queueing a write', async () => {
+    await seed();
+    onlineManager.setOnline(false);
+    expect(await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' })).toMatchObject({
+      ok: false,
+    });
+    expect(forceVerifyAttendee).not.toHaveBeenCalled();
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it.each(['guest', 'photographer'] as const)(
+    'refuses a %s actor before manual check-in',
+    async (role) => {
+      await seed();
+      queryClient.setQueryData(eventQueryKey(EVENT), { event: { role } });
+      await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' });
+      expect(forceVerifyAttendee).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses Admin, missing, replaced and already manually covered targets', async () => {
+    await seed();
+    await saveAttendeeAction(EVENT, filters, { ...TARGET, role: 'admin' }, { kind: 'verify' });
+    for (const changed of [
+      { ...TARGET, accessVersion: 'rejoined' },
+      { ...TARGET, role: 'photographer' as const },
+      { ...TARGET, verification: { everySubEvent: true, subEventIds: [] } },
+    ]) {
+      queryClient.setQueryData(key, {
+        pages: [{ attendees: [changed], nextCursor: null }],
+        pageParams: [undefined],
+      });
+      await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' });
+    }
+    queryClient.setQueryData(key, {
+      pages: [{ attendees: [], nextCursor: null }],
+      pageParams: [undefined],
+    });
+    expect(await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' })).toMatchObject({
+      returnToList: true,
+    });
+    expect(forceVerifyAttendee).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    new ApiError('stale', 409, 'membership_changed'),
+    new ApiError('lost answer'),
+    new ApiError('timeout', undefined, undefined, true),
+    new ApiError('server failed', 500, 'internal_error'),
+  ])(
+    'never retries a stale or uncertain manual write and requires a successful refresh',
+    async (error) => {
+      await seed();
+      jest.mocked(forceVerifyAttendee).mockRejectedValue(error);
+      get.mockRejectedValue(new ApiError('refresh failed'));
+      expect(await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' })).toMatchObject({
+        ok: false,
+      });
+      expect(forceVerifyAttendee).toHaveBeenCalledTimes(1);
+      await saveAttendeeAction(EVENT, filters, TARGET, { kind: 'verify' });
+      expect(forceVerifyAttendee).toHaveBeenCalledTimes(1);
+    },
+  );
 });
