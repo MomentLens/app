@@ -17,6 +17,7 @@ import { captureFiles } from '@/features/capture/capture-files';
 import { subEventsQueryKey } from '@/features/schedule/use-sub-events';
 import { VerificationGate } from '@/features/verification/gate';
 import { GpsReadings } from '@/features/verification/readings';
+import { QrScans } from '@/features/verification/qr-scans';
 
 import { queueFiles } from './files';
 import { prepareUpload } from './prepare';
@@ -52,6 +53,9 @@ export async function initializeQueue(): Promise<void> {
 }
 export async function getGpsReadings(): Promise<GpsReadings> {
   return new GpsReadings(await getQueue());
+}
+export async function getQrScans(): Promise<QrScans> {
+  return new QrScans(await getQueue());
 }
 export async function enqueue(
   userId: string,
@@ -123,6 +127,7 @@ async function put(
 
 const verification = new VerificationGate({
   readings: getGpsReadings,
+  scans: getQrScans,
   event: (eventId) => queryClient.getQueryData<GetEventResponse>(eventQueryKey(eventId)),
   eventRevision: (eventId) => queryClient.getQueryState(eventQueryKey(eventId))?.dataUpdateCount,
   schedule: (eventId) =>
@@ -184,7 +189,10 @@ async function releaseCovered(userId: string, eventId: string): Promise<void> {
 async function releaseCachedVerifications(): Promise<void> {
   const userId = useAuthStore.getState().userId;
   if (userId === null) return;
-  const heldEvents = await (await getGpsReadings()).eventIds(userId);
+  const heldEvents = [
+    ...(await (await getGpsReadings()).eventIds(userId)),
+    ...(await (await getQrScans()).eventIds(userId)),
+  ];
   const cachedEvents = queryClient
     .getQueryCache()
     .findAll({ queryKey: ['event'] })

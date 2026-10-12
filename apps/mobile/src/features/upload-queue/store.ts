@@ -1,6 +1,7 @@
 import { backoffDelay } from './transitions';
 import { CAPTURE_SCHEMA } from '@/features/capture/capture-store';
 import { GPS_SCHEMA } from '@/features/verification/readings';
+import { QR_SCHEMA } from '@/features/verification/qr-scans';
 import type {
   QueueCounts,
   QueueItem,
@@ -51,7 +52,8 @@ CREATE TABLE IF NOT EXISTS queue_item (
 CREATE INDEX IF NOT EXISTS queue_owner_event ON queue_item(userId, eventId, createdAt);
 ${CAPTURE_SCHEMA}
 ${GPS_SCHEMA}
-PRAGMA user_version = 3;
+${QR_SCHEMA}
+PRAGMA user_version = 4;
 `;
 type StoredItem = Omit<QueueItem, 'photoUri' | 'thumbnailUri'>;
 

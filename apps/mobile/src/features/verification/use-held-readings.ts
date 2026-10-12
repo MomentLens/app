@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 
-import { getGpsReadings, getQueue } from '@/features/upload-queue/queue';
+import { getGpsReadings, getQrScans, getQueue } from '@/features/upload-queue/queue';
+import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useAuthStore } from '@/stores/auth';
 
 const EMPTY: string[] = [];
 
 export function useHeldReadings(eventId: string): readonly string[] {
   const userId = useAuthStore((state) => state.userId);
+  const subEvents = useSubEvents(eventId).data?.subEvents;
   const [snapshot, setSnapshot] = useState<{
     userId: string;
     eventId: string;
@@ -25,9 +27,20 @@ export function useHeldReadings(eventId: string): readonly string[] {
         unsubscribe ??= store.subscribe(() => {
           void load();
         });
-        const readings = await (await getGpsReadings()).list(userId, eventId);
+        const readings = await (
+          await getGpsReadings()
+        ).list(
+          userId,
+          eventId,
+          subEvents?.map((sub) => sub.id),
+        );
+        const scans = await (await getQrScans()).list(userId, eventId, subEvents);
         if (alive && serial === request)
-          setSnapshot({ userId, eventId, subEventIds: readings.map((fix) => fix.subEventId) });
+          setSnapshot({
+            userId,
+            eventId,
+            subEventIds: [...new Set([...readings, ...scans].map((record) => record.subEventId))],
+          });
       } catch {
         // A failed local read leaves the check-in notice visible; the queue never loses a photo.
       }
@@ -37,6 +50,6 @@ export function useHeldReadings(eventId: string): readonly string[] {
       alive = false;
       unsubscribe?.();
     };
-  }, [userId, eventId]);
+  }, [userId, eventId, subEvents]);
   return snapshot?.userId === userId && snapshot.eventId === eventId ? snapshot.subEventIds : EMPTY;
 }
