@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it } from '@jest/globals';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
@@ -52,11 +52,20 @@ const photo = { uri: 'file:///picker/photo.jpg', capturedAt: null };
 describe('account-owned durable queue', () => {
   it('migrates a version-1 queue without losing existing photos', async () => {
     await store.enqueue('A', 'event', 'sub', photo);
-    database.exec('DROP TABLE capture_journal; PRAGMA user_version = 1;');
+    database.exec(
+      'DROP TABLE capture_journal; DROP TABLE gps_reading; DROP TABLE qr_scan; PRAGMA user_version = 1;',
+    );
     const upgraded = createStore();
     await upgraded.initialize();
     expect(await upgraded.listForEvent('A', 'event')).toHaveLength(1);
-    expect(database.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 3 });
+    expect(database.prepare('PRAGMA user_version').get()).toMatchObject({ user_version: 4 });
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('capture_journal', 'gps_reading', 'qr_scan') ORDER BY name",
+        )
+        .all(),
+    ).toEqual([{ name: 'capture_journal' }, { name: 'gps_reading' }, { name: 'qr_scan' }]);
   });
   it('gives account B no rows or counts belonging to A', async () => {
     await store.enqueue('A', 'event', 'sub', photo);
