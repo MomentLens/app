@@ -10,6 +10,7 @@ export function attendeesRouter(
     role: RequestHandler;
     remove: RequestHandler;
     block: RequestHandler;
+    forceVerify: RequestHandler;
   },
 ): Router {
   const router = Router();
@@ -17,5 +18,11 @@ export function attendeesRouter(
   router.patch('/events/:eventId/attendees/:userId/role', auth, jsonBody, handlers.role);
   router.post('/events/:eventId/attendees/:userId/remove', auth, jsonBody, handlers.remove);
   router.post('/events/:eventId/attendees/:userId/block', auth, jsonBody, handlers.block);
+  router.post(
+    '/events/:eventId/attendees/:userId/force-verify',
+    auth,
+    jsonBody,
+    handlers.forceVerify,
+  );
   return router;
 }
