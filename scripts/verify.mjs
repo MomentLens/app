@@ -14,6 +14,11 @@
 // supabase/ for worker-sql, and this script or CI's workflow for both. --force runs them anyway.
 // --strict counts an unavailable check as a failure; CI passes it, because there a missing
 // secret or tool is a broken job, not a machine without it. --plan prints what would run.
+//
+// Checks run side by side, as many at once as the machine has cores, or --jobs <n>; --jobs 1 runs
+// them one at a time. The test suites and the lint start first, because they take longest. rls and
+// worker-sql wait on the dev project rather than the CPU, so they start at once and take no slot.
+// Each check's output is held until it ends, so no two checks share a log line.
 import {
   appendFileSync,
   existsSync,
@@ -22,7 +27,8 @@ import {
   readFileSync,
   writeFileSync,
 } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { availableParallelism } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -38,9 +44,10 @@ const slice = option('--slice');
 const strict = flag('--strict');
 const force = flag('--force');
 const ci = Boolean(process.env.GITHUB_ACTIONS);
-// Targets are every word that is neither a flag nor the value after --base or --slice.
+const jobs = option('--jobs') === null ? availableParallelism() : Number(option('--jobs'));
+// Targets are every word that is neither a flag nor the value after --base, --slice or --jobs.
 const wanted = argv.filter(
-  (a, i) => !a.startsWith('--') && !['--base', '--slice'].includes(argv[i - 1]),
+  (a, i) => !a.startsWith('--') && !['--base', '--slice', '--jobs'].includes(argv[i - 1]),
 );
 
 const run = (cmd, args, cwd = root, env = {}) =>
@@ -50,6 +57,23 @@ const run = (cmd, args, cwd = root, env = {}) =>
     env: { ...process.env, ...env },
     maxBuffer: 256e6,
     shell: process.platform === 'win32',
+  });
+// The same as run, for a check: it does not block, so checks can run side by side. Nothing reads
+// stdin, so it is closed rather than left open for a command that might wait on it.
+const runCheck = (cmd, args, cwd) =>
+  new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    const child = spawn(cmd, args, {
+      cwd,
+      env: process.env,
+      shell: process.platform === 'win32',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    child.stdout.setEncoding('utf8').on('data', (d) => (stdout += d));
+    child.stderr.setEncoding('utf8').on('data', (d) => (stderr += d));
+    child.on('error', (error) => resolve({ status: null, signal: null, stdout, stderr, error }));
+    child.on('close', (status, signal) => resolve({ status, signal, stdout, stderr }));
   });
 const found = new Map();
 const has = (cmd) => {
@@ -149,6 +173,7 @@ for (const p of packages)
     if (p.scripts[s])
       add(p.folder, `${p.folder} ${s}`, 'pnpm', ['--filter', p.name, s], {
         need: () => (has('pnpm') ? null : 'pnpm'),
+        slow: s === 'test' || s === 'lint',
       });
 const py = () => python();
 const pyNeed = () =>
@@ -192,9 +217,9 @@ const list = [
   ),
 ];
 const unknown = list.filter((t) => !targets.has(t));
-if (!list.length || unknown.length) {
+if (!list.length || unknown.length || !(Number.isInteger(jobs) && jobs > 0)) {
   console.log(
-    `${unknown.length ? `unknown target: ${unknown.join(' ')}. ` : ''}usage: node scripts/verify.mjs <target...> [--base <ref>] [--slice <id>] [--strict] [--force] [--plan]\ntargets: ${[...targets].join(' ')} packages all`,
+    `${unknown.length ? `unknown target: ${unknown.join(' ')}. ` : ''}usage: node scripts/verify.mjs <target...> [--base <ref>] [--slice <id>] [--strict] [--force] [--plan] [--jobs <n>]\ntargets: ${[...targets].join(' ')} packages all`,
   );
   process.exit(2);
 }
@@ -228,26 +253,37 @@ if (flag('--plan')) {
 
 const logs = join(root, '.slices', slice || 'verify');
 mkdirSync(logs, { recursive: true });
-const rows = [];
-for (const c of selected) {
-  const d = decide(c);
-  if (d.result !== 'run') {
-    rows.push({ name: c.name, result: d.result, note: d.note, log: '' });
-    continue;
-  }
+// Every fate is decided before the first check starts, since a gate runs git and a need may probe
+// for Python, and both block.
+const plan = selected.map((c) => ({ c, d: decide(c) }));
+const execute = async ({ c, d }) => {
+  if (d.result !== 'run') return { name: c.name, result: d.result, note: d.note, log: '' };
   const cmd = typeof c.cmd === 'function' ? c.cmd() : c.cmd;
-  const r = run(cmd, c.args, join(root, c.cwd ?? ''));
-  const out = `$ ${[cmd, ...c.args].join(' ')}\n${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `\n${r.error.message}` : ''}`;
+  const r = await runCheck(cmd, c.args, join(root, c.cwd ?? ''));
+  const out = `$ ${[cmd, ...c.args].join(' ')}\n${r.stdout}${r.stderr}${r.error ? `\n${r.error.message}` : ''}`;
   const log = join(logs, `${c.name.replace(/\s+/g, '-')}.log`);
   writeFileSync(log, out);
   if (ci) console.log(`::group::${c.name}\n${out}\n::endgroup::`);
-  rows.push({
+  return {
     name: c.name,
     result: r.status === 0 ? 'passed' : 'failed',
     note: r.status === 0 ? '' : `exit ${r.status ?? r.signal}`,
     log: log.slice(root.length + 1),
-  });
-}
+  };
+};
+const results = new Map();
+const pooled = [
+  ...plan.filter((p) => !p.c.gate && p.c.slow),
+  ...plan.filter((p) => !p.c.gate && !p.c.slow),
+];
+const takeNext = async () => {
+  for (let p = pooled.shift(); p; p = pooled.shift()) results.set(p.c, await execute(p));
+};
+await Promise.all([
+  ...plan.filter((p) => p.c.gate).map(async (p) => results.set(p.c, await execute(p))),
+  ...Array.from({ length: jobs }, takeNext),
+]);
+const rows = selected.map((c) => results.get(c));
 
 console.log('| Check | Result | Log |\n|---|---|---|');
 for (const r of rows)
