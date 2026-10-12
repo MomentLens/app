@@ -36,6 +36,9 @@ module.exports = {
   // Light / Dark / System Default (spec §4.19), not just
   // "follow the OS."
   content: ['./src/**/*.{js,jsx,ts,tsx}'],
+  // The QR renderer reads printInk through useTokenColor. NativeWind drops a variable unless
+  // compiled CSS references it, so keep this utility even without a text element using it.
+  safelist: ['text-printInk'],
   presets: [require('nativewind/preset')],
   theme: {
     extend: {

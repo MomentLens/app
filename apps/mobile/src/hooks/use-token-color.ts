@@ -1,4 +1,6 @@
-import { useUnstableNativeVariable } from 'nativewind';
+import { useCallback, useContext, useSyncExternalStore } from 'react';
+import { cleanupEffect, type Effect } from 'react-native-css-interop/dist/runtime/observable';
+import { getVariable, VariableContext } from 'react-native-css-interop/dist/runtime/native/styles';
 
 // A color token's value as rgba(), or undefined when it cannot be read. global.css stores each
 // token as an RGB triple, "200 155 60", so tailwind.config.js can add an alpha, and NativeWind hands
@@ -25,8 +27,39 @@ export function tokenToRgba(token: string, value: unknown, alpha: number): strin
 }
 
 // A color token from global.css as a value a native prop takes, for the few props that want a color
-// rather than a class, such as the native tab bar's colors and Android's ripple. It follows dark mode,
-// because NativeWind re-renders the caller when the variable changes.
+// rather than a class, such as the native tab bar's colors and Android's ripple.
+// NativeWind 4.2.7's variable hook subscribes during render and does not unsubscribe. Its pinned
+// css-interop 0.2.7 context lets React own subscription setup and cleanup, including a render
+// interrupted by Suspense or Fast Refresh. Recheck this adapter when those dependencies change.
 export function useTokenColor(token: string, alpha = 1): string | undefined {
-  return tokenToRgba(token, useUnstableNativeVariable(`--color-${token}`), alpha);
+  const context = useContext(VariableContext);
+  const name = `--color-${token}`;
+  const read = useCallback(
+    (effect?: Effect) => {
+      let value = getVariable(name, context, effect);
+      if (value && typeof value === 'object' && 'get' in value && typeof value.get === 'function') {
+        if (effect) cleanupEffect(effect);
+        value = value.get(effect);
+      }
+      return value;
+    },
+    [context, name],
+  );
+  const subscribe = useCallback(
+    (notify: () => void) => {
+      const effect: Effect = {
+        dependencies: new Set(),
+        run: () => {
+          cleanupEffect(effect);
+          read(effect);
+          notify();
+        },
+      };
+      read(effect);
+      return () => cleanupEffect(effect);
+    },
+    [read],
+  );
+  const value = useSyncExternalStore(subscribe, read, read);
+  return tokenToRgba(token, value, alpha);
 }
