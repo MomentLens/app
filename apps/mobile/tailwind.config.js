@@ -71,6 +71,8 @@ module.exports = {
         onHero: 'rgb(var(--color-onHero) / <alpha-value>)', // text on hero
         onPhoto: 'rgb(var(--color-onPhoto) / <alpha-value>)', // text over a cover or photo
         scrim: 'rgb(var(--color-scrim) / <alpha-value>)', // the shade under that text, used with an alpha
+        printInk: 'rgb(var(--color-printInk) / <alpha-value>)',
+        printPaper: 'rgb(var(--color-printPaper) / <alpha-value>)',
       },
 
       fontFamily: {

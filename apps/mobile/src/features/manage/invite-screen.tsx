@@ -20,6 +20,7 @@ import { FormMessage } from '@/components/ui/form-message';
 import { GLYPH, Glyph } from '@/components/ui/glyph';
 import { Icon } from '@/components/ui/icon';
 import { useEvent } from '@/features/event-shell/use-event';
+import { VenueQrSection } from '@/features/venue-qr/venue-qr-section';
 import {
   inviteLink,
   inviteProblem,
@@ -337,6 +338,7 @@ export function InviteScreen({ eventId }: { eventId: string }) {
             void refresh();
           }}
         />
+        <VenueQrSection eventId={eventId} />
       </ScrollView>
     </View>
   );

@@ -135,8 +135,13 @@ export function SubEventDetail({ eventId, subEventId }: SubEventDetailProps) {
             <Row
               leading={<Glyph name={GLYPH.qr} size={22} tone="textSecondary" />}
               title={byPlatform('Venue Check-In QR', 'Venue check-in QR')}
-              value="Coming soon"
-              disabled
+              chevron
+              onPress={() =>
+                router.push({
+                  pathname: '/venue-qr/[eventId]/[venueId]',
+                  params: { eventId, venueId: subEvent.venue.id },
+                })
+              }
             />
           </Section>
         ) : null}
