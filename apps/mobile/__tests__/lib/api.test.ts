@@ -1681,7 +1681,107 @@ describe('upload pre-flight and completion (D-146)', () => {
       code: 'album_closed',
     });
   });
+
+  // The runner aborts its attempt when the account changes or native protection ends. An abort
+  // that lands while the token lookup or refresh is pending must still send nothing (D-158).
+  describe('a cancelled upload request sends nothing', () => {
+    function pending<T>() {
+      let resolve!: (value: T) => void;
+      const promise = new Promise<T>((done) => {
+        resolve = done;
+      });
+      return { promise, resolve };
+    }
+    const session = (id: string, token: string) =>
+      ({
+        data: { session: { access_token: token, user: { id } } } as SessionResult['data'],
+        error: null,
+      }) as SessionResult;
+
+    it('refuses an already-aborted pre-flight or completion before any request', async () => {
+      signInAs('A');
+      const fetched = answers(201, upload);
+      globalThis.fetch = fetched;
+      const api = loadApi(BASE_URL);
+      const controller = new AbortController();
+      controller.abort();
+      const preflight = await api
+        .preflightUpload('A', eventId, body, controller.signal)
+        .catch((e: unknown) => e);
+      const complete = await api.completeUpload('A', mediaId, controller.signal).catch((e) => e);
+      expect((preflight as Error).name).toBe('AbortError');
+      expect((complete as Error).name).toBe('AbortError');
+      expect(preflight).not.toBeInstanceOf(api.ApiError);
+      expect(fetched).not.toHaveBeenCalled();
+    });
+
+    it.each(['preflight', 'complete'] as const)(
+      'sends no %s when the abort lands during the token lookup',
+      async (call) => {
+        const lookup = pending<SessionResult>();
+        mockAuth.getSession.mockReturnValue(lookup.promise);
+        const fetched = answers(call === 'preflight' ? 201 : 200, upload);
+        globalThis.fetch = fetched;
+        const api = loadApi(BASE_URL);
+        const controller = new AbortController();
+        const result = (
+          call === 'preflight'
+            ? api.preflightUpload('A', eventId, body, controller.signal)
+            : api.completeUpload('A', mediaId, controller.signal)
+        ).catch((e: unknown) => e);
+        controller.abort();
+        lookup.resolve(session('A', 'token'));
+        expect(((await result) as Error).name).toBe('AbortError');
+        expect(fetched).not.toHaveBeenCalled();
+      },
+    );
+
+    it('never resends after a 401 when the abort lands during the refresh', async () => {
+      signInAs('A');
+      const refresh = pending<SessionResult>();
+      mockAuth.refreshSession.mockReturnValue(refresh.promise);
+      const fetched = answers(401, { error: { code: 'no_session', message: 'expired' } });
+      globalThis.fetch = fetched;
+      const api = loadApi(BASE_URL);
+      const controller = new AbortController();
+      const result = api
+        .preflightUpload('A', eventId, body, controller.signal)
+        .catch((e: unknown) => e);
+      await until(() => mockAuth.refreshSession.mock.calls.length > 0);
+      controller.abort();
+      refresh.resolve(session('A', 'fresh'));
+      expect(((await result) as Error).name).toBe('AbortError');
+      expect(fetched).toHaveBeenCalledTimes(1);
+    });
+
+    it('neither refreshes nor resends when the abort lands with the 401 answer', async () => {
+      signInAs('A');
+      const controller = new AbortController();
+      const fetched = jest.fn<typeof fetch>(() => {
+        controller.abort();
+        return Promise.resolve({
+          status: 401,
+          json: () => Promise.resolve({ error: { code: 'no_session', message: 'expired' } }),
+        } as unknown as Response);
+      });
+      globalThis.fetch = fetched;
+      const result = await loadApi(BASE_URL)
+        .completeUpload('A', mediaId, controller.signal)
+        .catch((e: unknown) => e);
+      expect((result as Error).name).toBe('AbortError');
+      expect(mockAuth.refreshSession).not.toHaveBeenCalled();
+      expect(fetched).toHaveBeenCalledTimes(1);
+    });
+  });
 });
+
+async function until(check: () => boolean) {
+  for (let i = 0; i < 200; i++) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error('The condition never held');
+}
 
 describe('GET /events/{eventId}/media', () => {
   const eventId = '9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d';
