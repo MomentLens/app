@@ -1,0 +1,15 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <application>
+    <!-- Started only while the app is visible, never at boot, and stopped with the app's task
+         (D-158). -->
+    <service
+      android:name=".BackgroundUploadService"
+      android:exported="false"
+      android:foregroundServiceType="dataSync"
+      android:stopWithTask="true" />
+  </application>
+</manifest>
