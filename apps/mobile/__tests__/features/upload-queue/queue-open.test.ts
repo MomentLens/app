@@ -56,6 +56,10 @@ jest.mock('expo-file-system', () => ({
     }
   },
 }));
+jest.mock('expo-notifications', () => ({
+  getPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
+  requestPermissionsAsync: async () => ({ granted: true, canAskAgain: true }),
+}));
 jest.mock('expo-network', () => ({
   addNetworkStateListener: () => ({ remove: () => undefined }),
   getNetworkStateAsync: async () => ({ type: 'WIFI' }),
