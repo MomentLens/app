@@ -298,8 +298,8 @@ beforeEach(() => {
   subEventId = randomUUID();
   events.events.set(eventId, {
     deleted: false,
-    // Closed, as every event is until S-31 gives the Admin the toggle. The check is off (D-122).
-    albumOpen: false,
+    // Open, so every test reaches the checks after the album's. The closed-album tests close it.
+    albumOpen: true,
     members: new Map([
       [ADMIN, { role: 'admin', status: 'active' }],
       [GUEST, { role: 'guest', status: 'active' }],
@@ -508,33 +508,66 @@ describe('POST /events/{eventId}/media/preflight', () => {
     expect(media.starts).toEqual([]);
   });
 
-  it('uploads to a closed album while the album check is off (D-122)', async () => {
-    const response = await send('POST', preflightPath(), 'token-guest', preflightBody());
-    expect(response.status).toBe(201);
-  });
+  describe('with the album closed (D-12, D-122, D-161)', () => {
+    beforeEach(() => {
+      const event = events.events.get(eventId);
+      if (event) event.albumOpen = false;
+    });
 
-  describe('with the album check on, as S-31 sets it', () => {
-    const request = () => ({ contentHash: hash(), subEventId });
+    it.each(UPLOADERS.map(([name, token]) => [name, token] as const))(
+      'answers %s 409 album_closed, and reaches no store',
+      async (_case, token) => {
+        const response = await send('POST', preflightPath(), token, preflightBody());
+        expect(response.status).toBe(409);
+        await expect(errorCode(response)).resolves.toBe('album_closed');
+        expect(media.starts).toEqual([]);
+        expect(media.scheduleReads).toEqual([]);
+        expect(puts).toEqual([]);
+      },
+    );
 
-    it('answers 409 album_closed for a closed album, and reaches no store', async () => {
-      await expect(
-        preflightUpload(serviceDeps(), GUEST, eventId, request(), true),
-      ).rejects.toMatchObject({ code: 'album_closed', status: 409 });
+    it('answers 409 album_closed on a resume too, and signs none of the row it would resume', async () => {
+      const existing = randomUUID();
+      const keys = uploadKeys(existing);
+      media.startAnswer = {
+        outcome: 'resumed',
+        mediaId: existing,
+        uploadKey: keys.photo,
+        uploadThumbKey: keys.thumbnail,
+      };
+      const response = await send('POST', preflightPath(), 'token-guest', preflightBody());
+      expect(response.status).toBe(409);
+      const text = await response.text();
+      expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('album_closed');
+      expect(text).not.toContain(existing);
       expect(media.starts).toEqual([]);
+      expect(puts).toEqual([]);
     });
 
-    it('checks membership first, so a non-member learns nothing about the album', async () => {
-      await expect(
-        preflightUpload(serviceDeps(), OUTSIDER, eventId, request(), true),
-      ).rejects.toMatchObject({ code: 'not_member' });
+    it.each(NOT_MEMBERS)(
+      'answers %s 403 not_member first, so a non-member learns nothing about the album',
+      async (_case, token) => {
+        const response = await send('POST', preflightPath(), token, preflightBody());
+        expect(response.status).toBe(403);
+        await expect(errorCode(response)).resolves.toBe('not_member');
+      },
+    );
+
+    it('answers 404 not_found for a soft-deleted event before the album', async () => {
+      const event = events.events.get(eventId);
+      if (event) event.deleted = true;
+      const response = await send('POST', preflightPath(), 'token-admin', preflightBody());
+      expect(response.status).toBe(404);
+      await expect(errorCode(response)).resolves.toBe('not_found');
     });
 
-    it('lets the upload through once the album is open', async () => {
+    it('lets the upload through once the album opens', async () => {
+      const closed = await send('POST', preflightPath(), 'token-guest', preflightBody());
+      expect(closed.status).toBe(409);
       const event = events.events.get(eventId);
       if (event) event.albumOpen = true;
-      await expect(
-        preflightUpload(serviceDeps(), GUEST, eventId, request(), true),
-      ).resolves.toMatchObject({ created: true });
+      const opened = await send('POST', preflightPath(), 'token-guest', preflightBody());
+      expect(opened.status).toBe(201);
     });
   });
 
@@ -719,17 +752,13 @@ describe('S-15 preflight verification', () => {
   );
 
   it('checks the album before reading the schedule', async () => {
+    const event = events.events.get(eventId);
+    if (event) event.albumOpen = false;
     await expect(
-      preflightUpload(
-        serviceDeps(),
-        GUEST,
-        eventId,
-        {
-          ...preflightBody(),
-          verifications: [reading()],
-        },
-        true,
-      ),
+      preflightUpload(serviceDeps(), GUEST, eventId, {
+        ...preflightBody(),
+        verifications: [reading()],
+      }),
     ).rejects.toMatchObject({ code: 'album_closed' });
     expect(media.scheduleReads).toEqual([]);
     expect(media.starts).toEqual([]);
@@ -977,14 +1006,13 @@ describe('S-16 QR preflight', () => {
   });
 
   it('checks album access before reading or forwarding QR proof', async () => {
+    const event = events.events.get(eventId);
+    if (event) event.albumOpen = false;
     await expect(
-      preflightUpload(
-        serviceDeps(),
-        GUEST,
-        eventId,
-        { ...preflightBody(), verifications: [scan()] },
-        true,
-      ),
+      preflightUpload(serviceDeps(), GUEST, eventId, {
+        ...preflightBody(),
+        verifications: [scan()],
+      }),
     ).rejects.toMatchObject({ code: 'album_closed' });
     expect(media.scheduleReads).toEqual([]);
     expect(media.starts).toEqual([]);
@@ -1153,6 +1181,16 @@ describe('POST /media/{mediaId}/complete', () => {
       expect(bucket.presignGets).toBe(0);
     },
   );
+
+  it('completes an upload whose album closed after its pre-flight, since completion never checks it (D-146)', async () => {
+    const row = seedUpload(GUEST);
+    const event = events.events.get(eventId);
+    if (event) event.albumOpen = false;
+    const response = await send('POST', completePath(row.id), 'token-guest');
+    expect(response.status).toBe(200);
+    expect(CompleteUploadResponse.parse(await response.json())).toEqual({ status: 'completed' });
+    expect(media.messages).toBe(1);
+  });
 
   it('answers a repeat 200 completed again and sends no second message', async () => {
     const row = seedUpload(GUEST);

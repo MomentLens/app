@@ -2425,9 +2425,11 @@ if (project === null) {
       // A SHA-256 as the phone sends it: 64 lowercase hex characters.
       const hash = () => (randomUUID() + randomUUID()).replaceAll('-', '');
 
-      // An event made by `adminId`, with its three sub-event ids by name.
+      // An event made by `adminId`, with its three sub-event ids by name. Its album is open, so
+      // pre-flight reaches the checks after the album's (D-161).
       async function eventWithSchedule(adminId: string) {
         const event = await createdEvent(adminId);
+        await expect(store.setAlbum(event.id, true)).resolves.toBe(true);
         const schedule = (await subEvents.schedule(event.id)) ?? [];
         const id = (name: string) => {
           const found = schedule.find((s) => s.name === name);
