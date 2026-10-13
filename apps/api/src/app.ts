@@ -41,7 +41,7 @@ import {
   mediaStatusController,
   preflightUploadController,
 } from './controllers/media';
-import { getMyProfileController } from './controllers/profiles';
+import { acceptConsentController, getMyProfileController } from './controllers/profiles';
 import {
   addSubEventController,
   deleteSubEventController,
@@ -70,7 +70,7 @@ import type { InviteManagementStore, InviteStore } from './services/invites';
 import type { JoinRequestStore } from './services/join-requests';
 import type { MediaStore } from './services/media';
 import type { MediaImagesStore } from './services/media-images';
-import type { FindProfile } from './services/profiles';
+import type { ConsentStore, FindProfile } from './services/profiles';
 import type { SubEventStore } from './services/sub-events';
 import type { VenueQrStore } from './services/venue-qrs';
 
@@ -81,6 +81,7 @@ export interface AppDeps {
   checkDatabase: DatabaseCheck;
   verifyToken: VerifyToken;
   findProfile: FindProfile;
+  consent: ConsentStore;
   events: EventStore;
   attendees: AttendeeStore;
   joinRequests: JoinRequestStore;
@@ -106,7 +107,12 @@ export function createApp(deps: AppDeps): Express {
   app.use(helmet());
   const auth = requireAuth(deps.verifyToken);
   app.use(healthRouter(healthController(deps.checkDatabase)));
-  app.use(profilesRouter(auth, getMyProfileController(deps.findProfile, deps.presignGet)));
+  app.use(
+    profilesRouter(auth, {
+      getMine: getMyProfileController(deps.findProfile, deps.consent, deps.presignGet),
+      acceptConsent: acceptConsentController(deps.consent),
+    }),
+  );
   app.use(
     eventsRouter(auth, {
       create: createEventController(deps.events, deps.presignGet),
