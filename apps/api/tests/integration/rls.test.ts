@@ -7,8 +7,9 @@
 // update_sub_event and delete_sub_event through the API's sub-event store (D-121), media,
 // start_upload and complete_upload through the API's media store (D-95, D-122),
 // event_settings and update_event_settings through the API's event store (D-142), the attendee
-// functions through the API's attendee store (D-143), and the Pending Approvals functions through
-// the API's join request store (D-144). It needs a
+// functions through the API's attendee store (D-143), the Pending Approvals functions through
+// the API's join request store (D-144), and S-31's event policy, its Realtime delivery,
+// album_status, the album write and the consent table through the API's stores (D-161). It needs a
 // real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
 // dev project from the environment. Each test makes its own accounts under @momentlens.me and
 // deletes them after, and deletes the events it made. No email is sent, because the accounts are
@@ -21,13 +22,14 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it as jestIt, jest } from '@jest/globals';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, REALTIME_SUBSCRIBE_STATES } from '@supabase/supabase-js';
 import { pino } from 'pino';
 import { z } from 'zod';
 
 import {
   InviteToken,
   MAX_EVENT_SPAN_MS,
+  PRIVACY_POLICY_VERSION,
   SHORTCODE_ALPHABET,
   VERIFICATION_RADIUS_DEFAULT_M,
 } from '@momentlens/shared-types';
@@ -46,7 +48,9 @@ import { createAlbumStore, listAlbum } from '../../src/services/album';
 import {
   createEventParams,
   createEventStore,
+  getAlbumStatus,
   MAX_ACTIVE_GUESTS,
+  setAlbumOpen,
   updateEventSettingsParams,
 } from '../../src/services/events';
 import {
@@ -71,7 +75,12 @@ import {
   UPLOAD_LIMITS,
 } from '../../src/services/media';
 import type { NewUpload, StartResult } from '../../src/services/media';
-import { createFindProfile } from '../../src/services/profiles';
+import {
+  acceptConsent,
+  createConsentStore,
+  createFindProfile,
+  getOwnProfile,
+} from '../../src/services/profiles';
 import {
   addSubEventParams,
   createSubEventStore,
@@ -1042,7 +1051,7 @@ if (project === null) {
       await expect(store.findAccess(randomUUID(), a.id)).resolves.toBeNull();
     });
 
-    it('shows the publishable key and a signed-in member no rows, and lets neither write or call a function', async () => {
+    it('shows the publishable key no rows and a signed-in member only their own event, and lets neither write or call a function', async () => {
       const [a, b] = [await createNamedUser(), await createNamedUser()];
       const event = await createdEvent(a.id);
       const invite = await admin
@@ -1059,11 +1068,22 @@ if (project === null) {
         await signedInClient(a),
       ];
 
-      for (const client of clients) {
+      for (const [index, client] of clients.entries()) {
         for (const table of ['event', 'venue', 'sub_event', 'membership', 'invite'] as const) {
           const read = await client.from(table).select('*');
           expect(read.error).toBeNull();
-          expect(read.data).toEqual([]);
+          // event's SELECT policy shows the signed-in Admin their own event's row, for Realtime
+          // alone (D-161). The other four tables have no policy.
+          if (table === 'event' && index === 1) {
+            expect(
+              z
+                .array(z.object({ id: z.uuid() }))
+                .parse(read.data)
+                .map((r) => r.id),
+            ).toEqual([event.id]);
+          } else {
+            expect(read.data).toEqual([]);
+          }
         }
 
         await client.from('event').update({ name: 'Changed', album_open: true }).eq('id', event.id);
@@ -1105,6 +1125,9 @@ if (project === null) {
         });
         expect(getCall.error).not.toBeNull();
         expect(getCall.data).toBeNull();
+        const albumCall = await client.rpc('album_status', { p_event_id: event.id });
+        expect(albumCall.error).not.toBeNull();
+        expect(albumCall.data).toBeNull();
         // join_event takes the user as a parameter, so a caller who could run it could put anyone
         // into any event, past the cap. resolve_invite would read anyone's membership.
         const joinCall = await client.rpc(
@@ -5902,6 +5925,444 @@ if (project === null) {
           mehndiRows.filter((row) => row.uploader === g.id).map((row) => row.id),
         );
         expect(guestInMehndi.sectionCounts).toEqual([{ subEventId: mehndi, count: 10 }]);
+      });
+    });
+
+    describe('S-31: the event policy, Realtime on event, the album state and consent', () => {
+      const subEvents = createSubEventStore(admin);
+      const media = createMediaStore(admin);
+      const consent = createConsentStore(admin);
+      const findProfile = createFindProfile(admin);
+      const hash = () => randomBytes(32).toString('hex');
+
+      async function firstSubEvent(eventId: string): Promise<string> {
+        const found = ((await subEvents.schedule(eventId)) ?? [])[0];
+        if (found === undefined) throw new Error('no sub-event found');
+        return found.id;
+      }
+
+      // One media row by `uploader`, finished unless `uploaded` is false.
+      async function seedMedia(
+        eventId: string,
+        subEventId: string,
+        uploader: string,
+        role: string,
+        { uploaded = true, deleted = false } = {},
+      ) {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const result = await admin.from('media').insert({
+          id,
+          event_id: eventId,
+          sub_event_id: subEventId,
+          uploader_user_id: uploader,
+          uploader_role_at_upload: role,
+          captured_at: now,
+          content_hash: hash(),
+          size_bytes: uploaded ? 100 : null,
+          upload_key: `${id}/upload.jpg`,
+          upload_thumb_key: `${id}/upload_thumb.webp`,
+          uploaded_at: uploaded ? now : null,
+          processed_at: null,
+          deleted_at: deleted ? now : null,
+        });
+        expect(result.error).toBeNull();
+      }
+
+      async function eventColumns(eventId: string) {
+        const row = await admin.from('event').select('name, album_open').eq('id', eventId).single();
+        expect(row.error).toBeNull();
+        return row.data;
+      }
+
+      async function setEventColumns(eventId: string, fields: Record<string, unknown>) {
+        const result = await admin.from('event').update(fields).eq('id', eventId);
+        expect(result.error).toBeNull();
+      }
+
+      // The ids of the event rows this client can read.
+      async function visibleEvents(client: ReturnType<typeof createServerClient>) {
+        const read = await client.from('event').select('id');
+        expect(read.error).toBeNull();
+        return z
+          .array(z.object({ id: z.uuid() }))
+          .parse(read.data)
+          .map((row) => row.id);
+      }
+
+      // A Realtime subscription to UPDATEs on one event's row, as `user`, signed in on the client
+      // that subscribes, as the app opens one per open event. Every row it hears is kept in
+      // `received`.
+      const listen = async (user: { email: string; password: string }, eventId: string) => {
+        const client = createServerClient(project.url, project.publishableKey);
+        const session = await client.auth.signInWithPassword({
+          email: user.email,
+          password: user.password,
+        });
+        expect(session.error).toBeNull();
+        await client.realtime.setAuth(session.data.session?.access_token ?? null);
+        const received: Record<string, unknown>[] = [];
+        const channel = client
+          .channel(`event-${eventId}-${randomUUID()}`)
+          .on(
+            'postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'event', filter: `id=eq.${eventId}` },
+            (payload) => {
+              received.push(payload.new);
+            },
+          );
+        await new Promise<void>((resolve, reject) => {
+          channel.subscribe((status, error) => {
+            if (status === REALTIME_SUBSCRIBE_STATES.SUBSCRIBED) resolve();
+            if (
+              status === REALTIME_SUBSCRIBE_STATES.CHANNEL_ERROR ||
+              status === REALTIME_SUBSCRIBE_STATES.TIMED_OUT
+            ) {
+              reject(error ?? new Error(`Realtime subscription ${status}`));
+            }
+          });
+        });
+        return {
+          received,
+          async close() {
+            await client.removeAllChannels();
+            await client.realtime.disconnect();
+          },
+        };
+      };
+
+      async function waitFor(condition: () => boolean, ms: number) {
+        const until = Date.now() + ms;
+        while (!condition() && Date.now() < until) {
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      }
+
+      it('shows an event row to its active members only, deleted or not, and lets no client write it', async () => {
+        const [a, g, p, pen, blk, rem, out, b] = await Promise.all([
+          createNamedUser('Admin'),
+          createNamedUser('Guest'),
+          createNamedUser('Photographer'),
+          createNamedUser('Pending'),
+          createNamedUser('Blocked'),
+          createNamedUser('Removed'),
+          createNamedUser('Outsider'),
+          createNamedUser('Other Admin'),
+        ]);
+        const event = await createdEvent(a.id);
+        // g and p are active here too, so each reads exactly the events they belong to.
+        const other = await createdEvent(b.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        await addMember(event.id, pen.id, 'guest', 'pending');
+        await addMember(event.id, blk.id, 'guest', 'blocked');
+        await addMember(event.id, rem.id, 'photographer', 'removed');
+        await addMember(other.id, rem.id, 'guest', 'active');
+
+        const ca = await signedInClient(a);
+        const cg = await signedInClient(g);
+        const cp = await signedInClient(p);
+        const cpen = await signedInClient(pen);
+        const cblk = await signedInClient(blk);
+        const crem = await signedInClient(rem);
+        const cout = await signedInClient(out);
+        for (const client of [ca, cg, cp]) {
+          await expect(visibleEvents(client)).resolves.toEqual([event.id]);
+        }
+        for (const client of [cpen, cblk, cout]) {
+          await expect(visibleEvents(client)).resolves.toEqual([]);
+        }
+        // Removed here and active in another event: that event's row and not this one.
+        await expect(visibleEvents(crem)).resolves.toEqual([other.id]);
+        await expect(
+          visibleEvents(createServerClient(project.url, project.publishableKey)),
+        ).resolves.toEqual([]);
+
+        // The policy grants reads only. Not even the Admin writes the row; the album write goes
+        // through the API (root invariant 14).
+        for (const client of [ca, cg]) {
+          await client
+            .from('event')
+            .update({ album_open: true, name: 'Changed' })
+            .eq('id', event.id);
+          await client.from('event').delete().eq('id', event.id);
+          const insert = await client.from('event').insert({ name: 'Mine', type: 'wedding' });
+          expect(insert.error).not.toBeNull();
+        }
+        await expect(eventColumns(event.id)).resolves.toEqual({
+          name: 'RLS Test Wedding',
+          album_open: false,
+        });
+
+        // A soft-deleted event still reaches its active members, so an open phone hears of the
+        // deletion and refetches into the 404 state. get_my_event still withholds it (D-161).
+        await setEventColumns(event.id, { deleted_at: new Date().toISOString() });
+        await expect(visibleEvents(cg)).resolves.toEqual([event.id]);
+        await expect(visibleEvents(cout)).resolves.toEqual([]);
+        await expect(store.findForCaller(event.id, g.id)).resolves.toMatchObject({
+          deleted: true,
+          event: null,
+        });
+      });
+
+      it('delivers an album change to an active member through Realtime, and nothing to an outsider or a removed member', async () => {
+        const [a, g, rem, out] = await Promise.all([
+          createNamedUser('Admin'),
+          createNamedUser('Guest'),
+          createNamedUser('Removed'),
+          createNamedUser('Outsider'),
+        ]);
+        const event = await createdEvent(a.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, rem.id, 'guest', 'removed');
+
+        const listeners = await Promise.all([g, rem, out].map((user) => listen(user, event.id)));
+        const [member, removed, outsider] = listeners as [
+          (typeof listeners)[number],
+          (typeof listeners)[number],
+          (typeof listeners)[number],
+        ];
+        try {
+          // A change made just after the subscription answers can still be missed while Realtime
+          // registers it, so the album is toggled until the member hears one, five times at most.
+          let open = false;
+          for (let attempt = 0; attempt < 5 && member.received.length === 0; attempt += 1) {
+            open = !open;
+            await expect(store.setAlbum(event.id, open)).resolves.toBe(open);
+            await waitFor(() => member.received.length > 0, 4_000);
+          }
+          expect(member.received[0]).toMatchObject({ id: event.id });
+          expect(typeof member.received[0]?.album_open).toBe('boolean');
+          // Time for a delivery to the other two, if the policy let one through, to arrive.
+          await new Promise((resolve) => setTimeout(resolve, 4_000));
+          expect(removed.received).toEqual([]);
+          expect(outsider.received).toEqual([]);
+        } finally {
+          await Promise.all(listeners.map((listener) => listener.close()));
+        }
+      }, 90_000);
+
+      it('counts finished uploads and names each active Photographer with none, through album_status', async () => {
+        const [a, g, b, p1, p2, p3, p4, pending, removed] = await Promise.all([
+          createNamedUser('Admin'),
+          createNamedUser('Guest'),
+          createNamedUser('Other Admin'),
+          createNamedUser('Zara Lens'),
+          createNamedUser('bilal studio'),
+          createNamedUser('Asad Photos'),
+          createNamedUser('Kamran Clicks'),
+          createNamedUser('Pending Photographer'),
+          createNamedUser('Removed Photographer'),
+        ]);
+        const event = await createdEvent(a.id);
+        const subEventId = await firstSubEvent(event.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        for (const p of [p1, p2, p3, p4]) {
+          await addMember(event.id, p.id, 'photographer', 'active');
+        }
+        await addMember(event.id, pending.id, 'photographer', 'pending');
+        await addMember(event.id, removed.id, 'photographer', 'removed');
+
+        // Finished: the Admin's, the Guest's and p1's. The rest do not count: an unfinished row, a
+        // soft-deleted one, and p2's finished upload to another event.
+        await seedMedia(event.id, subEventId, a.id, 'admin');
+        await seedMedia(event.id, subEventId, g.id, 'guest');
+        await seedMedia(event.id, subEventId, p1.id, 'photographer');
+        await seedMedia(event.id, subEventId, g.id, 'guest', { uploaded: false });
+        await seedMedia(event.id, subEventId, g.id, 'guest', { deleted: true });
+        await seedMedia(event.id, subEventId, p3.id, 'photographer', { uploaded: false });
+        await seedMedia(event.id, subEventId, p4.id, 'photographer', { deleted: true });
+        const other = await createdEvent(b.id);
+        await addMember(other.id, p2.id, 'photographer', 'active');
+        await seedMedia(other.id, await firstSubEvent(other.id), p2.id, 'photographer');
+
+        // Sorted by name, ignoring case. The pending and removed Photographers are not active.
+        const expected = {
+          albumOpen: false,
+          uploadCount: 3,
+          photographersWithoutUploads: ['Asad Photos', 'bilal studio', 'Kamran Clicks'],
+        };
+        await expect(store.albumStatus(event.id)).resolves.toEqual(expected);
+        await expect(getAlbumStatus(store, a.id, event.id)).resolves.toEqual(expected);
+        await expect(getAlbumStatus(store, g.id, event.id)).rejects.toMatchObject({
+          code: 'wrong_role',
+        });
+        await expect(getAlbumStatus(store, b.id, event.id)).rejects.toMatchObject({
+          code: 'not_member',
+        });
+
+        await setEventColumns(event.id, { archived_at: new Date().toISOString() });
+        await expect(store.albumStatus(event.id)).resolves.toEqual(expected);
+        await setEventColumns(event.id, { deleted_at: new Date().toISOString() });
+        await expect(store.albumStatus(event.id)).resolves.toBeNull();
+        await expect(store.albumStatus(randomUUID())).resolves.toBeNull();
+      });
+
+      it('opens and closes the album with one write that every read then carries, and refuses a deleted event', async () => {
+        const [a, g, p, pending] = await Promise.all([
+          createNamedUser('Admin'),
+          createNamedUser('Guest'),
+          createNamedUser('Photographer'),
+          createNamedUser('Pending'),
+        ]);
+        const body = request();
+        const event = await createdEvent(a.id, body);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'pending');
+        await addMember(event.id, pending.id, 'guest', 'pending');
+
+        // A Guest is refused before the write.
+        await expect(setAlbumOpen(store, g.id, event.id, { open: true })).rejects.toMatchObject({
+          code: 'wrong_role',
+        });
+        await expect(
+          setAlbumOpen(store, pending.id, event.id, { open: true }),
+        ).rejects.toMatchObject({ code: 'not_member' });
+        await expect(eventColumns(event.id)).resolves.toMatchObject({ album_open: false });
+
+        await expect(setAlbumOpen(store, a.id, event.id, { open: true })).resolves.toEqual({
+          albumOpen: true,
+        });
+        await expect(store.findAccess(event.id, g.id)).resolves.toMatchObject({ albumOpen: true });
+        expect((await store.findForCaller(event.id, g.id))?.event?.albumOpen).toBe(true);
+        expect((await store.listForMember(g.id)).map((e) => e.albumOpen)).toEqual([true]);
+        // get_my_event withholds it, with the event's other columns, from a caller not active.
+        expect((await store.findForCaller(event.id, pending.id))?.event).toBeNull();
+        // A repeated create answers the state at the repeat.
+        await expect(store.create(a.id, body)).resolves.toEqual({
+          outcome: 'repeated',
+          event: { ...event, albumOpen: true },
+        });
+
+        // A repeat sets the same state again, and the last of two writes stays (D-142).
+        await expect(store.setAlbum(event.id, true)).resolves.toBe(true);
+        await expect(store.setAlbum(event.id, false)).resolves.toBe(false);
+        await expect(eventColumns(event.id)).resolves.toMatchObject({ album_open: false });
+
+        // An archived event takes it. A deleted one is refused and keeps its state.
+        await setEventColumns(event.id, { archived_at: new Date().toISOString() });
+        await expect(store.setAlbum(event.id, true)).resolves.toBe(true);
+        await setEventColumns(event.id, { deleted_at: new Date().toISOString() });
+        await expect(store.setAlbum(event.id, false)).resolves.toBeNull();
+        await expect(eventColumns(event.id)).resolves.toMatchObject({ album_open: true });
+        await expect(store.setAlbum(randomUUID(), true)).resolves.toBeNull();
+      });
+
+      it('refuses every role at pre-flight while the album is closed, a resume included', async () => {
+        const [a, g, p] = await Promise.all([
+          createNamedUser('Admin'),
+          createNamedUser('Guest'),
+          createNamedUser('Photographer'),
+        ]);
+        const event = await createdEvent(a.id);
+        const subEventId = await firstSubEvent(event.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        const deps = {
+          events: store,
+          media,
+          logger: silent,
+          presignPut: () => Promise.resolve('https://uploads.invalid/signed'),
+          objectSize: () => Promise.resolve(null),
+          deleteObject: () => Promise.resolve(),
+        };
+        const count = async () => {
+          const result = await admin
+            .from('media')
+            .select('id', { count: 'exact', head: true })
+            .eq('event_id', event.id);
+          expect(result.error).toBeNull();
+          return result.count;
+        };
+
+        for (const user of [a, g, p]) {
+          await expect(
+            preflightUpload(deps, user.id, event.id, { contentHash: hash(), subEventId }),
+          ).rejects.toMatchObject({ code: 'album_closed', status: 409 });
+        }
+        await expect(count()).resolves.toBe(0);
+
+        // The Photographer starts a row while the album is open, and the album closes before the
+        // files reach R2. The retry is refused, and the unfinished row waits for the album.
+        await store.setAlbum(event.id, true);
+        const contentHash = hash();
+        const first = await preflightUpload(deps, p.id, event.id, { contentHash, subEventId });
+        expect(first.created).toBe(true);
+        await store.setAlbum(event.id, false);
+        await expect(
+          preflightUpload(deps, p.id, event.id, { contentHash, subEventId }),
+        ).rejects.toMatchObject({ code: 'album_closed', status: 409 });
+        await store.setAlbum(event.id, true);
+        await expect(
+          preflightUpload(deps, p.id, event.id, { contentHash, subEventId }),
+        ).resolves.toMatchObject({ created: false, upload: { mediaId: first.upload.mediaId } });
+        await expect(count()).resolves.toBe(1);
+      });
+
+      it('records consent once per version for the caller only, and shows clients none of it', async () => {
+        const [a, b] = await Promise.all([createNamedUser('Ayesha'), createNamedUser('Bilal')]);
+        const presignGet = () => Promise.resolve('https://unused.invalid/signed');
+
+        await expect(consent.accepted(a.id, PRIVACY_POLICY_VERSION)).resolves.toBe(false);
+        await expect(
+          acceptConsent(consent, a.id, { policyVersion: PRIVACY_POLICY_VERSION }),
+        ).resolves.toEqual({ created: true, response: { policyVersion: PRIVACY_POLICY_VERSION } });
+        const firstRow = await admin.from('consent').select('*').eq('user_id', a.id);
+        expect(firstRow.error).toBeNull();
+        expect(firstRow.data).toEqual([
+          {
+            user_id: a.id,
+            policy_version: PRIVACY_POLICY_VERSION,
+            accepted_at: expect.any(String),
+          },
+        ]);
+        // A repeat keeps the one row and its first time.
+        await expect(consent.accept(a.id, PRIVACY_POLICY_VERSION)).resolves.toBe('repeated');
+        const again = await admin.from('consent').select('*').eq('user_id', a.id);
+        expect(again.data).toEqual(firstRow.data);
+
+        await expect(consent.accepted(a.id, PRIVACY_POLICY_VERSION)).resolves.toBe(true);
+        await expect(consent.accepted(a.id, PRIVACY_POLICY_VERSION + 1)).resolves.toBe(false);
+        // A's row never clears B's.
+        await expect(consent.accepted(b.id, PRIVACY_POLICY_VERSION)).resolves.toBe(false);
+        await expect(getOwnProfile(findProfile, consent, presignGet, a.id)).resolves.toMatchObject({
+          consentRequired: false,
+        });
+        await expect(getOwnProfile(findProfile, consent, presignGet, b.id)).resolves.toMatchObject({
+          consentRequired: true,
+        });
+
+        // RLS is on with no policy: a client reads nothing and writes nothing, A included.
+        for (const client of [
+          createServerClient(project.url, project.publishableKey),
+          await signedInClient(a),
+          await signedInClient(b),
+        ]) {
+          const read = await client.from('consent').select('*');
+          expect(read.error).toBeNull();
+          expect(read.data).toEqual([]);
+          const insert = await client
+            .from('consent')
+            .insert({ user_id: b.id, policy_version: PRIVACY_POLICY_VERSION });
+          expect(insert.error).not.toBeNull();
+          await client.from('consent').delete().eq('user_id', a.id);
+          await client.from('consent').update({ policy_version: 7 }).eq('user_id', a.id);
+        }
+        await expect(admin.from('consent').select('*').eq('user_id', a.id)).resolves.toMatchObject({
+          data: firstRow.data,
+        });
+        await expect(consent.accepted(b.id, PRIVACY_POLICY_VERSION)).resolves.toBe(false);
+
+        const zero = await admin.from('consent').insert({ user_id: b.id, policy_version: 0 });
+        expect(zero.error?.code).toBe('23514');
+
+        // An account deleted since its token was issued: its rows go with it, and a late accept
+        // answers no_account, which the endpoint turns into 401.
+        const deleted = await admin.auth.admin.deleteUser(a.id);
+        expect(deleted.error).toBeNull();
+        const gone = await admin.from('consent').select('user_id').eq('user_id', a.id);
+        expect(gone.data).toEqual([]);
+        await expect(consent.accept(a.id, PRIVACY_POLICY_VERSION)).resolves.toBe('no_account');
       });
     });
   });
