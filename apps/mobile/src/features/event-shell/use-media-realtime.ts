@@ -2,6 +2,8 @@ import type { RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
+import { albumStatusQueryKey } from '@/features/album/use-album-switch';
+import { recheckEvent } from '@/features/event-shell/use-event';
 import { applyMediaChange } from '@/features/my-media/status';
 import { getQueue } from '@/features/upload-queue/queue';
 import { queryClient } from '@/lib/query-client';
@@ -26,10 +28,15 @@ const MAX_WAIT_MS = 4000;
 // inside that window would reuse a channel that is about to close. Each mount takes its own topic.
 let channelCount = 0;
 
-// Opens one Realtime channel on `media` per open event in the Event shell (D-148).
-// Filtered on event_id, removed on unmount and logout.
-// Updates Home's album queries and My Media's queue status badges live (D-145, D-148).
-// Refetches loaded pages on reconnect and on app foreground.
+// Opens one Realtime channel per open event in the Event shell, carrying a `media` listener filtered
+// on event_id and an `event` listener on the event's own row (D-148, D-161). Removed on unmount and
+// logout.
+// - `media` updates Home's album queries and My Media's queue status badges live (D-145, D-148).
+// - `event` refetches GET /events/{eventId} and the Admin's album status, and never writes the
+//   cache itself: only the API's answer releases waiting_album photos (arch §4.3). A soft delete
+//   reaches the phone this way too, and the refetch shows the event's 404 state.
+// Both refetch on reconnect, and the album's pages on app foreground; the event query refetches on
+// foreground by itself.
 export function useMediaRealtime(eventId: string) {
   const currentUserId = useAuthStore((state) => state.userId);
 
@@ -45,6 +52,7 @@ export function useMediaRealtime(eventId: string) {
       firstPendingAt = null;
       void queryClient.invalidateQueries({ queryKey: ['album', eventId] });
       void queryClient.invalidateQueries({ queryKey: ['uploaders', eventId] });
+      void queryClient.invalidateQueries({ queryKey: albumStatusQueryKey(eventId), exact: true });
     }
 
     function scheduleRefetch() {
@@ -88,6 +96,11 @@ export function useMediaRealtime(eventId: string) {
       }
     }
 
+    function refetchEvent() {
+      recheckEvent(eventId);
+      void queryClient.invalidateQueries({ queryKey: albumStatusQueryKey(eventId), exact: true });
+    }
+
     let subscribedOnce = false;
     channelCount += 1;
     const channel = supabase
@@ -106,10 +119,18 @@ export function useMediaRealtime(eventId: string) {
           );
         },
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'event', filter: `id=eq.${eventId}` },
+        refetchEvent,
+      )
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           // A rejoin after a dropped connection may have missed changes.
-          if (subscribedOnce) refetchAlbum();
+          if (subscribedOnce) {
+            refetchAlbum();
+            refetchEvent();
+          }
           subscribedOnce = true;
         }
       });
