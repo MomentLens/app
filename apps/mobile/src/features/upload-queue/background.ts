@@ -1,3 +1,5 @@
+import type { EndReason } from '../../../modules/background-upload';
+
 import type { RunnerActivity, UploadRunner } from './runner';
 import type { QueueCounts } from './types';
 
@@ -13,8 +15,6 @@ import type { QueueCounts } from './types';
 //   the runner then suspends, and nothing restarts it before the foreground.
 // - Each task carries an id and belongs to the account that started it. A callback for any other
 //   task changes nothing.
-
-export type EndReason = 'expired' | 'timeout' | 'refused' | 'stopped';
 
 export interface NativeProtection {
   // True once the system granted protection for this task. Only the task id crosses into native
