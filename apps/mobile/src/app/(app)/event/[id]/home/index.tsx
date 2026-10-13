@@ -10,6 +10,7 @@ import { tabHref } from '@/features/event-shell/tabs';
 import { useEvent } from '@/features/event-shell/use-event';
 import { formatEventDates } from '@/features/events/format';
 import { ActiveFilterPill } from '@/features/album/active-filter-pill';
+import { AlbumBanner } from '@/features/album/album-banner';
 import { AlbumGrid } from '@/features/album/album-grid';
 import {
   AlbumLoadFailed,
@@ -183,6 +184,8 @@ function HomeContent({
             {subtitle}
           </Text>
         </View>
+        {/* The album is closed at creation, so the Admin opens it here before the first start. */}
+        <AlbumBanner eventId={eventId} role={event.role} />
         <PreEventView event={event} subEvents={subEvents} now={now} />
       </EventTabScreen>
     );
@@ -224,6 +227,9 @@ function HomeContent({
                     {subtitle}
                   </Text>
                 </View>
+
+                {/* The album-state banner, under the status (spec §2.5.2, D-161) */}
+                {event ? <AlbumBanner eventId={eventId} role={event.role} /> : null}
 
                 {/* Sub-event chips row */}
                 <SubEventChips

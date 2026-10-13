@@ -40,7 +40,7 @@ export function queueSummary(counts: QueueCounts): string {
 }
 
 // My Media's one status banner (D-159). The queue counts head it and collapse the rows beneath:
-// check-in, and S-14's keep-open notice (D-158). With no counts the rows show on their own, and
+// album closed (D-161), check-in, and S-14's keep-open notice (D-158). With no counts the rows show on their own, and
 // with nothing to say the banner is gone. iOS draws it as an inset grouped card on the surface
 // colour, Android as a Material 3 filled card on surfaceContainer.
 export function StatusBanner({
@@ -123,6 +123,15 @@ export function StatusBanner({
     </View>
   );
 }
+
+// Shown to every role while the event's album is closed, first among the rows. A Photographer
+// never sees Home, so this is where they learn it (D-161).
+export const ALBUM_CLOSED_ROW: StatusRow = {
+  key: 'album-closed',
+  glyph: GLYPH.albumClosed,
+  title: 'Album closed',
+  detail: 'New photos wait on this phone until the album opens.',
+};
 
 // S-14's notice for a phone that refused background protection (D-158).
 export const KEEP_OPEN_ROW: StatusRow = {

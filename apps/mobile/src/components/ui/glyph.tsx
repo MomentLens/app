@@ -34,6 +34,9 @@ export const GLYPH = {
   invite: { ios: 'link', android: 'link' },
   subEvents: { ios: 'calendar', android: 'calendar_month' },
   settings: { ios: 'gearshape', android: 'settings' },
+  // The album's state on Home, in Manage and in My Media's banner (D-161).
+  albumOpen: { ios: 'lock.open', android: 'lock_open' },
+  albumClosed: { ios: 'lock', android: 'lock' },
 } as const satisfies Record<string, GlyphName>;
 
 interface GlyphProps {
