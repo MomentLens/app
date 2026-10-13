@@ -63,17 +63,31 @@ export interface RunnerDeps {
   lostAccess(eventId: string): void;
   now(): number;
   schedule(wake: () => void, delayMs: number): () => void;
+  // What the runner is doing for an account. S-14's coordinator reads it (D-158).
+  activity?(userId: string, activity: RunnerActivity): void;
   warn?(message: string, error: unknown): void;
 }
+
+// Reported when a pass picks a photo, and again when the runner goes quiet. Background protection
+// stays only while the runner is uploading or backing off (D-158).
+// - uploading: an attempt is running, Stage 1 included.
+// - backoff: queued work waits on a timer the runner set.
+// - idle: nothing queued or uploading, or only waiting, stopped, finished or Local Only photos.
+// - offline, cellular: the network gate is closed. Cellular waits for Wi-Fi.
+// - session: a 401. The runner waits for the session.
+// - error: the queue database failed.
+export type RunnerActivity =
+  'uploading' | 'backoff' | 'idle' | 'offline' | 'cellular' | 'session' | 'error';
 
 // How one attempt ended for the pass that made it.
 // - next: the photo moved on, or waits on its own backoff. The pass takes the next photo.
 // - outage: no answer. The whole runner pauses, so an outage meets one photo, not all of them.
 // - session: a 401. The runner waits for the session, the foreground or a reconnect.
-// - cancelled: the account changed. Nothing was written.
+// - cancelled: the account changed or the runner was suspended. Nothing was written.
 type Attempt = 'next' | 'outage' | 'session' | 'cancelled';
-// How a pass ended, which decides whether a timer wakes the runner.
-type Pass = 'idle' | 'paused' | 'blocked';
+// How a pass ended, which decides whether a timer wakes the runner. The last four wait for
+// something outside the runner.
+type Pass = 'idle' | 'paused' | 'offline' | 'cellular' | 'session' | 'error';
 
 const PHOTO_TYPE = 'image/jpeg';
 const THUMBNAIL_TYPE = 'image/webp';
@@ -88,6 +102,8 @@ export class UploadRunner {
   // left, which may still be due, so without this the pass would pick it again at once.
   private failed = new Set<string>();
   private stopped = false;
+  // Native protection ended in the background (D-158). Nothing runs until resume().
+  private suspended = false;
   private owner: string | null = null;
   private pausedUntil = 0;
   private controller: AbortController | null = null;
@@ -97,7 +113,7 @@ export class UploadRunner {
 
   // Starts a pass, or asks the running one for another. Resolves once the runner is idle.
   run(): Promise<void> {
-    if (this.stopped) return Promise.resolve();
+    if (this.stopped || this.suspended) return Promise.resolve();
     if (this.running) {
       this.again = true;
       return this.running;
@@ -112,8 +128,10 @@ export class UploadRunner {
   }
 
   // Foreground, reconnect, a release or a refreshed session: every photo is tried once now,
-  // whatever its backoff (D-146).
+  // whatever its backoff (D-146). A suspended runner keeps its backoff: a wake in the background
+  // after protection ended waits for the foreground, which asks again (D-158).
   retryNow(): Promise<void> {
+    if (this.stopped || this.suspended) return Promise.resolve();
     this.fresh = true;
     this.pausedUntil = 0;
     return this.run();
@@ -135,12 +153,31 @@ export class UploadRunner {
     this.cancelTimer = null;
   }
 
+  // Native expiry, refusal or service shutdown in the background (D-158). The current attempt is
+  // cancelled as an account change cancels it, so it writes nothing, and the timer goes. Every
+  // photo keeps its step, prepared file, hash and retry count, and recovery takes it from there
+  // after resume(): pre-flight after an interrupted pre-flight or PUT, completion alone after
+  // both PUTs. A Stage 1 already running finishes and stores its bytes, which are never encoded
+  // again.
+  suspend(): void {
+    this.suspended = true;
+    this.controller?.abort();
+    this.cancelTimer?.();
+    this.cancelTimer = null;
+  }
+
+  // Lets run() start again. The caller asks for the pass it wants: the foreground asks for
+  // retryNow().
+  resume(): void {
+    this.suspended = false;
+  }
+
   private async loop(): Promise<void> {
     for (;;) {
       this.again = false;
       this.cancelTimer?.();
       this.cancelTimer = null;
-      if (this.stopped) return;
+      if (this.stopped || this.suspended) return;
       const userId = this.deps.userId();
       if (userId === null) return;
       if (userId !== this.owner) {
@@ -162,15 +199,18 @@ export class UploadRunner {
         } catch (error) {
           // The queue database failed. The next foreground or reconnect tries again.
           this.deps.warn?.('The upload queue could not run', error);
-          pass = 'blocked';
+          pass = 'error';
         }
       }
       if (this.again) continue;
       await this.wakeLater(userId, pass);
-      if (!this.again || this.stopped) return;
+      if (!this.again || this.stopped || this.suspended) return;
     }
   }
 
+  // Sets the timer for a pause or the next backoff, and reports what the runner now waits for. A
+  // pass cut short by a suspension or an account change reports nothing: its report would belong
+  // to the protection or the account that ended.
   private async wakeLater(userId: string, pass: Pass): Promise<void> {
     let at: number | null = null;
     if (pass === 'paused') {
@@ -182,20 +222,23 @@ export class UploadRunner {
         at = null;
       }
     }
-    if (at === null || this.stopped || this.deps.userId() !== userId) return;
-    this.cancelTimer = this.deps.schedule(
-      () => {
-        this.cancelTimer = null;
-        // A new round gives a photo whose queue write failed another try.
-        this.failed.clear();
-        void this.run();
-      },
-      Math.max(0, at - this.deps.now()),
-    );
+    if (this.stopped || this.suspended || this.deps.userId() !== userId) return;
+    if (at !== null) {
+      this.cancelTimer = this.deps.schedule(
+        () => {
+          this.cancelTimer = null;
+          // A new round gives a photo whose queue write failed another try.
+          this.failed.clear();
+          void this.run();
+        },
+        Math.max(0, at - this.deps.now()),
+      );
+    }
+    this.deps.activity?.(userId, at !== null || pass === 'paused' ? 'backoff' : pass);
   }
 
   private live(userId: string, signal: AbortSignal): boolean {
-    return !signal.aborted && !this.stopped && this.deps.userId() === userId;
+    return !signal.aborted && !this.stopped && !this.suspended && this.deps.userId() === userId;
   }
 
   // Every attempt that returns `next` leaves its photo settled or backing off past now, so the
@@ -210,9 +253,12 @@ export class UploadRunner {
     if (fresh) await store.clearBackoff(userId);
     for (;;) {
       if (!this.live(userId, signal)) return 'idle';
-      if ((await this.deps.gate()) !== 'open') return 'blocked';
+      const gate = await this.deps.gate();
+      if (gate !== 'open') return gate;
       const item = await store.nextUpload(userId, this.deps.now(), [...this.failed]);
       if (!item) return 'idle';
+      if (!this.live(userId, signal)) return 'idle';
+      this.deps.activity?.(userId, 'uploading');
       let attempt: Attempt;
       try {
         attempt = await this.attempt(store, item, signal);
@@ -227,7 +273,7 @@ export class UploadRunner {
         this.pausedUntil = this.deps.now() + RUNNER_PAUSE_MS;
         return 'paused';
       }
-      if (attempt === 'session') return 'blocked';
+      if (attempt === 'session') return 'session';
       if (attempt === 'cancelled') return 'idle';
     }
   }
