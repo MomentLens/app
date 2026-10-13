@@ -59,6 +59,9 @@ const mockGetQueue = jest.fn(async () => store);
 
 const mockDelete = jest.fn((_uri: string) => undefined);
 
+jest.mock('@/features/event-shell/use-event', () => ({
+  eventQueryKey: (id: string) => ['event', id],
+}));
 jest.mock('expo-crypto', () => ({ randomUUID: () => 'unused' }));
 jest.mock('expo-file-system', () => ({
   File: class {

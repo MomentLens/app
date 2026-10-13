@@ -47,6 +47,7 @@ export class CaptureStore {
   constructor(
     private queue: QueueStore,
     private files: CaptureFiles,
+    private albumOpen?: (owner: string, eventId: string) => boolean | undefined,
   ) {}
   async persist(id: string, shot: ShotContext, uri: string): Promise<void> {
     await this.queue.captureMutation(async (db) => {
@@ -180,11 +181,13 @@ export class CaptureStore {
       if (row.galleryState === 'handed_off') return;
       if (row.galleryState !== 'saved') throw new Error('The gallery save has not succeeded.');
       const thumb = row.thumbnailPath ?? (await this.files.thumbnail(row.photoPath));
+      // A closed cached album holds the Public photo, offline included (D-161). Reading inside
+      // the mutation chain lets an album-open fetch queue its release after this insert.
       // All writes share the queue's mutation chain. No runner write can enter this transaction.
       await db.execAsync('BEGIN IMMEDIATE');
       try {
         await db.runAsync(
-          `INSERT INTO queue_item (id,userId,eventId,subEventId,photoPath,thumbnailPath,capturedAt,createdAt,state,step) VALUES (?,?,?,?,?,?,?,?,'queued','prepare')`,
+          `INSERT INTO queue_item (id,userId,eventId,subEventId,photoPath,thumbnailPath,capturedAt,createdAt,state,step) VALUES (?,?,?,?,?,?,?,?,?,'prepare')`,
           id,
           owner,
           row.eventId,
@@ -193,6 +196,7 @@ export class CaptureStore {
           thumb,
           row.capturedAt,
           row.createdAt,
+          this.albumOpen?.(owner, row.eventId) === false ? 'waiting_album' : 'queued',
         );
         await db.runAsync(
           "UPDATE capture_journal SET galleryState = 'handed_off', thumbnailPath = ? WHERE userId = ? AND id = ?",

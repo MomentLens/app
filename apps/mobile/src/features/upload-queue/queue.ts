@@ -10,6 +10,7 @@ import { createMMKV } from 'react-native-mmkv';
 import type { GetEventResponse, ListSubEventsResponse } from '@momentlens/shared-types';
 
 import { eventQueryKey, recheckEvent } from '@/features/event-shell/use-event';
+import { EVENTS_QUERY_KEY } from '@/features/events/use-events';
 import { completeUpload, preflightUpload } from '@/lib/api';
 import { queryClient } from '@/lib/query-client';
 import { supabase } from '@/lib/supabase';
@@ -148,6 +149,12 @@ const verification = new VerificationGate({
   },
 });
 
+// The album state in each event answer the API sent, per account, and when it arrived. Only
+// releaseOnOpenAlbum writes it, from fetched answers, so a copy restored from disk, seeded from the
+// Events list or written by the app never lands here (D-161).
+const albumAnswers = new Map<string, { open: boolean; at: number }>();
+const albumKey = (userId: string, eventId: string) => `${userId}\0${eventId.toLowerCase()}`;
+
 // The app's one runner (D-146).
 const runner = new UploadRunner({
   store: getQueue,
@@ -163,6 +170,7 @@ const runner = new UploadRunner({
   gate,
   verification,
   lostAccess: recheckEvent,
+  albumAnswer: (userId, eventId) => albumAnswers.get(albumKey(userId, eventId)),
   now: Date.now,
   schedule: (wake, delayMs) => {
     const timer = setTimeout(wake, delayMs);
@@ -208,8 +216,8 @@ export function runUploads(): Promise<void> {
   return runner.retryNow();
 }
 
-// Moves one event's waiting photos back to queued and uploads them. S-31 calls it once the event
-// response shows the album open, and S-15 once the local GPS or QR check passes or the event
+// Moves one event's waiting photos back to queued and uploads them. S-31 calls it once a fetched
+// event answer shows the album open (releaseOnOpenAlbum), and S-15 once the local GPS or QR check passes or the event
 // response shows the person verified (D-146).
 export async function release(
   userId: string,
@@ -253,10 +261,7 @@ function releaseOnFreshEvent(event: QueryCacheNotifyEvent): void {
   const { queryKey } = event.query;
   const eventId = queryKey[1];
   if (typeof eventId !== 'string') return;
-  const expected = eventQueryKey(eventId);
-  if (queryKey.length !== expected.length || expected.some((part, i) => queryKey[i] !== part)) {
-    return;
-  }
+  if (!sameKey(queryKey, eventQueryKey(eventId))) return;
   const userId = useAuthStore.getState().userId;
   if (userId === null) return;
   // Restoration and Events-list seeds can arrive after startUploads. A held fix and any cached
@@ -272,6 +277,47 @@ function releaseOnFreshEvent(event: QueryCacheNotifyEvent): void {
       if (released) void runner.run();
     })
     .catch(() => undefined);
+}
+
+function sameKey(queryKey: readonly unknown[], expected: readonly unknown[]): boolean {
+  return queryKey.length === expected.length && expected.every((part, i) => queryKey[i] === part);
+}
+
+// Each event's album state in a fetched answer from GET /events/{eventId} or GET /events. Read
+// field by field, because the cache holds whatever the query returned.
+function albumStates(queryKey: readonly unknown[], data: unknown): { id: string; open: boolean }[] {
+  if (typeof data !== 'object' || data === null) return [];
+  const eventId = queryKey[1];
+  let events: unknown[] = [];
+  if (typeof eventId === 'string' && sameKey(queryKey, eventQueryKey(eventId))) {
+    events = [(data as { event?: unknown }).event];
+  } else if (sameKey(queryKey, EVENTS_QUERY_KEY)) {
+    const listed = (data as { events?: unknown }).events;
+    events = Array.isArray(listed) ? listed : [];
+  }
+  return events.flatMap((event) => {
+    if (typeof event !== 'object' || event === null) return [];
+    const { id, albumOpen } = event as { id?: unknown; albumOpen?: unknown };
+    return typeof id === 'string' && typeof albumOpen === 'boolean'
+      ? [{ id, open: albumOpen }]
+      : [];
+  });
+}
+
+// A fetched answer from GET /events/{eventId} or GET /events that shows an album open releases
+// that event's waiting_album photos (arch §4.3, D-161). Only a fetch counts: a setQueryData write
+// is marked manual, and a copy restored from disk or seeded from the Events list never arrives as
+// a success. Realtime on `event` only starts the fetch. Each answer is kept for the runner, which
+// checks it again after a waiting write in case the album opened during that pre-flight.
+function releaseOnOpenAlbum(event: QueryCacheNotifyEvent): void {
+  if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
+  const userId = useAuthStore.getState().userId;
+  if (userId === null) return;
+  const at = Date.now();
+  for (const { id, open } of albumStates(event.query.queryKey, event.query.state.data)) {
+    albumAnswers.set(albumKey(userId, id), { open, at });
+    if (open) void release(userId, id, 'waiting_album').catch(() => undefined);
+  }
 }
 
 // Fast Refresh runs this module again with a new runner, while the old runner and its listeners
@@ -330,6 +376,7 @@ export function startUploads(): void {
   });
   unsubscribers.push(() => subscription.unsubscribe());
   unsubscribers.push(queryClient.getQueryCache().subscribe(releaseOnFreshEvent));
+  unsubscribers.push(queryClient.getQueryCache().subscribe(releaseOnOpenAlbum));
   (globalThis as Global)[TEARDOWN] = () => {
     coordinator.shutdown();
     runner.shutdown();
