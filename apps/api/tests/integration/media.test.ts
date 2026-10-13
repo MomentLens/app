@@ -102,6 +102,8 @@ class FakeEvents implements EventStore {
   setCover = () => Promise.reject(new Error('not used here'));
   settings = () => Promise.reject(new Error('not used here'));
   updateSettings = () => Promise.reject(new Error('not used here'));
+  albumStatus = () => Promise.reject(new Error('not used here'));
+  setAlbum = () => Promise.reject(new Error('not used here'));
 
   findAccess(eventId: string, userId: string): Promise<MemberAccess | null> {
     const event = this.events.get(eventId);

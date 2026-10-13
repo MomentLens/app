@@ -1,14 +1,16 @@
-// POST /events, GET /events, GET /events/{eventId}, the two cover endpoints and the two settings
-// endpoints (D-110, D-115, D-118, D-142, arch §3). The event store is an in-memory fake keyed by
-// user, so these tests check what the API does with each answer the store gives. rls.test.ts runs
-// the real store, create_event, list_my_events, get_my_event, the join request list,
-// event_settings and update_event_settings against the dev project.
+// POST /events, GET /events, GET /events/{eventId}, the two cover endpoints, the two settings
+// endpoints and the two album endpoints (D-110, D-115, D-118, D-142, D-161, arch §3). The event
+// store is an in-memory fake keyed by user, so these tests check what the API does with each answer
+// the store gives. rls.test.ts runs the real store, create_event, list_my_events, get_my_event, the
+// join request list, event_settings, update_event_settings, album_status and the album write
+// against the dev project.
 // URLs are signed by the real R2 presigner with test credentials.
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
+  AlbumStatusResponse,
   CreateCoverUploadResponse,
   CreateEventResponse,
   ErrorResponse,
@@ -16,6 +18,7 @@ import {
   GetEventSettingsResponse,
   ListEventsResponse,
   MAX_EVENT_SPAN_MS,
+  SetAlbumResponse,
   SetEventCoverResponse,
   UpdateEventSettingsResponse,
   VERIFICATION_RADIUS_DEFAULT_M,
@@ -33,6 +36,7 @@ import type {
 import type { AppDeps } from '../../src/app';
 import type { VerifyToken } from '../../src/middleware/auth';
 import type {
+  AlbumStatusRecord,
   CallerEvent,
   CreateEventResult,
   MemberAccess,
@@ -53,9 +57,16 @@ const PENDING = randomUUID();
 const PENDING_PHOTOGRAPHER = randomUUID();
 const BLOCKED = randomUUID();
 const REMOVED = randomUUID();
+// A second active Photographer, for the album status that names those with no upload.
+const P2 = randomUUID();
 
-// Every user's profile name, for the pending Photographers the settings name.
-const NAMES = new Map<string, string>([[PENDING_PHOTOGRAPHER, 'Kamran Studio']]);
+// Every user's profile name, for the pending Photographers the settings name and the Photographers
+// the album status names.
+const NAMES = new Map<string, string>([
+  [PENDING_PHOTOGRAPHER, 'Kamran Studio'],
+  [P, 'Zara Lens'],
+  [P2, 'Asad Photos'],
+]);
 
 const tokens = new Map([
   ['token-a', A],
@@ -66,6 +77,7 @@ const tokens = new Map([
   ['token-pending-photographer', PENDING_PHOTOGRAPHER],
   ['token-blocked', BLOCKED],
   ['token-removed', REMOVED],
+  ['token-photographer-2', P2],
 ]);
 
 const verifyToken: VerifyToken = (token) => {
@@ -85,6 +97,10 @@ interface FakeEvent {
   endsAt: string;
   archivedAt: string | null;
   deleted: boolean;
+  albumOpen: boolean;
+  // Finished uploads not deleted, and the users who made them, as album_status counts them.
+  uploadCount: number;
+  uploaders: Set<string>;
   members: Map<string, { role: MembershipRole; status: MembershipStatus }>;
   checkIns: Map<string, string[]>;
   manualCheckIns: Set<string>;
@@ -107,6 +123,7 @@ class FakeEvents implements EventStore {
     request: UpdateEventSettingsRequest;
     maxGuests: number;
   }[] = [];
+  readonly albumWrites: { eventId: string; open: boolean }[] = [];
   failWith: Error | null = null;
   unknownUsers = new Set<string>();
 
@@ -126,6 +143,9 @@ class FakeEvents implements EventStore {
       endsAt: '2026-12-11T23:00:00.000Z',
       archivedAt: null,
       deleted: false,
+      albumOpen: false,
+      uploadCount: 0,
+      uploaders: new Set(),
       members: new Map(
         Object.entries(members).map(([user, [role, status]]) => [user, { role, status }]),
       ),
@@ -150,8 +170,7 @@ class FakeEvents implements EventStore {
       startsAt: event.startsAt,
       endsAt: event.endsAt,
       archivedAt: event.archivedAt,
-      // Closed, as findAccess answers. S-31's api build gives the fake an album state.
-      albumOpen: false,
+      albumOpen: event.albumOpen,
       qrSecret: event.qrSecret,
     } as EventRecord;
   }
@@ -228,7 +247,7 @@ class FakeEvents implements EventStore {
     if (event === undefined) return Promise.resolve(null);
     return Promise.resolve({
       deleted: event.deleted,
-      albumOpen: false,
+      albumOpen: event.albumOpen,
       membership: event.members.get(userId) ?? null,
     });
   }
@@ -276,6 +295,34 @@ class FakeEvents implements EventStore {
     }
     event.approvalMode = request.approvalMode ?? event.approvalMode;
     return Promise.resolve({ outcome: 'updated', admitted, settings: this.settingsOf(event) });
+  }
+
+  // As album_status: null for a deleted event, and every active Photographer with no finished
+  // upload named, in the order they were seeded.
+  albumStatus(eventId: string): Promise<AlbumStatusRecord | null> {
+    if (this.failWith) return Promise.reject(this.failWith);
+    const event = this.events.get(eventId);
+    if (event === undefined || event.deleted) return Promise.resolve(null);
+    return Promise.resolve({
+      albumOpen: event.albumOpen,
+      uploadCount: event.uploadCount,
+      photographersWithoutUploads: [...event.members.entries()]
+        .filter(
+          ([user, m]) =>
+            m.role === 'photographer' && m.status === 'active' && !event.uploaders.has(user),
+        )
+        .map(([user]) => NAMES.get(user) ?? 'No Name'),
+    });
+  }
+
+  // As the album write: one update that skips a deleted event, answering the state it set.
+  setAlbum(eventId: string, open: boolean): Promise<boolean | null> {
+    this.albumWrites.push({ eventId, open });
+    if (this.failWith) return Promise.reject(this.failWith);
+    const event = this.events.get(eventId);
+    if (event === undefined || event.deleted) return Promise.resolve(null);
+    event.albumOpen = open;
+    return Promise.resolve(open);
   }
 
   private settingsOf(event: FakeEvent): SettingsRecord {
@@ -327,6 +374,7 @@ beforeEach(() => {
   store.creates.length = 0;
   store.covers.length = 0;
   store.settingsWrites.length = 0;
+  store.albumWrites.length = 0;
   store.failWith = null;
   store.unknownUsers.clear();
   uploaded.clear();
@@ -891,6 +939,18 @@ describe('GET /events', () => {
     expect(joinRequests).toEqual([]);
   });
 
+  it("tells the caller whether each event's album is open (D-161)", async () => {
+    const open = store.seed({ [A]: ['guest', 'active'] }, { name: 'Open', albumOpen: true });
+    const closed = store.seed({ [A]: ['admin', 'active'] }, { name: 'Closed' });
+    const { events } = ListEventsResponse.parse(
+      await (await send('GET', '/events', 'token-a')).json(),
+    );
+    expect(Object.fromEntries(events.map((e) => [e.id, e.albumOpen]))).toEqual({
+      [open.id]: true,
+      [closed.id]: false,
+    });
+  });
+
   it('leaves out a soft-deleted event', async () => {
     store.seed({ [A]: ['admin', 'active'] }, { deleted: true });
     const { events } = ListEventsResponse.parse(
@@ -1100,6 +1160,23 @@ describe('GET /events/{eventId}', () => {
     expect(response.status).toBe(200);
     const { event: body } = GetEventResponse.parse(await response.json());
     expect(body.archivedAt).toBe('2026-12-20T09:30:00.123Z');
+  });
+
+  it.each([
+    ['the Admin', 'token-a'],
+    ['a Guest', 'token-guest'],
+    ['a Photographer', 'token-photographer'],
+  ])('tells %s whether the album is open, as the store read it (D-161)', async (_who, token) => {
+    event.albumOpen = true;
+    const opened = GetEventResponse.parse(
+      await (await send('GET', `/events/${event.id}`, token)).json(),
+    );
+    expect(opened.event.albumOpen).toBe(true);
+    event.albumOpen = false;
+    const closed = GetEventResponse.parse(
+      await (await send('GET', `/events/${event.id}`, token)).json(),
+    );
+    expect(closed.event.albumOpen).toBe(false);
   });
 
   it('treats an uppercase event id as the same event', async () => {
@@ -1725,6 +1802,289 @@ describe('the settings endpoints', () => {
           method: 'PATCH',
           headers: { Authorization: 'Bearer token-a', 'Content-Type': 'application/json' },
           body: JSON.stringify({ approvalMode: 'auto' }),
+        });
+        expect(response.status).toBe(404);
+        expect(await errorCode(response)).toBe('not_found');
+      } finally {
+        await racing.close();
+      }
+    });
+  });
+});
+
+describe('the album endpoints', () => {
+  let event: FakeEvent;
+
+  beforeEach(() => {
+    event = store.seed(
+      {
+        [A]: ['admin', 'active'],
+        [G]: ['guest', 'active'],
+        [P]: ['photographer', 'active'],
+        [P2]: ['photographer', 'active'],
+        [PENDING]: ['guest', 'pending'],
+        [PENDING_PHOTOGRAPHER]: ['photographer', 'pending'],
+        [BLOCKED]: ['guest', 'blocked'],
+        [REMOVED]: ['photographer', 'removed'],
+      },
+      { name: 'Mehndi Night', uploadCount: 37, uploaders: new Set([A, G, P2]) },
+    );
+  });
+
+  // A refused body says nothing about the album: not its state, its count or a Photographer's name.
+  async function expectRefused(response: Response, status: number, code: string) {
+    expect(response.status).toBe(status);
+    const text = await response.text();
+    expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe(code);
+    for (const secret of ['Mehndi Night', 'albumOpen', 'uploadCount', '37', 'Zara', 'Kamran']) {
+      expect(text).not.toContain(secret);
+    }
+  }
+
+  // Nothing written, and the album still closed.
+  function expectUnchanged() {
+    expect(store.albumWrites).toEqual([]);
+    expect(event.albumOpen).toBe(false);
+  }
+
+  // Both endpoints refuse the same callers in the same order. The PUT opens the album, which is
+  // the write a refused caller must not make.
+  describe.each([
+    ['GET', undefined],
+    ['PUT', { open: true }],
+  ] as const)('%s /events/{eventId}/album', (method, body) => {
+    const call = (eventId: string, token?: string) =>
+      send(method, `/events/${eventId}/album`, token, body);
+
+    it('answers 401 no_session with no token, and writes nothing', async () => {
+      await expectRefused(await call(event.id), 401, 'no_session');
+      expectUnchanged();
+    });
+
+    it.each([
+      ['another user, in no role', 'token-b', 'not_member'],
+      ['a pending Guest', 'token-pending', 'not_member'],
+      ['a pending Photographer', 'token-pending-photographer', 'not_member'],
+      ['a blocked member', 'token-blocked', 'not_member'],
+      ['a removed member', 'token-removed', 'not_member'],
+      ['a Guest', 'token-guest', 'wrong_role'],
+      ['a Photographer', 'token-photographer', 'wrong_role'],
+    ])('refuses %s with 403, and writes nothing', async (_who, token, code) => {
+      await expectRefused(await call(event.id, token), 403, code);
+      expectUnchanged();
+    });
+
+    it("refuses A for another event, though A is this event's Admin", async () => {
+      const other = store.seed(
+        { [B]: ['admin', 'active'], [P]: ['photographer', 'active'] },
+        { name: 'Only B', uploadCount: 5 },
+      );
+      const response = await call(other.id, 'token-a');
+      expect(response.status).toBe(403);
+      const text = await response.text();
+      expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('not_member');
+      expect(text).not.toContain('Only B');
+      expect(text).not.toContain('Zara');
+      expect(store.albumWrites).toEqual([]);
+      expect(other.albumOpen).toBe(false);
+    });
+
+    it.each([
+      ['its Admin', 'token-a'],
+      ['a Guest', 'token-guest'],
+      ['another user', 'token-b'],
+    ])('answers 404 not_found for a soft-deleted event, to %s too', async (_who, token) => {
+      event.deleted = true;
+      await expectRefused(await call(event.id, token), 404, 'not_found');
+      expectUnchanged();
+    });
+
+    it('answers 404 not_found for an event that does not exist', async () => {
+      const response = await call(randomUUID(), 'token-a');
+      expect(response.status).toBe(404);
+      expect(await errorCode(response)).toBe('not_found');
+      expect(store.albumWrites).toEqual([]);
+    });
+
+    it('answers 400 invalid_request for an event id that is not a uuid', async () => {
+      const response = await call('not-a-uuid', 'token-a');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expect(store.albumWrites).toEqual([]);
+    });
+
+    it('treats an uppercase event id as the same event', async () => {
+      const response = await call(event.id.toUpperCase(), 'token-a');
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+    });
+
+    it('answers 500 internal_error, naming no cause, when the store fails', async () => {
+      store.failWith = new Error('connection reset by the database');
+      const response = await call(event.id, 'token-a');
+      expect(response.status).toBe(500);
+      const text = await response.text();
+      expect(ErrorResponse.parse(JSON.parse(text)).error.code).toBe('internal_error');
+      expect(text).not.toContain('connection reset');
+    });
+  });
+
+  describe('GET /events/{eventId}/album', () => {
+    const get = (token = 'token-a') => send('GET', `/events/${event.id}/album`, token);
+
+    it('gives the Admin the state, the upload count and each active Photographer with no upload', async () => {
+      const response = await get();
+      expect(response.status).toBe(200);
+      // P2 has uploaded, and the pending and removed Photographers are not active.
+      expect(AlbumStatusResponse.parse(await response.json())).toEqual({
+        albumOpen: false,
+        uploadCount: 37,
+        photographersWithoutUploads: ['Zara Lens'],
+      });
+      expect(store.albumWrites).toEqual([]);
+    });
+
+    it('says the album is open once it is', async () => {
+      event.albumOpen = true;
+      expect(AlbumStatusResponse.parse(await (await get()).json()).albumOpen).toBe(true);
+    });
+
+    it('answers an archived event as any other', async () => {
+      event.archivedAt = '2026-12-20T09:30:00.123Z';
+      const response = await get();
+      expect(response.status).toBe(200);
+      expect(AlbumStatusResponse.parse(await response.json()).uploadCount).toBe(37);
+    });
+
+    it('answers 404 not_found when the event is deleted between the check and the read', async () => {
+      const racing = await startApp(
+        deps({
+          events: Object.assign(Object.create(store) as FakeEvents, {
+            albumStatus: (): Promise<AlbumStatusRecord | null> => Promise.resolve(null),
+          }),
+        }),
+      );
+      try {
+        const response = await fetch(`${racing.baseUrl}/events/${event.id}/album`, {
+          headers: { Authorization: 'Bearer token-a' },
+        });
+        expect(response.status).toBe(404);
+        expect(await errorCode(response)).toBe('not_found');
+      } finally {
+        await racing.close();
+      }
+    });
+
+    it('answers 500 rather than send a stored name the contract rejects', async () => {
+      NAMES.set(P, '   ');
+      try {
+        const response = await get();
+        expect(response.status).toBe(500);
+        expect(await errorCode(response)).toBe('internal_error');
+      } finally {
+        NAMES.set(P, 'Zara Lens');
+      }
+    });
+  });
+
+  describe('PUT /events/{eventId}/album', () => {
+    const put = (body: unknown, token = 'token-a') =>
+      send('PUT', `/events/${event.id}/album`, token, body);
+
+    it.each([
+      ['no open', {}],
+      ['open as a string', { open: 'true' }],
+      ['open as null', { open: null }],
+      ['open as a number', { open: 1 }],
+      ['a field the contract does not name', { open: true, albumOpen: true }],
+      ['an event id in the body', { open: true, eventId: randomUUID() }],
+      ['an array', [{ open: true }]],
+    ])('answers 400 invalid_request for %s, and writes nothing', async (_case, body) => {
+      const response = await put(body);
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('answers 400 invalid_request for a body that is not JSON', async () => {
+      const response = await put('{"open": tru');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('answers 400 invalid_request for no body at all', async () => {
+      const response = await send('PUT', `/events/${event.id}/album`, 'token-a');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('checks the body before the caller, so a bad body is 400 from anyone', async () => {
+      const response = await put({ open: 'yes' }, 'token-guest');
+      expect(response.status).toBe(400);
+      expect(await errorCode(response)).toBe('invalid_request');
+      expectUnchanged();
+    });
+
+    it('opens the album, answers the state it set, and every member reads it open', async () => {
+      const response = await put({ open: true });
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      const json = (await response.json()) as Record<string, unknown>;
+      expect(Object.keys(json)).toEqual(['albumOpen']);
+      expect(SetAlbumResponse.parse(json)).toEqual({ albumOpen: true });
+      expect(store.albumWrites).toEqual([{ eventId: event.id, open: true }]);
+      for (const token of ['token-a', 'token-guest', 'token-photographer']) {
+        const read = GetEventResponse.parse(
+          await (await send('GET', `/events/${event.id}`, token)).json(),
+        );
+        expect(read.event.albumOpen).toBe(true);
+      }
+    });
+
+    it('closes an open album', async () => {
+      event.albumOpen = true;
+      const response = await put({ open: false });
+      expect(response.status).toBe(200);
+      expect(SetAlbumResponse.parse(await response.json())).toEqual({ albumOpen: false });
+      expect(event.albumOpen).toBe(false);
+    });
+
+    it('sets the same state again on a repeat, and answers the same', async () => {
+      const first = SetAlbumResponse.parse(await (await put({ open: true })).json());
+      const second = SetAlbumResponse.parse(await (await put({ open: true })).json());
+      expect(second).toEqual(first);
+      expect(event.albumOpen).toBe(true);
+    });
+
+    it("keeps the last of two writes, as two of the Admin's phones would send them (D-142)", async () => {
+      await put({ open: true });
+      await put({ open: false });
+      expect(store.albumWrites.map((w) => w.open)).toEqual([true, false]);
+      expect(event.albumOpen).toBe(false);
+    });
+
+    it('changes an archived event as any other', async () => {
+      event.archivedAt = '2026-12-20T09:30:00.123Z';
+      const response = await put({ open: true });
+      expect(response.status).toBe(200);
+      expect(event.albumOpen).toBe(true);
+    });
+
+    it('answers 404 not_found when the event is deleted between the check and the write', async () => {
+      const racing = await startApp(
+        deps({
+          events: Object.assign(Object.create(store) as FakeEvents, {
+            setAlbum: (): Promise<boolean | null> => Promise.resolve(null),
+          }),
+        }),
+      );
+      try {
+        const response = await fetch(`${racing.baseUrl}/events/${event.id}/album`, {
+          method: 'PUT',
+          headers: { Authorization: 'Bearer token-a', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ open: true }),
         });
         expect(response.status).toBe(404);
         expect(await errorCode(response)).toBe('not_found');
