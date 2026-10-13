@@ -2,8 +2,10 @@ import { onlineManager, type QueryCacheNotifyEvent } from '@tanstack/react-query
 import { randomUUID } from 'expo-crypto';
 import { File } from 'expo-file-system';
 import { addNetworkStateListener, getNetworkStateAsync } from 'expo-network';
+import { getPermissionsAsync, requestPermissionsAsync } from 'expo-notifications';
 import { openDatabaseAsync } from 'expo-sqlite';
-import { AppState } from 'react-native';
+import { useSyncExternalStore } from 'react';
+import { AppState, Platform } from 'react-native';
 import { createMMKV } from 'react-native-mmkv';
 import type { GetEventResponse, ListSubEventsResponse } from '@momentlens/shared-types';
 
@@ -19,6 +21,14 @@ import { VerificationGate } from '@/features/verification/gate';
 import { GpsReadings } from '@/features/verification/readings';
 import { QrScans } from '@/features/verification/qr-scans';
 
+import {
+  addEndedListener,
+  startProtection,
+  stopProtection,
+} from '../../../modules/background-upload';
+
+import { askNotificationsOnce, BackgroundCoordinator } from './background';
+import { registerBackgroundHold } from './background-task';
 import { queueFiles } from './files';
 import { prepareUpload } from './prepare';
 import { gateFor, UploadRunner, type NetworkGate, type PutResult } from './runner';
@@ -158,10 +168,42 @@ const runner = new UploadRunner({
     const timer = setTimeout(wake, delayMs);
     return () => clearTimeout(timer);
   },
+  // Read lazily: the coordinator below wraps this runner.
+  activity: (userId, activity) => coordinator.activity(userId, activity),
   warn: (message, error) => console.warn(message, error),
 });
 
-// S-14's background task calls this, the same runner, and it resolves once the runner is idle.
+// Android's notification prompt for the upload service, asked once on this device (D-158).
+const NOTIFICATIONS_ASKED_KEY = 'uploadNotificationsAsked';
+
+// Keeps the runner going in the background while the system allows it, and suspends it once
+// protection ends (D-158). It starts suspended when the app loads in the background.
+const coordinator = new BackgroundCoordinator(
+  {
+    native: { start: startProtection, stop: stopProtection },
+    runner,
+    userId: () => useAuthStore.getState().userId,
+    makeId: randomUUID,
+    askNotifications: () =>
+      askNotificationsOnce({
+        android: Platform.OS === 'android',
+        asked: () => preferences.getBoolean(NOTIFICATIONS_ASKED_KEY) === true,
+        markAsked: () => preferences.set(NOTIFICATIONS_ASKED_KEY, true),
+        current: getPermissionsAsync,
+        request: requestPermissionsAsync,
+      }),
+    warn: (message, error) => console.warn(message, error),
+  },
+  AppState.currentState !== 'background',
+);
+
+// My Media's keep-open notice: the account whose background start the system refused.
+export function useRefusedBackgroundAccount(): string | null {
+  return useSyncExternalStore(coordinator.subscribe, coordinator.refusedFor);
+}
+
+// A capture handed to the queue in the foreground uploads now, past any backoff. It resolves once
+// the runner is idle. A suspended runner waits for the foreground.
 export function runUploads(): Promise<void> {
   return runner.retryNow();
 }
@@ -250,15 +292,21 @@ export function startUploads(): void {
     useAuthStore.subscribe((state) => {
       if (state.userId === owner) return;
       owner = state.userId;
-      void runner.accountChanged();
+      // Ends the old account's native task and cancels its attempt first (D-158).
+      coordinator.accountChanged();
       void releaseCachedVerifications().catch(() => undefined);
     }),
   ];
-  // Foreground and reconnect retry at once (D-146).
+  // Foreground resumes the runner and retries at once (D-146). Background entry keeps backoff and
+  // suspends the runner unless native protection holds it (D-158). iOS's brief `inactive`, as
+  // when Control Center opens, changes neither.
   const appState = AppState.addEventListener('change', (state) => {
-    if (state === 'active') void runner.retryNow();
+    if (state === 'active') coordinator.foreground();
+    else if (state === 'background') coordinator.background();
   });
   unsubscribers.push(() => appState.remove());
+  unsubscribers.push(addEndedListener((taskId, reason) => coordinator.ended(taskId, reason)));
+  unsubscribers.push(registerBackgroundHold(coordinator.hold));
   unsubscribers.push(
     onlineManager.subscribe((online) => {
       if (online) void runner.retryNow();
@@ -283,9 +331,13 @@ export function startUploads(): void {
   unsubscribers.push(() => subscription.unsubscribe());
   unsubscribers.push(queryClient.getQueryCache().subscribe(releaseOnFreshEvent));
   (globalThis as Global)[TEARDOWN] = () => {
+    coordinator.shutdown();
     runner.shutdown();
     for (const unsubscribe of unsubscribers) unsubscribe();
   };
   void releaseCachedVerifications().catch(() => undefined);
-  void runner.retryNow();
+  // The launch's first pass, or a suspension if the app loaded in the background, with the
+  // listeners above already attached.
+  if (AppState.currentState === 'background') coordinator.background();
+  else coordinator.foreground();
 }
