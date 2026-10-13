@@ -334,7 +334,7 @@ There is **no Camera tab**. Camera is a full-screen modal Viewfinder launched vi
 
 Home and Album are one screen, not two, and not per-sub-event folders. Every sub-event's folder would render the identical grid with identical actions, so folder navigation would add a navigation tax without adding distinct functionality. The filtering language below already implies flat-with-filters.
 
-- Collapsing header: the event's name as the large title, with no cover (D-119, D-125). Under it, the status and the album-state banner. Admin's banner includes the Open/Close Album toggle inline, since it is the most time-critical Admin action and shouldn't require a trip to Manage.
+- Collapsing header: the event's name as the large title, with no cover (D-119, D-125). Under it, the status and the album-state banner. A Guest sees the banner only while the album is closed. The Admin sees it in both states, with the Open/Close Album toggle inline, since it is the most time-critical Admin action and shouldn't require a trip to Manage (D-161).
 - **Sub-event chip row**, always visible directly under the header. "All" by default. The row holds every chip and scrolls to whichever sub-event is In Progress. Past 6 sub-events, a "More" chip at its end opens a bottom sheet listing them all, since events can have up to 15 sub-events (D-148).
 - **Filter icon** (funnel, in the header), deliberately separate from the chip row and not another chip, because it filters a different dimension. Identity, not time. Opens a bottom sheet with **People** (Find My Photos pinned at top, searching this event with this event's reference photos (D-141), then a searchable list of the named people matched in this event's photos, with Do Not Publish subjects left out for every viewer but themselves, §4.11.3; "Unknown" clusters aren't searchable by name here, they're only reachable by tapping a face inside a photo) and **Uploader** (searchable list of contributors, including the Photographer).
 - **Active-filter pill** renders above the grid only when a People or Uploader filter is active, with its own "×" to clear. Stacks with an active sub-event chip; the query is an AND of active params, which is cheap and genuinely useful for "Sarah's photos from the reception."
@@ -351,6 +351,7 @@ Home and Album are one screen, not two, and not per-sub-event folders. Every sub
   - Upload queue counts, shown while this phone has photos queued, waiting for the album, waiting for check-in or uploading. It counts each state separately as "queued", "waiting for album", "waiting to check in" and "uploading", omits zero segments and hides when all four counts are zero. Retained uploaded, published, stopped and Local Only rows do not count (D-133, D-157).
   - **Check-in and Scan Venue QR**, the only way to the scanner (D-131). While a sub-event is In Progress and the person is not checked in for it, a row carries a "Scan Venue QR" button, whether or not photos are waiting. The button opens the scanner full screen, and its result returns here. Photos waiting on a sub-event that has ended get "Ask the organizer to check you in." with no button, because a scan verifies only the sub-event In Progress (D-85). A Photographer never sees these rows.
   - Keep MomentLens open, shown when the phone refused background upload protection and this account has photos queued or uploading in this event (D-158).
+  - Album closed, shown to every role while the event's album is closed. It says new photos wait on this phone until the album opens. "+ Add Media" adds nothing while it shows: a Guest's and a Photographer's button is disabled, and the Admin's tap asks to open the album instead. The camera still opens, and its Public photos queue as waiting for the album (§4.9, D-161).
 - **When the camera is hidden**, between sub-events, a line in its place says when it opens: "The camera opens at 7:00 PM, for the Nikah." After the last sub-event it says the event has ended and points to "+ Add Media" (D-136).
 
 #### 2.5.4 Camera FAB & viewfinder
@@ -379,7 +380,7 @@ Full-screen swipeable pager. Tap toggles the metadata overlay (capture time, sub
 
 Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-screen, not one long page:
 
-- **Live status card** (top): upload count, current sub-event and status, Open/Close Album toggle (mirrors the Home banner, same state, two entry points).
+- **Live status card** (top): upload count, current sub-event and status, Open/Close Album toggle (mirrors the Home banner, same state, two entry points). The upload count is the event's finished uploads that are not deleted, processed or not. Between sub-events the card shows the next one as Upcoming, and after the last it says the event has ended (D-161).
 - **Pending Approvals**, kept structurally separate from the Review Queue below. Different data, different actions, not one "moderation" bucket. Row per join requester (photo, name, join time, role they're joining as, determined by which link they used), Approve, Reject and Block per row, multi-select plus a bulk action bar for Approve and Reject. A batch is all or nothing. Approve acts on the selection at once, and asks first, naming them, only when the selection holds a Photographer (D-139). Reject lets the person ask again, and Block asks first (D-144).
 - **Review Queue**, two sections in one screen:
   - *Flagged photos* (Guest-flagged). Thumbnail grid, each card showing sub-event, uploader, flagged time. Tap → Single Photo View with a moderation action bar: Keep / Delete. Delete is permanent and confirms first (D-130).
@@ -397,9 +398,9 @@ Grouped hub screen, iOS-Settings-style list of rows each linking to its own sub-
 | Pending Approval | Approval Mode = manual | A waiting state, not a spinner. Has a Cancel Request option. Reached again from its row on the Events list (D-115, D-126). |
 | Join Error | Expired or revoked token | Reserved for dead links. A typed shortcode that matches no live invite, mistyped or revoked, gets inline field validation on Manual Join Entry instead. |
 | Join Blocked | A blocked person opens a live invite (D-102) | Tells them the organizer blocked them from this event. No join action (D-115). |
-| Forced Logout / Access Removed | The Supabase session ends, or the user is removed or blocked from an event mid-session (§4.1) | Prevents a silent bounce to Login reading as a bug. Access Removed returns to the Events list; only a dead session logs out. |
+| Forced Logout / Access Removed | The Supabase session ends, or the user is removed or blocked from an event mid-session (§4.1) | Prevents a silent bounce to Login reading as a bug. Access Removed returns to the Events list; only a dead session logs out. Removed and blocked read alike, because the API answers both 403 `not_member`. It says photos queued on this phone stay there and upload if the person is let back in (§5.4, D-161). |
 | Consent re-gate | Privacy Policy version bump (§4.18) | Blocking full-screen re-consent on next launch, before anything else renders. |
-| Supabase unavailable | Keep-alive ping missed the auto-pause window | Needs a retry action, not a dead end. |
+| Supabase unavailable | An API call answers 500, or a Supabase Auth call answers 5xx, and `GET /health` then answers 503 with `database: error` (hb §5.3) | Full screen over the signed-in app, with Try Again, which asks `GET /health` again. The upload queue keeps its own backoff underneath and loses nothing (D-161). |
 
 #### 2.5.9 Account settings (global, §4.19)
 
@@ -620,10 +621,11 @@ The album is a single shared view for every Guest and the Admin. Everyone sees t
 
 #### Album state
 - Upload access is enabled or disabled purely by the Admin's manual open/close toggle. There is no automatic timing tied to the schedule.
-- "Album Closed" banner shown when closed; the upload action is disabled.
-- This applies to every role without exception, including Admin, who is prompted to open the album first rather than silently bypassing the state.
+- "Album Closed" banner shown when closed, on Home and as a row in My Media's status banner (§2.5.3), because a Photographer never sees Home (D-161).
+- While it is closed, "+ Add Media" adds nothing. The camera still opens, and a Public photo taken then waits in the queue until the album opens, so no moment is lost. Pre-flight refuses every upload to a closed album (§4.8.2, D-161).
+- This applies to every role without exception, including Admin, whose "+ Add Media" asks to open the album first rather than silently bypassing the state.
 - **It applies to Photographers too, and this is the intended design.** Closing the album is how the Admin says "I have everything I expect to receive." Since Photographers typically upload hours after the event ends (§2.2), the Admin is expected to leave the album open until their delivery lands.
-- **Close Album confirm dialog.** Closing is destructive to an in-flight workflow, so it requires a confirm step rather than firing on toggle. The dialog states the count of Photographers on the event who have uploaded nothing yet, by name: "Ali Raza hasn't uploaded any photos. Closing the album will block them from uploading. Close anyway?" If every Photographer has uploaded, the dialog is a plain confirm. This is a single query against the media table and it prevents the most likely real failure of this whole role.
+- **Close Album confirm dialog.** Closing is destructive to an in-flight workflow, so it requires a confirm step rather than firing on toggle. The dialog states the count of Photographers on the event who have uploaded nothing yet, by name: "Ali Raza hasn't uploaded any photos. Closing the album will block them from uploading. Close anyway?" If every Photographer has uploaded, the dialog is a plain confirm. A Photographer counts as having uploaded once they hold a finished upload in the event that is not deleted; only active Photographers are named (D-161). This is a single query against the media table and it prevents the most likely real failure of this whole role.
 
 ---
 
@@ -793,6 +795,8 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
   - **Face detection and processing**, stated accurately: every face in every uploaded photo is detected and converted into an embedding, including faces belonging to people who are not app users, in order to support Find My Photos and Do Not Publish blurring.
   - The permanent, non-reversible nature of Do Not Publish, set separately in each event.
 - Consent version tracking: if the Privacy Policy materially changes, all active sessions are paused on next launch until the new version is accepted.
+- One consent screen covers the Terms and the Privacy Policy under one version number. On the invite path it comes after registration and before Join Confirmation (§2.3.1). The phone keeps each account's last answer, so a guest who reopens the app with no signal and has accepted the current version still reaches the camera (§4.14). With no answer kept, the screen shows, and accepting needs a connection (D-161).
+- The app enforces the gate and the API does not. A modified app could use the API with no consent recorded (D-161).
 - **Accurate metadata statement.** GPS, camera model, and device serial are stripped from the image file before it leaves the device. One GPS reading per sub-event, taken when the device's check passes, stays on the phone until the next upload sends it to the server for verification, is checked against the venue there, and the server stores no coordinates (D-155). Photos carry none (D-89). Never claim that GPS does not reach the network (D-36).
 - Blur transparency: a user viewing a blurred face can tap a small info icon explaining why ("This person has requested privacy"), which reduces confusion about whether the image is simply failing to load.
 - The full "My Data" dashboard remains Future Work.
@@ -884,9 +888,9 @@ One table per area, so a slice cites the part it needs.
 | A file larger than 4096px on the longest edge is added via "+ Add Media" | Resized to 4096px client-side before upload. This fires on most photos from a phone that shoots 24MP or more by default (§4.8.1, D-146). |
 | Photographer uploads after their sub-event ends, while the event is still open | Normal case, and the intended workflow. The photographer shoots the walima, uploads that night, and notifies the Admin out of band. The Admin closes the album once satisfied. Album state is per event, not per sub-event, so a completed sub-event never blocks an upload. |
 | Photographer uploads after the Admin closed the album | Blocked, same as any role. The Close Album confirm dialog (§4.9) names any Photographer who has uploaded nothing yet, specifically to prevent this. |
-| Any user tries to upload while the album is closed | Upload disabled with a clear banner. Applies to Admin too, who is prompted to open the album first. Pre-flight rejects it as well, so a modified app gets nowhere (§4.8.2). |
+| Any user tries to upload while the album is closed | "+ Add Media" adds nothing, with a clear banner on Home and in My Media. Applies to Admin too, who is prompted to open the album first. A Public photo from the camera waits in the queue until the album opens. Pre-flight rejects every upload as well, so a modified app gets nowhere (§4.8.2, D-161). |
 | The album closes while photos are queued | They stay in the local queue and upload if the Admin reopens the album. |
-| The album closes after a photo's pre-flight | Its upload finishes and it publishes. Completion does not check the album, so only photos still waiting for pre-flight stay in the queue (D-146). |
+| The album closes after a photo's pre-flight | Its upload finishes and it publishes, unless a PUT fails, which sends it back through pre-flight, where it waits for the album. Completion does not check the album, so only photos still waiting for pre-flight stay in the queue (D-146, D-161). |
 | A photo reaches the server hours after it was taken | It takes its place in the album by capture time, below photos taken after it (§4.9, D-147). |
 | Someone uploads a photo that was deleted from the album | It uploads as a new photo, with new files, a fresh face pass and none of the old one's blur regions or flags. A deleted photo is not a duplicate (D-96, D-130). |
 | Two guests upload the same photo and one of them crashes mid-upload | The other's upload is not blocked. Whoever completes first wins, and the other is treated as a duplicate (D-96). This needs both accounts on one phone. From two phones the hashes differ and both copies publish (D-146). |
@@ -917,7 +921,7 @@ One table per area, so a slice cites the part it needs.
 | Scenario | System behavior |
 |---|---|
 | Admin deletes event mid-event | Attendees notified, 14-day soft delete, download still available. |
-| Supabase free-tier project auto-pauses after inactivity | Mitigated via a scheduled keep-alive ping. Surfaces a clear "temporarily unavailable" state with a retry action if it happens anyway. |
+| Supabase free-tier project auto-pauses after inactivity | Mitigated via a scheduled keep-alive ping. Surfaces a clear "temporarily unavailable" state with a retry action if it happens anyway. The app learns of it from `GET /health`, which it asks after an API 500 or a Supabase Auth 5xx (§2.5.8, D-161). |
 
 ---
 

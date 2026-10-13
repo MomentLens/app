@@ -213,7 +213,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
 | S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143, D-144, D-146 | B | S-01, S-06, S-20, S-25 |
 | S-30 | Local Only full viewer and deletion in My Media, and conversion of queued Public photos, reusing S-09's storage and backup exclusions | §4.12, D-34, D-145, D-153 | C | S-09 |
-| S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent, arch §4.1, arch §4.3, D-146 | B | S-08, S-13, S-12, S-07a, S-11 |
+| S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent, arch §4.1, arch §4.3, D-146, D-161 | B | S-08, S-13, S-12, S-07a, S-11 |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
 | S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-07a |
 
@@ -233,7 +233,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
 
-**S-31 adds the album state to the event response** when it switches the album check on, and moves `waiting_album` photos back to queued through the release S-11 exports once it shows the album open (D-146). It also draws the Album Closed banner on Home, which S-13 leaves out (D-148).
+**S-31 adds the album state to the event response** when it switches the album check on, and moves `waiting_album` photos back to queued through the release S-11 exports once it shows the album open (D-146). It also draws the Album Closed banner on Home, which S-13 leaves out (D-148), and the album-closed row in My Media's status banner, because a Photographer never sees Home (D-161).
 
 **S-28 has to settle download from a deleted event.** Spec §4.21 and spec §5.6 keep download available for 14 days after the Admin deletes an event, while every event endpoint answers a deleted event 404 `not_found` (hb §5.3, D-118), the image-serving endpoint included (D-148). S-28's read-back proposes the rule.
 
