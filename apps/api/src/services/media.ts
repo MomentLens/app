@@ -42,10 +42,6 @@ export const UPLOAD_LIMITS: UploadLimits = {
   maxUnfinished: MAX_UNFINISHED_UPLOADS,
 };
 
-// Pre-flight's album check (D-12, D-82). Off until S-31 gives the Admin the toggle, because every
-// event's album starts closed and nothing could open it before then (D-122).
-export const ALBUM_CHECK = false;
-
 const PHOTO_TYPE = 'image/jpeg';
 const THUMBNAIL_TYPE = 'image/webp';
 
@@ -328,10 +324,12 @@ export async function preflightUpload(
   userId: string,
   eventId: string,
   request: PreflightUploadRequest,
-  albumCheck: boolean = ALBUM_CHECK,
 ): Promise<{ created: boolean; upload: PreflightUploadResponse }> {
+  // Check 1 (arch §4.1, D-12, D-122, D-161): every role alike, and a resume too, since it runs
+  // before start_upload can return the caller's own unfinished row. A closed album stops nothing
+  // already past pre-flight, because completion does not check it (D-146).
   const { role, albumOpen } = await requireActiveMember(deps.events, eventId, userId);
-  if (albumCheck && !albumOpen) {
+  if (!albumOpen) {
     throw new ApiError('album_closed', "The event's album is closed");
   }
 
