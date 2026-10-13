@@ -46,15 +46,16 @@ describe('the check-in rows', () => {
     expect(onScan).toHaveBeenCalledTimes(1);
   });
 
-  it('puts Turn On Location first when location is off, and carries its error', () => {
+  it('puts Turn On Location first when location is off, with its error under it', () => {
     const rows = checkInRows(
       notice({ liveNames: ['Mehndi'] }),
       { ...location, off: true, error: 'Location could not be turned on.' },
       () => undefined,
     );
     expect(rows.map((row) => row.key)).toEqual(['location', 'scan']);
+    expect(rows[0]!.error).toBe('Location could not be turned on.');
     expect(rows[1]!.detail).toBeUndefined();
-    expect(rows[1]!.error).toBe('Location could not be turned on.');
+    expect(rows[1]!.error).toBeUndefined();
   });
 
   it('keeps D-157’s words for photos held by a sub-event that has ended, with no button', () => {
