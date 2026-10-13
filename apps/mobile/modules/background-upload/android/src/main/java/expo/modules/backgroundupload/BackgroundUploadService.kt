@@ -34,6 +34,9 @@ class BackgroundUploadService : Service(), HeadlessJsTaskEventListener {
   private var wakeLock: PowerManager.WakeLock? = null
   // Set once JavaScript has heard why this task ended, so onDestroy does not report it again.
   private var reported = false
+  // The start that delivered the current task. Stopping with it leaves the service running when
+  // a newer start is already on its way, so an older task's end cannot drop a newer task.
+  private var startId = 0
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -45,6 +48,7 @@ class BackgroundUploadService : Service(), HeadlessJsTaskEventListener {
     }
     // A newer task replaces the one running here. The coordinator ended that one already.
     finishJsTask()
+    this.startId = startId
     taskId = id
     currentTask = id
     reported = false
@@ -86,7 +90,7 @@ class BackgroundUploadService : Service(), HeadlessJsTaskEventListener {
     if (taskId != jsTask) return
     jsTask = null
     reported = true
-    stopSelf()
+    stopSelfResult(startId)
   }
 
   // Android 15 and later: the shared six-hour dataSync budget ran out. The service has a few
@@ -120,7 +124,7 @@ class BackgroundUploadService : Service(), HeadlessJsTaskEventListener {
       reported = true
       BackgroundUploadModule.ended(id, reason)
     }
-    stopSelf()
+    stopSelfResult(startId)
   }
 
   // Lets React Native pause timers again. The JavaScript hold resolves on its own when the
