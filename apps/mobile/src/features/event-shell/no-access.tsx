@@ -5,11 +5,14 @@ import { Icon, type IconName } from '@/components/ui/icon';
 import type { LostAccess } from '@/features/event-shell/use-event';
 import { byPlatform } from '@/lib/copy';
 
+// Removed and blocked read alike, because the API answers both 403 not_member (spec §2.5.8). The
+// queued photos stay stopped on the phone and upload if the membership is active again (spec §5.4,
+// D-161).
 const COPY: Record<LostAccess, { icon: IconName; title: string; body: string }> = {
   not_member: {
     icon: 'lock',
     title: 'You no longer have access',
-    body: 'You are not a member of this event any more, so its photos and schedule are closed to you.',
+    body: 'The organizer removed you from this event, so its photos and schedule are closed to you. Photos from this event still waiting on this phone stay here, and upload if you are let back in.',
   },
   not_found: {
     icon: 'link-2-off',
@@ -18,8 +21,9 @@ const COPY: Record<LostAccess, { icon: IconName; title: string; body: string }> 
   },
 };
 
-// What the Event shell shows in place of the tabs once the API says the caller cannot see the
-// event, with the way back to Events. A stand-in until S-31 builds Access Removed (D-118).
+// Access Removed (spec §2.5.8), or the deleted-event state, in place of the Event shell's tabs once
+// the API says the caller cannot see the event. It returns to Events and logs nobody out: only a
+// dead session does that. A pending caller goes to Pending Approval instead (D-118).
 export function NoAccess({ reason, onBack }: { reason: LostAccess; onBack: () => void }) {
   const copy = COPY[reason];
   return (

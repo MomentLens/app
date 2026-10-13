@@ -2,6 +2,7 @@ import type { InviteLookup, ResolveInviteResponse } from '@momentlens/shared-typ
 import { useRouter } from 'expo-router';
 import { useCallback } from 'react';
 
+import { currentConsentGate } from '@/features/consent/gate';
 import { eventHref } from '@/features/event-shell/tabs';
 import { EVENTS_QUERY_KEY } from '@/features/events/use-events';
 import { clearPendingInvite, savePendingInvite } from '@/features/join/pending-invite';
@@ -13,7 +14,9 @@ import { useAuthStore } from '@/stores/auth';
 // screen that asked is taken off, so going back never returns to a lookup that already answered.
 //
 // Signed out, the invite is kept and signup opens with its banner. Signing up or logging in then
-// opens Join Confirmation ((app)/_layout.tsx). Signed in, the caller's own membership decides.
+// opens the consent screen when it is owed, then Join Confirmation ((app)/_layout.tsx). Signed in
+// with consent still owed, the invite is kept the same way and the consent screen comes first
+// (spec §4.18, D-161). Otherwise the caller's own membership decides.
 //
 // The link screen and Manual Join Entry sit at the root, above the signed-in or signed-out group.
 // A screen inside a group is reached with dismissTo, which pops back to the group already there
@@ -35,6 +38,16 @@ export function useFollowInvite() {
         } else {
           router.replace('/session-ended');
         }
+        return;
+      }
+
+      // The app's screens stay closed until consent is given, so the invite waits for it. Join
+      // Confirmation asks the API again once the app opens, and routes a member, a requester or a
+      // blocked person from there.
+      const userId = useAuthStore.getState().userId;
+      if (userId !== null && currentConsentGate(userId) !== 'accepted') {
+        savePendingInvite({ lookup, eventName: event.name, role });
+        router.dismissTo('/consent');
         return;
       }
 

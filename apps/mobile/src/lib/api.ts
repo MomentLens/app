@@ -1,4 +1,6 @@
 import {
+  AcceptConsentResponse,
+  AlbumStatusResponse,
   ApproveRequestsResponse,
   BlockRequestResponse,
   ListPendingRequestsResponse,
@@ -30,8 +32,10 @@ import {
   RegenerateVenueQrResponse,
   ResolveInviteResponse,
   RemoveAttendeeResponse,
+  SetAlbumResponse,
   SetEventCoverResponse,
   UpdateEventSettingsResponse,
+  type AcceptConsentRequest,
   type AddSubEventRequest,
   type ApproveRequestsRequest,
   type BlockRequestRequest,
@@ -52,6 +56,7 @@ import {
   type RegenerateInviteRequest,
   type RegenerateVenueQrRequest,
   type ResolveInviteRequest,
+  type SetAlbumRequest,
   type UpdateEventSettingsRequest,
   type UpdateSubEventRequest,
 } from '@momentlens/shared-types';
@@ -63,6 +68,8 @@ import {
 } from '@supabase/supabase-js';
 
 import { supabase } from '@/lib/supabase';
+import { useAuthStore } from '@/stores/auth';
+import { setServiceUnavailable, useServiceStore } from '@/stores/service';
 
 // The app's one typed client for the MomentLens API (Handbook §4). Every body is parsed against
 // its shared schema before a screen sees it, so a contract mismatch arrives as an error here
@@ -112,6 +119,63 @@ function abortError(): Error {
   return Object.assign(new Error('The request was cancelled before it was sent.'), {
     name: 'AbortError',
   });
+}
+
+// The one GET /health in flight after a failure, if any.
+let checkingService: { owner: string; promise: Promise<void> } | null = null;
+
+// A 500 cannot say that Supabase is down, so after one, and after a Supabase Auth call that answers
+// 5xx, the app asks GET /health (hb §5.3, D-161). A 503 with `database: error` shows Supabase
+// Unavailable. Any other answer, or none, leaves the failure to the screen that drew it. One check
+// runs at a time, none while the screen already shows, and none for a caller who is not signed in,
+// since the screen covers only the signed-in app.
+function checkService(): void {
+  const { userId: owner, status } = useAuthStore.getState();
+  if (
+    owner === null ||
+    status !== 'signedIn' ||
+    checkingService?.owner === owner ||
+    useServiceStore.getState().unavailable
+  )
+    return;
+  const check = { owner, promise: Promise.resolve() };
+  checkingService = check;
+  check.promise = readHealth()
+    .then(({ httpStatus, health }) => {
+      if (
+        useAuthStore.getState().userId === owner &&
+        httpStatus === 503 &&
+        health.database === 'error'
+      )
+        setServiceUnavailable(true);
+    })
+    .catch(() => undefined)
+    .finally(() => {
+      if (checkingService === check) checkingService = null;
+    });
+}
+
+// A Supabase Auth call that Supabase answered with a 5xx. auth-js reports a 502, 503 or 504 as a
+// retryable fetch error and any other 5xx as an API error, and a network failure as a retryable
+// fetch error with status 0, which says nothing about the project.
+function authServerFailed(error: unknown): boolean {
+  return (isAuthApiError(error) || isAuthRetryableFetchError(error)) && error.status >= 500;
+}
+
+// Passes an answer through, asking GET /health first when it is a 500.
+function checked(response: Response): Response {
+  if (response.status === 500) checkService();
+  return response;
+}
+
+// Supabase Unavailable's Try Again: GET /health again. `up` clears the screen. Throws ApiError when
+// the API cannot be reached at all.
+export async function recheckService(): Promise<'up' | 'down'> {
+  const owner = useAuthStore.getState().userId;
+  const { httpStatus, health } = await readHealth();
+  if (httpStatus !== 200 || health.database !== 'ok') return 'down';
+  if (useAuthStore.getState().userId === owner) setServiceUnavailable(false);
+  return 'up';
 }
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -190,6 +254,10 @@ async function accessToken(owner?: string): Promise<string> {
   if (data.session) {
     return tokenFor(data.session, owner);
   }
+  if (authServerFailed(error)) {
+    checkService();
+    throw new ApiError(AUTH_UNREACHABLE);
+  }
   // Offline with an expired token: the session is still stored and still good, it just cannot be
   // refreshed yet. Nobody is logged out for that (D-109).
   if (isAuthRetryableFetchError(error)) {
@@ -213,6 +281,10 @@ async function refreshedAccessToken(owner?: string): Promise<string> {
   const { data, error } = await supabase.auth.refreshSession();
   if (data.session) {
     return tokenFor(data.session, owner);
+  }
+  if (authServerFailed(error)) {
+    checkService();
+    throw new ApiError(AUTH_UNREACHABLE);
   }
   if (refreshWasRejected(error)) {
     // The session is dead, the one case that shows Forced Logout (D-109). auth-js removes the
@@ -245,14 +317,14 @@ async function authenticatedRequest(
 ): Promise<Response> {
   const first = await request(path, options, await accessToken(owner));
   if (first.status !== 401) {
-    return first;
+    return checked(first);
   }
   // A cancelled caller gets no refresh and no resend. request() checks again once the refresh
   // returns, for an abort that lands while it is pending (D-158).
   if (options.signal?.aborted) {
     throw abortError();
   }
-  return request(path, options, await refreshedAccessToken(owner));
+  return checked(await request(path, options, await refreshedAccessToken(owner)));
 }
 
 // A request that works with or without a session (D-115). Nobody signed in sends no header. A
@@ -264,6 +336,10 @@ async function optionallyAuthenticatedRequest(
   options: RequestOptions = {},
 ): Promise<Response> {
   const { data, error } = await supabase.auth.getSession();
+  if (authServerFailed(error)) {
+    checkService();
+    throw new ApiError(AUTH_UNREACHABLE);
+  }
   if (data.session === null) {
     if (isAuthRetryableFetchError(error)) {
       throw new ApiError(AUTH_UNREACHABLE);
@@ -272,9 +348,9 @@ async function optionallyAuthenticatedRequest(
   }
   const first = await request(path, options, data.session.access_token);
   if (first.status !== 401) {
-    return first;
+    return checked(first);
   }
-  return request(path, options, await refreshedAccessToken());
+  return checked(await request(path, options, await refreshedAccessToken()));
 }
 
 // A body that is not ErrorResponse still says what kind of failure it was through its status. So
@@ -316,22 +392,47 @@ async function parseBody<T>(what: string, response: Response, schema: Schema<T>)
   return parsed.data;
 }
 
-export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
+async function readHealth(signal?: AbortSignal) {
   const response = await request('/health', { signal });
   // 503 is an answer, not a failure. The API is up and reporting that the database is not.
   if (response.status !== 200 && response.status !== 503) {
     throw await errorFrom('GET /health', response);
   }
-  return parseBody('GET /health', response, HealthResponse);
+  return {
+    httpStatus: response.status,
+    health: await parseBody('GET /health', response, HealthResponse),
+  };
 }
 
-// The caller's own profile (D-109).
+export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  return (await readHealth(signal)).health;
+}
+
+// The caller's own profile (D-109), with whether they still owe the consent screen (D-161).
 export async function getMyProfile(signal?: AbortSignal): Promise<ProfileResponse> {
   const response = await authenticatedRequest('/profiles/me', { signal });
   if (response.status !== 200) {
     throw await errorFrom('GET /profiles/me', response);
   }
   return parseBody('GET /profiles/me', response, ProfileResponse);
+}
+
+// Records that `owner` accepted the consent text's current version (D-161). A 201 recorded it and a
+// 200 found it already recorded, and the app treats both the same. It goes out only under the
+// account the consent screen was showing, and needs a connection: it is never queued.
+export async function acceptConsent(
+  owner: string,
+  body: AcceptConsentRequest,
+): Promise<AcceptConsentResponse> {
+  const response = await authenticatedRequest(
+    '/profiles/me/consent',
+    { method: 'POST', body },
+    owner,
+  );
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /profiles/me/consent', response);
+  }
+  return parseBody('POST /profiles/me/consent', response, AcceptConsentResponse);
 }
 
 // Creates the event, its venues, its sub-events and the caller's Admin membership (D-110). A 201
@@ -403,6 +504,39 @@ export async function getEventSettings(
     throw await errorFrom('GET /events/{eventId}/settings', response);
   }
   return parseBody('GET /events/{eventId}/settings', response, GetEventSettingsResponse);
+}
+
+// The album state, the event's upload count and the Photographers who have uploaded nothing, for
+// the event's Admin only (D-161). Manage's status card reads it, and the Close Album dialog asks
+// again when it opens. Anyone else gets 403 not_member or wrong_role, and a deleted or unknown
+// event 404 not_found.
+export async function getAlbumStatus(
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<AlbumStatusResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/album`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/album', response);
+  }
+  return parseBody('GET /events/{eventId}/album', response, AlbumStatusResponse);
+}
+
+// Opens or closes the album, for the event's Admin only, and answers the state it set (D-161). A
+// repeat sets the same state, so a resend is safe, and two of the Admin's phones resolve as last
+// write wins (D-142). No signal, for the reason createEvent has none: a PUT the screen stops
+// waiting for may still land.
+export async function setAlbum(
+  eventId: string,
+  body: SetAlbumRequest,
+  owner?: string,
+): Promise<SetAlbumResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/album`;
+  const response = await authenticatedRequest(path, { method: 'PUT', body }, owner);
+  if (response.status !== 200) {
+    throw await errorFrom('PUT /events/{eventId}/album', response);
+  }
+  return parseBody('PUT /events/{eventId}/album', response, SetAlbumResponse);
 }
 
 // Managed credentials stay bound to the account that opened Invite (D-152).
