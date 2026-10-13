@@ -1191,6 +1191,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Reopen if.** Testers delete photos by mistake often enough to ask for them back.
 
 ### D-131: Scan leaves the tab bar and opens from My Media
+**Amended (see D-159).** The Scan Venue QR button sits in a row of My Media's one status banner, which also holds the queue counts and the keep-open notice. When the button shows, and what it opens, stay as below.
 **Decision.** Amends spec §2.5.1, §2.5.3 and §4.5, and S-16's scope.
 - The Global shell has two tabs, Events and Profile. There is no Scan tab.
 - Scan Venue QR opens full screen from a button in My Media's check-in banner. The banner shows only while a sub-event is In Progress and the person is not checked in for it, whether or not photos are waiting, so a guest can check in before the first photo. A Photographer, exempt from the gate (spec §4.5), never sees it.
@@ -1355,6 +1356,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Reopen if.** An Admin needs to see who was rejected, or testers find a batch refused at the cap confusing.
 
 ### D-145: My Media rulings from S-10's read-back
+**Amended (see D-159).** The queue banner and the check-in banner are one status banner, with a short row for each message. S-14's mobile build merges them.
 **Amended (see D-157).** S-17 separates queued, waiting-album, waiting-check-in and uploading counts. Only waiting_verification reads as "waiting to check in"; the ended-sub-event message remains S-15/S-16's existing UI.
 **Amended (see D-156).** S-15 supplies My Media's check-in notice and ended-sub-event message. S-16 adds the QR scanner; S-17 retains manual check-in, the attendee filter and queue counts.
 **Decision.** Amends spec §2.5.3 and §4.8.2, and the scopes of S-09, S-16 and S-17. Ukasha ruled on each of these on 2026-10-05, at S-10's read-back, and let the routine calls stand.
@@ -1593,6 +1595,17 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** One local Swift/Kotlin module, a registered Android task, reversible runner suspension, a cancellation guard, foreground fallback advice and both native rebuilds. After protection ends offline or on another block, background reconnect waits for the app to return to foreground. iOS may grant little or no background time. Android notification visibility remains under the person's and system's controls. S-11's issue has no readiness record, so its readiness is unknown; this read-back verified its merged interfaces and grants no device exception.
 **Platform basis.** Checked on 2026-10-13 against [Apple's background-task API](https://developer.apple.com/documentation/uikit/uiapplication/beginbackgroundtask%28expirationhandler%3A%29), [Android service-start restrictions](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start), [service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout), [notification permission](https://developer.android.com/develop/ui/compose/notifications/notification-permission), [Android 14 dismissal behavior](https://developer.android.com/about/versions/14/behavior-changes-all), [RN 0.86 Headless JS](https://reactnative.dev/docs/0.86/headless-js-android), [Expo local modules](https://docs.expo.dev/modules/get-started/), [Expo Router custom entry](https://docs.expo.dev/router/installation/) and [Expo SDK 57 notifications](https://docs.expo.dev/versions/v57.0.0/sdk/notifications/).
 **Reopen if.** Physical checks show that foreground fallback strands photos, the native module cannot retain the existing runner, or Android startup and notification controls prevent the rehearsal's upload flow.
+
+### D-159: My Media shows one status banner
+**Decision.** Amends spec §2.5.3, D-131 and D-145. Ukasha ruled on 2026-10-13, during S-14's mobile build, that My Media shows one banner instead of one banner per message.
+- One collapsible banner at the top of My Media replaces the upload queue banner and the check-in banner. It holds the queue counts, the check-in rows and S-14's keep-open notice (D-158) as rows, each shown only while it applies. The banner hides when no row applies.
+- Each row states what is true or what to do in a short phrase, without explaining the system. The counts keep D-157's four labels and rules. "Ask the organizer to check you in." keeps its wording (D-157). The Scan Venue QR and Turn On Location buttons keep their behavior, and the Scan Venue QR button stays the only way to the scanner (D-131).
+- iOS draws the banner as an inset grouped card on the surface colour, and Android as a Material 3 filled card on `surfaceContainer` (D-112).
+- No queue transition, release, count rule, check-in rule or verification behavior changes.
+**Why.** Ukasha found each My Media message in a banner of its own, with full-sentence explanations, and asked for one banner with only the useful rows. S-14 adds a third message, the keep-open notice.
+**Rejected.** A third banner for the keep-open notice. A separate slice for the merge, which would build the notice as a banner and then rebuild it.
+**Cost.** S-14's mobile build also changes `queue-banner.tsx` and `check-in-banner.tsx`, which S-10, S-16 and S-17 built. Their device reports describe the old banners, so S-14's physical check covers the merged one.
+**Reopen if.** Testers at the rehearsal miss the Scan Venue QR button inside the merged banner.
 
 ## Open items that are not decisions yet
 
