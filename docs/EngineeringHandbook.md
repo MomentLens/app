@@ -360,6 +360,7 @@ This trips up almost every team new to React Native, so be explicit about the me
 
 **You only rebuild natively when:**
 - You add or upgrade a package containing native code.
+- You add or change Swift or Kotlin in a local Expo module, including S-14's background upload helper (D-158).
 - You change native configuration in `app.json` / `app.config.js` (permissions, icons, splash).
 - You switch build profiles.
 
@@ -632,7 +633,7 @@ Auth (sign up, log in via Supabase Auth), create an event through spec §2.1.2's
 The informational schedule with the §4.3 status computation, both role-specific invite links, attendee management. Force Verify waits for Phase 4, where the gate it overrides arrives (S-17). Still mostly CRUD, and that is the point: this is where the service-layer authorization checks and their negative tests become routine before the hard parts arrive (D-73).
 
 ### 14.3 Phase 3 — capture & upload
-The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **Build this with no verification check in the pre-flight endpoint**, so every upload goes through. S-15 writes the check in Phase 4 (D-122). Get raw upload reliability solid in isolation; debugging it while also debugging the gate is twice as hard for no benefit.
+The Viewfinder (native aspect, 1x fixed, no gallery picker), My Media with its SQLite queue, the single upload pipeline (D-58), SHA-256 pre-flight, presigned direct-to-R2 upload, and the bounded background behavior. **The initial Phase 3 release has no verification check in pre-flight**, so uploads can be tested before S-15 adds the Phase 4 gate (D-122). A Phase 3 slice built after S-15 preserves the merged verification gate and its GPS, QR and manual check-in behavior (D-155, D-156, D-157, D-158). S-14 adds execution protection around the same runner and introduces no second pipeline.
 
 **The image-serving endpoint starts here** (D-93, S-13): the visibility check, the public file and the cache key, with its negative test written first. The album needs it to show anything, and a second serving path is exactly what root invariant 3 forbids.
 

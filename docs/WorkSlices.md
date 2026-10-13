@@ -116,7 +116,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 
 # Phase 3 — capture and upload
 
-Build this phase **with no verification check** in the pre-flight endpoint (HB §14.3 Phase 3). S-15 writes the check in Phase 4 (D-122).
+Build the initial release of this phase **with no verification check** in the pre-flight endpoint (hb §14.3). S-15 writes the check in Phase 4 (D-122). A slice built after S-15 preserves the merged GPS, QR and manual check-in gate (hb §14.3).
 
 The one worker slice in this phase is S-18a. Only the worker sets `processed_at`, so S-18a is what lets S-13 show any photo without someone setting it in Express (D-72).
 
@@ -128,7 +128,7 @@ The one worker slice in this phase is S-18a. Only the worker sets `processed_at`
 | S-18a | Worker skeleton: pgmq consumer loop under one advisory lock, `/health`, `thumbnail_dims` job, Sentry for archived messages, and the worker CI job (Ruff, pytest). No ML | HB §6, D-72, D-103, D-108, D-123, arch §5 | U | S-12 |
 | S-09 | Viewfinder: native aspect, Public/Local Only toggle, durable capture persistence and backup exclusion, Public gallery saves and recovery, session stack, FAB visibility rule and the line that replaces the hidden FAB | §4.7, §2.5.4, §4.12, §4.19, spec §5.3, spec §4.14, arch §4.2, D-21, D-20, D-90, D-136, D-134, D-135, D-153 | B | S-04, S-08, S-10 |
 | S-13 | Home/Album: grid, sub-event chips, the filter sheet with its Uploader half, Realtime, and the **image-serving endpoint** with the public file only | §4.9, §2.5.2, §4.10, §4.13, D-22, D-35, D-55, D-57, D-60, D-86, D-93, HB §4, HB §16, HB §5.2, HB §11.3, arch §1, arch §3, D-137, D-138, D-147, D-148 | B | S-12, S-18a |
-| S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3 | C | S-11 |
+| S-14 | Background upload behavior: iOS background task, Android foreground service | §4.8.3 Stage 3, D-158, D-146, arch §4.3, hb §10, spec §5.4 | C | S-11 |
 
 **S-12 builds upload keys and nothing else.** Derived keys belong to the worker (D-70). It writes the `media` migration, which also enables `pgmq` and creates the `jobs` queue, and the `start_upload` and `complete_upload` SQL functions (D-95, D-122). It presigns with `@aws-sdk/s3-request-presigner`, which S-01 installed (D-109). It writes no query on `venue_verification`, which S-15 creates along with the verification check (D-122). It depends on S-03 for joined members and S-04 for sub-events, not on S-11, which calls it. It gives `media.sub_event_id` no `ON DELETE` action and replaces S-04's `delete_sub_event` with one that refuses a sub-event with any `media` row (D-121). Its album-open check ships switched off behind one constant, because nothing can open an album until S-31, and the resume path is the one to test hardest: a photo killed between pre-flight and completion must upload on relaunch, not vanish as its own duplicate (D-82).
 
@@ -140,7 +140,7 @@ The one worker slice in this phase is S-18a. Only the worker sets `processed_at`
 
 **S-11 is one pipeline with no role branch** (D-58, HB §7). It PUTs the thumbnail S-10 made when the photo entered the queue, which shows the unblurred photo, so it goes to R2 by presigned PUT and never into the pre-flight JSON (D-69, D-146). It always sends a capture time (D-147). S-11 also owns the loop that calls S-12's endpoints and moves each queued item by the table in arch §4.3 (D-97). That loop is the upload queue's state machine, so a human reads it before it merges.
 
-**S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue. It calls S-11's runner and never starts a second loop, which would send two pre-flights for one photo (D-146).
+**S-14 uploads in the background only under the account that queued the item**, the same rule as S-10's queue. It calls S-11's runner and never starts a second loop, which would send two pre-flights for one photo (D-146, D-158). It has one mobile build and no schema stage because the upload contracts already exist. The local Expo module adds no external dependency and requires both native builds. S-14 also fixes request cancellation during token lookup or refresh, while preserving the installed verification gate. Physical iOS and Android checks cover backgrounding, screen lock, expiry, notification refusal, offline/reconnect, account changes and kill/relaunch.
 
 **S-13 writes the `media` SELECT policy** that Realtime needs, the first one after `health_check`. It checks membership through a `security definer` function (arch §1, D-73). A human reads it before it merges.
 
