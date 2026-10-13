@@ -1,12 +1,15 @@
 import type { Request, Response } from 'express';
 
 import {
+  AlbumStatusResponse,
   CreateCoverUploadResponse,
   CreateEventRequest,
   CreateEventResponse,
   GetEventResponse,
   GetEventSettingsResponse,
   ListEventsResponse,
+  SetAlbumRequest,
+  SetAlbumResponse,
   SetEventCoverRequest,
   SetEventCoverResponse,
   UpdateEventSettingsRequest,
@@ -18,9 +21,11 @@ import { authenticatedUser } from '../middleware/auth';
 import { parseInput, PathId } from '../middleware/body';
 import {
   createEvent,
+  getAlbumStatus,
   getEvent,
   getEventSettings,
   listEvents,
+  setAlbumOpen,
   setEventCover,
   startCoverUpload,
   updateEventSettings,
@@ -108,5 +113,27 @@ export function updateEventSettingsController(events: EventStore, presignGet: Pr
     const request = parseInput(UpdateEventSettingsRequest, req.body);
     const result = await updateEventSettings(events, presignGet, id, eventId, request);
     res.set('Cache-Control', 'no-store').json(UpdateEventSettingsResponse.parse(result));
+  };
+}
+
+// GET /events/{eventId}/album, for the event's Admin (D-161). The request has no body.
+export function getAlbumStatusController(events: EventStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const result = await getAlbumStatus(events, id, eventId);
+    res.set('Cache-Control', 'no-store').json(AlbumStatusResponse.parse(result));
+  };
+}
+
+// PUT /events/{eventId}/album, for the event's Admin (D-161). The path and the body are parsed
+// before the caller is checked, so a bad request is 400 whoever sends it, as the contract says.
+export function setAlbumController(events: EventStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const request = parseInput(SetAlbumRequest, req.body);
+    const result = await setAlbumOpen(events, id, eventId, request);
+    res.set('Cache-Control', 'no-store').json(SetAlbumResponse.parse(result));
   };
 }

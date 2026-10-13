@@ -32,6 +32,8 @@ const noEvents: EventStore = {
   setCover: () => Promise.resolve(false),
   settings: () => Promise.resolve(null),
   updateSettings: () => Promise.reject(new Error('no event store in this test')),
+  albumStatus: () => Promise.resolve(null),
+  setAlbum: () => Promise.resolve(null),
 };
 
 // An invite store where every invite is dead and no one has a join request.
