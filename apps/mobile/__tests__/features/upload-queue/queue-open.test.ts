@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { DatabaseSync } from 'node:sqlite';
-import { QueryClient } from '@tanstack/react-query';
+import { dehydrate, hydrate, QueryClient } from '@tanstack/react-query';
 import { GpsReadings } from '@/features/verification/readings';
 
 import type * as AuthModule from '@/stores/auth';
@@ -276,6 +276,107 @@ describe('S-15 queue lifecycle', () => {
   });
 });
 
+// Only an answer the API sent releases waiting_album photos. A copy restored from disk, seeded from
+// the Events list or written by the app releases nothing (arch §4.3, D-161).
+describe('S-31 album release', () => {
+  const OPEN = { event: { id: EVENT, albumOpen: true } };
+  async function waiting() {
+    const store = await queue.getQueue();
+    const item = await store.enqueue('A', EVENT, SUB, {
+      uri: 'file:///photo.jpg',
+      capturedAt: null,
+    });
+    await store.update('A', item.id, { state: 'waiting_album' });
+    return { store, item };
+  }
+  async function settle() {
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('releases on a fetched event answer that shows the album open', async () => {
+    const { store } = await waiting();
+    queue.startUploads();
+    await queue.runUploads();
+    await mockQueryClient.fetchQuery({ queryKey: ['event', EVENT], queryFn: async () => OPEN });
+    await until(async () =>
+      (await store.listForEvent('A', EVENT)).every((item) => item.state === 'uploaded'),
+    );
+  });
+
+  it('releases on a fetched Events list that shows the album open', async () => {
+    const { store } = await waiting();
+    queue.startUploads();
+    await queue.runUploads();
+    await mockQueryClient.fetchQuery({
+      queryKey: ['events'],
+      queryFn: async () => ({ events: [{ id: EVENT, albumOpen: true }], joinRequests: [] }),
+    });
+    await until(async () =>
+      (await store.listForEvent('A', EVENT)).every((item) => item.state === 'uploaded'),
+    );
+  });
+
+  it('releases nothing from a closed, restored, seeded or written copy', async () => {
+    const { store } = await waiting();
+    queue.startUploads();
+    await queue.runUploads();
+    // A fetched answer with the album closed.
+    await mockQueryClient.fetchQuery({
+      queryKey: ['event', EVENT],
+      queryFn: async () => ({ event: { id: EVENT, albumOpen: false } }),
+    });
+    // A copy restored from disk, as the persister restores one.
+    const saved = new QueryClient();
+    saved.setQueryData(['event', EVENT], OPEN);
+    saved.setQueryData(['events'], { events: [{ id: EVENT, albumOpen: true }], joinRequests: [] });
+    mockQueryClient.clear();
+    hydrate(mockQueryClient, dehydrate(saved));
+    // A copy seeded from the Events list, as useEvent seeds one.
+    mockQueryClient.removeQueries({ queryKey: ['event', EVENT] });
+    await mockQueryClient.ensureQueryData({
+      queryKey: ['event', EVENT],
+      queryFn: async () => {
+        throw new Error('A seeded copy is never fetched here');
+      },
+      initialData: OPEN,
+    });
+    // A copy the app wrote, such as the Admin's own PUT answer.
+    mockQueryClient.setQueryData(['event', EVENT], OPEN);
+    await settle();
+    expect(await store.listForEvent('A', EVENT)).toMatchObject([{ state: 'waiting_album' }]);
+    expect(mockPreflight).not.toHaveBeenCalled();
+    saved.clear();
+  });
+
+  it('releases only the signed-in account', async () => {
+    const { store } = await waiting();
+    const other = await store.enqueue('B', EVENT, SUB, { uri: 'file:///b.jpg', capturedAt: null });
+    await store.update('B', other.id, { state: 'waiting_album' });
+    queue.startUploads();
+    await queue.runUploads();
+    await mockQueryClient.fetchQuery({ queryKey: ['event', EVENT], queryFn: async () => OPEN });
+    await until(async () =>
+      (await store.listForEvent('A', EVENT)).every((item) => item.state === 'uploaded'),
+    );
+    expect(await store.listForEvent('B', EVENT)).toMatchObject([{ state: 'waiting_album' }]);
+  });
+
+  it('releases a photo refused while the album opened during its pre-flight', async () => {
+    const store = await queue.getQueue();
+    await store.enqueue('A', EVENT, SUB, { uri: 'file:///photo.jpg', capturedAt: null });
+    mockPreflight.mockImplementationOnce(async () => {
+      await mockQueryClient.fetchQuery({ queryKey: ['event', EVENT], queryFn: async () => OPEN });
+      throw Object.assign(new Error('album closed'), { status: 409, code: 'album_closed' });
+    });
+    queue.startUploads();
+    await queue.runUploads();
+    await until(async () =>
+      (await store.listForEvent('A', EVENT)).every((item) => item.state === 'uploaded'),
+    );
+    expect(mockPreflight).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('a failed backup exclusion', () => {
   it('does not block the queue from opening or its reads', async () => {
     await expect(queue.getQueue()).resolves.toBeDefined();
@@ -291,4 +392,11 @@ describe('a failed backup exclusion', () => {
       { state: 'uploaded', mediaId: MEDIA },
     ]);
   });
+});
+
+afterAll(() => {
+  (
+    globalThis as typeof globalThis & { __momentlensStopUploads?: () => void }
+  ).__momentlensStopUploads?.();
+  mockQueryClient.clear();
 });
