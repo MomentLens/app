@@ -32,6 +32,8 @@ export function checkInRows(
         key: 'location',
         glyph: { ios: 'location.slash', android: 'location_off' },
         title: 'Location is off',
+        // Under the button whose press failed.
+        error: location.error,
         actions: [
           {
             label: IOS ? 'Turn On Location' : 'Turn on location',
@@ -48,7 +50,6 @@ export function checkInRows(
       glyph: GLYPH.qr,
       title: `Not checked in · ${notice.liveNames.join(', ')}`,
       detail: location.off ? undefined : 'Still waiting? Ask the organizer to check you in.',
-      error: location.error,
       actions: [
         {
           label: IOS ? 'Scan Venue QR' : 'Scan venue QR',
