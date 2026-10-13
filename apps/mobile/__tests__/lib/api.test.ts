@@ -1961,3 +1961,308 @@ describe('GET /events/{eventId}/media/uploaders', () => {
     });
   });
 });
+
+describe('album and consent endpoints (D-161)', () => {
+  const eventId = '11111111-1111-4111-8111-111111111111';
+  function signIn(id = 'A') {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token', user: { id } } } as SessionResult['data'],
+      error: null,
+    });
+  }
+
+  it('reads the album status for the Admin', async () => {
+    signIn();
+    const status = { albumOpen: false, uploadCount: 12, photographersWithoutUploads: ['Ali Raza'] };
+    const fetched = answers(200, status);
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).getAlbumStatus(eventId)).resolves.toEqual(status);
+    expect(fetched.mock.calls[0]?.[0]).toBe(`https://api.example.test/events/${eventId}/album`);
+    expect(fetched.mock.calls[0]?.[1]?.method).toBe('GET');
+  });
+
+  it('sets the album state with a PUT and returns the state set', async () => {
+    signIn();
+    const fetched = answers(200, { albumOpen: true });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).setAlbum(eventId, { open: true })).resolves.toEqual({
+      albumOpen: true,
+    });
+    expect(fetched.mock.calls[0]?.[1]?.method).toBe('PUT');
+    expect(fetched.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ open: true }));
+  });
+
+  it.each<[number, string]>([
+    [403, 'wrong_role'],
+    [403, 'not_member'],
+    [404, 'not_found'],
+  ])('keeps a %i %s from either album call, with no retry', async (status, code) => {
+    signIn();
+    const fetched = answers(status, { error: { code, message: 'refused' } });
+    globalThis.fetch = fetched;
+    const api = loadApi(BASE_URL);
+    await expect(api.getAlbumStatus(eventId)).rejects.toMatchObject({ status, code });
+    await expect(api.setAlbum(eventId, { open: false })).rejects.toMatchObject({ status, code });
+    expect(fetched).toHaveBeenCalledTimes(2);
+  });
+
+  it('records consent for the account the screen showed, on a 201 or a 200', async () => {
+    signIn('A');
+    const api = loadApi(BASE_URL);
+    for (const status of [201, 200]) {
+      const fetched = answers(status, { policyVersion: 1 });
+      globalThis.fetch = fetched;
+      await expect(api.acceptConsent('A', { policyVersion: 1 })).resolves.toEqual({
+        policyVersion: 1,
+      });
+      expect(fetched.mock.calls[0]?.[0]).toBe('https://api.example.test/profiles/me/consent');
+      expect(fetched.mock.calls[0]?.[1]?.method).toBe('POST');
+      expect(fetched.mock.calls[0]?.[1]?.body).toBe(JSON.stringify({ policyVersion: 1 }));
+    }
+  });
+
+  it('never records consent under another account', async () => {
+    signIn('B');
+    const fetched = answers(201, { policyVersion: 1 });
+    globalThis.fetch = fetched;
+    const api = loadApi(BASE_URL);
+    await expect(api.acceptConsent('A', { policyVersion: 1 })).rejects.toBeInstanceOf(
+      api.AccountChangedError,
+    );
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it('sends no album or consent request without a session', async () => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const api = loadApi(BASE_URL);
+    const fetched = answers(200, {});
+    globalThis.fetch = fetched;
+    await expect(api.getAlbumStatus(eventId)).rejects.toMatchObject({
+      status: 401,
+      code: 'no_session',
+    });
+    await expect(api.setAlbum(eventId, { open: false })).rejects.toMatchObject({
+      status: 401,
+      code: 'no_session',
+    });
+    await expect(api.acceptConsent('A', { policyVersion: 1 })).rejects.toMatchObject({
+      status: 401,
+      code: 'no_session',
+    });
+    expect(fetched).not.toHaveBeenCalled();
+  });
+
+  it('keeps the 400 an old version gets', async () => {
+    signIn();
+    globalThis.fetch = answers(400, { error: { code: 'invalid_request', message: 'version' } });
+    await expect(loadApi(BASE_URL).acceptConsent('A', { policyVersion: 1 })).rejects.toMatchObject({
+      status: 400,
+      code: 'invalid_request',
+    });
+  });
+});
+
+// A 500 cannot say that Supabase is down, so the app asks GET /health after one, and after a
+// Supabase Auth 5xx (hb §5.3, D-161).
+describe('the Supabase Unavailable check', () => {
+  const eventId = '11111111-1111-4111-8111-111111111111';
+  type ServiceModule = typeof import('@/stores/service');
+  type AuthModule = typeof import('@/stores/auth');
+
+  let changeAccount: (id: string) => void;
+  function load(signedIn = true) {
+    process.env.EXPO_PUBLIC_API_URL = BASE_URL;
+    let api: Api | undefined;
+    let service: ServiceModule | undefined;
+    let auth: AuthModule | undefined;
+    jest.isolateModules(() => {
+      api = jest.requireActual<Api>('@/lib/api');
+      service = jest.requireActual<ServiceModule>('@/stores/service');
+      auth = jest.requireActual<AuthModule>('@/stores/auth');
+    });
+    auth!.useAuthStore.setState(
+      signedIn ? { status: 'signedIn', userId: 'A' } : { status: 'signedOut', userId: null },
+    );
+    changeAccount = (id) => auth!.useAuthStore.setState({ status: 'signedIn', userId: id });
+    return { api: api!, unavailable: () => service!.useServiceStore.getState().unavailable };
+  }
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token', user: { id: 'A' } } } as SessionResult['data'],
+      error: null,
+    });
+  }
+  // The API's answer for every path but /health, and the health check's own.
+  function server(status: number, health: [number, 'ok' | 'error'] | 'unreachable') {
+    return jest.fn<typeof fetch>((input) => {
+      if (String(input).endsWith('/health')) {
+        if (health === 'unreachable') return Promise.reject(new TypeError('Network failed'));
+        const [code, database] = health;
+        return Promise.resolve({
+          status: code,
+          json: () => Promise.resolve(healthBody(database === 'ok' ? 'ok' : 'degraded', database)),
+        } as unknown as Response);
+      }
+      return Promise.resolve({
+        status,
+        json: () => Promise.resolve({ error: { code: 'internal_error', message: 'x' } }),
+      } as unknown as Response);
+    });
+  }
+  const healthCalls = (fetched: ReturnType<typeof server>) =>
+    fetched.mock.calls.filter(([input]) => String(input).endsWith('/health')).length;
+  async function settle() {
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  it('shows it when a 500 is followed by a 503 with database: error', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    const fetched = server(500, [503, 'error']);
+    globalThis.fetch = fetched;
+    await expect(api.getEvent(eventId)).rejects.toMatchObject({ status: 500 });
+    await settle();
+    expect(healthCalls(fetched)).toBe(1);
+    expect(unavailable()).toBe(true);
+  });
+
+  it('leaves the failure to the screen when /health answers 200', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    const fetched = server(500, [200, 'ok']);
+    globalThis.fetch = fetched;
+    await expect(api.getEvent(eventId)).rejects.toMatchObject({ status: 500 });
+    await settle();
+    expect(healthCalls(fetched)).toBe(1);
+    expect(unavailable()).toBe(false);
+  });
+
+  it('leaves it off when /health cannot be reached', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    globalThis.fetch = server(500, 'unreachable');
+    await expect(api.getEvent(eventId)).rejects.toMatchObject({ status: 500 });
+    await settle();
+    expect(unavailable()).toBe(false);
+  });
+
+  it('asks nothing after a refusal or a 502, and nothing while signed out', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    const refused = server(403, [503, 'error']);
+    globalThis.fetch = refused;
+    await expect(api.getEvent(eventId)).rejects.toMatchObject({ status: 403 });
+    const gateway = server(502, [503, 'error']);
+    globalThis.fetch = gateway;
+    await expect(api.getEvent(eventId)).rejects.toMatchObject({ status: 502 });
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    const signedOut = load(false);
+    const anonymous = server(500, [503, 'error']);
+    globalThis.fetch = anonymous;
+    await expect(signedOut.api.resolveInvite({ code: 'K7Q2XP' })).rejects.toMatchObject({
+      status: 500,
+    });
+    await settle();
+    expect(healthCalls(refused) + healthCalls(gateway) + healthCalls(anonymous)).toBe(0);
+    expect(unavailable()).toBe(false);
+    expect(signedOut.unavailable()).toBe(false);
+  });
+
+  it('checks once while a check is in flight', async () => {
+    signIn();
+    const { api } = load();
+    const fetched = server(500, [200, 'ok']);
+    globalThis.fetch = fetched;
+    await Promise.allSettled([api.getEvent(eventId), api.getEvent(eventId), api.listEvents()]);
+    await settle();
+    expect(healthCalls(fetched)).toBe(1);
+  });
+
+  it.each([
+    ['a 500 from the refresh', new AuthApiError('Internal error', 500, undefined)],
+    ['a 503 from the refresh', new AuthRetryableFetchError('Service unavailable', 503)],
+  ])('shows it after %s of Supabase Auth', async (_name, error) => {
+    mockAuth.getSession.mockResolvedValue({ data: { session: null }, error });
+    const { api, unavailable } = load();
+    const fetched = server(200, [503, 'error']);
+    globalThis.fetch = fetched;
+    await expect(api.getEvent(eventId)).rejects.toBeInstanceOf(api.ApiError);
+    await settle();
+    expect(healthCalls(fetched)).toBe(1);
+    expect(unavailable()).toBe(true);
+  });
+
+  it('asks nothing after an Auth network failure, which is not a 5xx', async () => {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: new AuthRetryableFetchError('Failed to fetch', 0),
+    });
+    const { api } = load();
+    const fetched = server(200, [503, 'error']);
+    globalThis.fetch = fetched;
+    await expect(api.getEvent(eventId)).rejects.toBeInstanceOf(api.ApiError);
+    await settle();
+    expect(healthCalls(fetched)).toBe(0);
+  });
+
+  it('ignores a health answer after the account changes', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    let finish!: (response: Response) => void;
+    const fetched = server(500, [503, 'error']);
+    globalThis.fetch = jest.fn<typeof fetch>((input, init) =>
+      String(input).endsWith('/health')
+        ? new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+        : fetched(input, init),
+    );
+    await api.getEvent(eventId).catch(() => undefined);
+    // The health check started under A; B must not inherit its result.
+    // load() isolates the module graph, so access that same store through the returned setter.
+    changeAccount('B');
+    finish({ status: 503, json: async () => healthBody('degraded', 'error') } as Response);
+    await settle();
+    expect(unavailable()).toBe(false);
+  });
+
+  it('checks Auth 5xx on the invite path without treating it as signed out', async () => {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: new AuthApiError('Internal error', 500, undefined),
+    });
+    const { api, unavailable } = load();
+    globalThis.fetch = server(200, [503, 'error']);
+    await expect(api.resolveInvite({ code: 'K7Q2XP' })).rejects.toMatchObject({
+      status: undefined,
+    });
+    await settle();
+    expect(unavailable()).toBe(true);
+  });
+
+  it('does not show Unavailable for a 200 carrying database: error', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    globalThis.fetch = server(500, [200, 'error']);
+    await api.getEvent(eventId).catch(() => undefined);
+    await settle();
+    expect(unavailable()).toBe(false);
+  });
+
+  it('Try Again clears it only when the database answers', async () => {
+    signIn();
+    const { api, unavailable } = load();
+    globalThis.fetch = server(500, [503, 'error']);
+    await api.getEvent(eventId).catch(() => undefined);
+    await settle();
+    expect(unavailable()).toBe(true);
+    await expect(api.recheckService()).resolves.toBe('down');
+    expect(unavailable()).toBe(true);
+    globalThis.fetch = server(200, 'unreachable');
+    await expect(api.recheckService()).rejects.toBeInstanceOf(api.ApiError);
+    expect(unavailable()).toBe(true);
+    globalThis.fetch = server(200, [200, 'ok']);
+    await expect(api.recheckService()).resolves.toBe('up');
+    expect(unavailable()).toBe(false);
+  });
+});
