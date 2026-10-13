@@ -13,7 +13,7 @@ import { createInviteManagementStore, createInviteStore } from './services/invit
 import { createJoinRequestStore } from './services/join-requests';
 import { createMediaStore } from './services/media';
 import { createMediaImagesStore } from './services/media-images';
-import { createFindProfile } from './services/profiles';
+import { createConsentStore, createFindProfile } from './services/profiles';
 import { createSubEventStore } from './services/sub-events';
 import { createVenueQrStore } from './services/venue-qrs';
 
@@ -58,6 +58,7 @@ createApp({
   checkDatabase: createDatabaseCheck(supabase, logger),
   verifyToken: createTokenVerifier(authClient),
   findProfile: createFindProfile(supabase),
+  consent: createConsentStore(supabase),
   events: createEventStore(supabase),
   attendees: createAttendeeStore(supabase),
   joinRequests: createJoinRequestStore(supabase),
