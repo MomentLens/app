@@ -16,7 +16,8 @@ import { EventTabScreen } from '@/features/event-shell/event-tab-screen';
 import { formatDay } from '@/features/events/format';
 import { nextStatusChange, romanNumeral } from '@/features/schedule/schedule';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
-import { enqueue, remove } from '@/features/upload-queue/queue';
+import { keepOpenAdvice } from '@/features/upload-queue/background';
+import { enqueue, remove, useRefusedBackgroundAccount } from '@/features/upload-queue/queue';
 import { getCaptures, retryCapture, useCaptureDrafts } from '@/features/capture/runtime';
 import type { CaptureDraft } from '@/features/capture/capture-store';
 import { useQueue } from '@/features/upload-queue/use-queue';
@@ -27,10 +28,10 @@ import { useAuthStore } from '@/stores/auth';
 import { checkInNotice } from '@/features/verification/notice';
 import { useHeldReadings } from '@/features/verification/use-held-readings';
 import { useLocationCheck } from '@/features/verification/use-gps-check';
-import { CheckInBanner } from './check-in-banner';
+import { checkInRows } from './check-in-banner';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
-import { QueueBanner } from './queue-banner';
+import { KEEP_OPEN_ROW, StatusBanner } from './queue-banner';
 import {
   deleteWarning,
   mediaRows,
@@ -66,6 +67,10 @@ function MediaContent({ eventId }: { eventId: string }) {
   const queue = useQueue(eventId);
   const checkIn = checkInNotice(subEvents, now, event.data?.verification, heldIds, queue.items);
   const location = useLocationCheck(Boolean(checkIn?.liveNames.length));
+  // Only this account's refusal, and only while this event has photos that would upload now
+  // (D-158).
+  const refusedAccount = useRefusedBackgroundAccount();
+  const keepOpen = keepOpenAdvice(refusedAccount, queue.userId, queue.counts);
   const captures = useCaptureDrafts(queue.userId, eventId);
   const status = useMediaStatus(queue.userId, eventId);
   const sections = useMemo(
@@ -277,13 +282,14 @@ function MediaContent({ eventId }: { eventId: string }) {
                       {subtitle}
                     </Text>
                   </View>
-                  <QueueBanner counts={queue.counts} />
-                  <CheckInBanner
-                    notice={checkIn}
-                    location={location}
-                    onScan={() =>
-                      router.push({ pathname: '/scan-venue/[eventId]', params: { eventId } })
-                    }
+                  <StatusBanner
+                    counts={queue.counts}
+                    rows={[
+                      ...checkInRows(checkIn, location, () =>
+                        router.push({ pathname: '/scan-venue/[eventId]', params: { eventId } }),
+                      ),
+                      ...(keepOpen ? [KEEP_OPEN_ROW] : []),
+                    ]}
                   />
                   {schedule.data && !live ? <CameraHint schedule={subEvents} now={now} /> : null}
                   {problem || queue.error || captures.error || status.error || schedule.isError ? (

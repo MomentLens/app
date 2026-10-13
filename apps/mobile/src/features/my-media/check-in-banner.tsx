@@ -1,114 +1,77 @@
-import { useState } from 'react';
-import { Platform, Pressable, Text, View } from 'react-native';
+import { Platform } from 'react-native';
 
-import { Button } from '@/components/ui/button';
-import { Glyph } from '@/components/ui/glyph';
-import { Icon } from '@/components/ui/icon';
+import { GLYPH } from '@/components/ui/glyph';
 import type { CheckInNotice } from '@/features/verification/notice';
 
-interface Props {
-  notice: CheckInNotice | null;
-  location: { off: boolean; busy: boolean; error?: string; enable(): Promise<void> };
-  onScan(): void;
+import type { StatusRow } from './queue-banner';
+
+const IOS = Platform.OS === 'ios';
+
+export interface LocationCheck {
+  off: boolean;
+  busy: boolean;
+  error?: string;
+  enable(): Promise<void>;
 }
-export function CheckInBanner({ notice, location, onScan }: Props) {
-  const [expanded, setExpanded] = useState(true);
-  if (!notice) return null;
-  const title = location.off
-    ? 'Location is off'
-    : notice.waitingPhotos
-      ? `${notice.waitingPhotos} waiting to upload`
-      : 'Check in for your photos';
-  return (
-    <View
-      accessibilityLiveRegion="polite"
-      className="mx-5 mb-4 gap-3 rounded-3xl px-5 py-4 ios:bg-surface android:mx-4 android:bg-surfaceContainer">
-      {notice.liveNames.length ? (
-        <View className="flex-row items-start gap-3">
-          <View className="pt-1">
-            <Glyph
-              name={
-                location.off
-                  ? { ios: 'location.slash', android: 'location_off' }
-                  : { ios: 'clock', android: 'schedule' }
-              }
-              size={24}
-              tone="accentText"
-            />
-          </View>
-          <View className="flex-1 gap-2">
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={title}
-              accessibilityState={{ expanded }}
-              accessibilityHint="Show or hide check-in actions"
-              onPress={() => setExpanded((value) => !value)}
-              className="min-h-11 flex-row items-center gap-2">
-              <Text className="flex-1 font-h2 text-body text-textPrimary">{title}</Text>
-              <View style={{ transform: [{ rotate: expanded ? '180deg' : '0deg' }] }}>
-                <Icon name="chevron-down" size={16} className="text-textSecondary" />
-              </View>
-            </Pressable>
-            {expanded ? (
-              <>
-                <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-                  {location.off
-                    ? `MomentLens checks that you are at the venue before your photos upload.${notice.waitingPhotos ? ` ${notice.waitingPhotos} are waiting.` : ''}`
-                    : `Checking that you are at ${notice.liveVenues.join(' or ')}. Your photos upload as soon as you check in.`}
-                </Text>
-                {location.off ? (
-                  <View className="self-start">
-                    <Button
-                      label={Platform.OS === 'ios' ? 'Turn On Location' : 'Turn on location'}
-                      icon="navigation"
-                      busy={location.busy}
-                      onPress={() => {
-                        void location.enable();
-                      }}
-                    />
-                  </View>
-                ) : null}
-                <View className="self-start">
-                  <Button
-                    label={Platform.OS === 'ios' ? 'Scan Venue QR' : 'Scan venue QR'}
-                    icon="qr-code"
-                    variant={Platform.OS === 'ios' ? 'secondary' : 'tonal'}
-                    onPress={onScan}
-                  />
-                </View>
-                {!location.off ? (
-                  <Text className="pt-1 font-caption text-caption text-textSecondary">
-                    Still waiting? Ask the organizer to check you in.
-                  </Text>
-                ) : null}
-                {location.error ? (
-                  <Text className="font-caption text-caption text-danger">{location.error}</Text>
-                ) : null}
-              </>
-            ) : null}
-          </View>
-        </View>
-      ) : null}
-      {notice.localNames.length ? (
-        <View className="gap-1">
-          <Text className="font-h2 text-body text-textPrimary">Check-in saved on this phone</Text>
-          <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-            For {notice.localNames.join(', ')}. MomentLens will confirm it with the next photo
-            upload.
-          </Text>
-        </View>
-      ) : null}
-      {notice.endedPhotos ? (
-        <View className="gap-1">
-          <Text className="font-h2 text-body text-textPrimary">
-            Ask the organizer to check you in.
-          </Text>
-          <Text className="font-bodySecondary text-bodySecondary text-textSecondary">
-            {notice.endedPhotos} {notice.endedPhotos === 1 ? 'photo is' : 'photos are'} waiting for
-            a sub-event that has ended.
-          </Text>
-        </View>
-      ) : null}
-    </View>
-  );
+
+// The check-in rows of My Media's status banner (D-159), as short as each message allows. Which
+// rows show is S-15, S-16 and S-17's rule: the Scan Venue QR button only while a sub-event is In
+// Progress and the person is not checked in for it, the only way to the scanner (D-131), and "Ask
+// the organizer to check you in." for photos held by a sub-event that has ended (D-157). An
+// exempt role gets no notice at all.
+export function checkInRows(
+  notice: CheckInNotice | null,
+  location: LocationCheck,
+  onScan: () => void,
+): StatusRow[] {
+  if (!notice) return [];
+  const rows: StatusRow[] = [];
+  if (notice.liveNames.length) {
+    if (location.off)
+      rows.push({
+        key: 'location',
+        glyph: { ios: 'location.slash', android: 'location_off' },
+        title: 'Location is off',
+        actions: [
+          {
+            label: IOS ? 'Turn On Location' : 'Turn on location',
+            icon: 'navigation',
+            busy: location.busy,
+            onPress: () => {
+              void location.enable();
+            },
+          },
+        ],
+      });
+    rows.push({
+      key: 'scan',
+      glyph: GLYPH.qr,
+      title: `Not checked in · ${notice.liveNames.join(', ')}`,
+      detail: location.off ? undefined : 'Still waiting? Ask the organizer to check you in.',
+      error: location.error,
+      actions: [
+        {
+          label: IOS ? 'Scan Venue QR' : 'Scan venue QR',
+          icon: 'qr-code',
+          variant: IOS ? 'secondary' : 'tonal',
+          onPress: onScan,
+        },
+      ],
+    });
+  }
+  if (notice.endedPhotos)
+    rows.push({
+      key: 'ended',
+      glyph: GLYPH.approvals,
+      title: 'Ask the organizer to check you in.',
+      detail: `${notice.endedPhotos} ${notice.endedPhotos === 1 ? 'photo' : 'photos'} from a sub-event that has ended`,
+    });
+  if (notice.localNames.length)
+    rows.push({
+      key: 'saved',
+      glyph: GLYPH.check,
+      title: `Check-in saved · ${notice.localNames.join(', ')}`,
+      detail: 'Sent with the next upload',
+    });
+  return rows;
 }
