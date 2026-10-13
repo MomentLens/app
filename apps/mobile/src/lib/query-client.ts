@@ -36,7 +36,7 @@ export const PERSISTED_QUERY = {
 
 // Bump when the shape of a persisted response changes, so a phone never restores one the new code
 // cannot read. Nothing parses a restored answer again.
-const PERSISTED_SHAPE = '1';
+const PERSISTED_SHAPE = '2';
 
 // An answer the API refused, such as the 403 a removed member gets. Read off the error's status
 // rather than with instanceof ApiError, which would pull the API client and Supabase into this

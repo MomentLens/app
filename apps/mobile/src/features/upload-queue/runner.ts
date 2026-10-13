@@ -61,6 +61,9 @@ export interface RunnerDeps {
   verification?: Pick<VerificationGate, 'beforePreflight' | 'settled' | 'coverage'>;
   // A 403 or 404 means the caller's place in the event changed. The Event shell checks again.
   lostAccess(eventId: string): void;
+  // The album state in this account's last event answer the API sent, and when it arrived. A copy
+  // restored from disk, seeded from the Events list or written by the app is never one (D-161).
+  albumAnswer?(userId: string, eventId: string): { open: boolean; at: number } | undefined;
   now(): number;
   schedule(wake: () => void, delayMs: number): () => void;
   // What the runner is doing for an account. S-14's coordinator reads it (D-158).
@@ -359,6 +362,9 @@ export class UploadRunner {
       await this.recheckVerification(store, row);
       return 'next';
     }
+    // An album answer that arrives after this moment can release the photo this pre-flight
+    // leaves waiting (D-161).
+    const sentAt = this.deps.now();
     let upload: PreflightUploadResponse;
     try {
       upload = await this.deps.preflight(
@@ -381,7 +387,14 @@ export class UploadRunner {
         code: 'code' in answer ? answer.code : undefined,
       });
       if (!this.live(userId, signal)) return 'cancelled';
-      return this.apply(store, row, 'preflight', transitionFor('preflight', error), records);
+      return this.apply(
+        store,
+        row,
+        'preflight',
+        transitionFor('preflight', error),
+        records,
+        sentAt,
+      );
     }
     if (!this.live(userId, signal)) return 'cancelled';
     await this.settleVerification(row, records, null);
@@ -452,6 +465,19 @@ export class UploadRunner {
       await store.release(row.userId, row.eventId, 'waiting_verification', [row.subEventId]);
   }
 
+  // The album may have opened while the pre-flight was in flight. The release its event answer
+  // started then found nothing waiting, so check after the waiting write too, as a check-in does.
+  // Only an answer that arrived after the pre-flight was sent counts (arch §4.3, D-161). One in the
+  // same millisecond counts too: its order is unknown, and a wrong guess costs one more pre-flight,
+  // where the opposite guess would leave the photo waiting on an open album.
+  private async recheckAlbum(store: QueueStore, row: QueueItem, sentAt: number): Promise<void> {
+    const answer = this.deps.albumAnswer?.(row.userId, row.eventId);
+    if (this.stopped || this.controller?.signal.aborted || this.deps.userId() !== row.userId)
+      return;
+    if (answer?.open && answer.at >= sentAt)
+      await store.release(row.userId, row.eventId, 'waiting_album');
+  }
+
   // A failed or timed-out PUT sends the photo back through pre-flight, which resumes its row with
   // fresh URLs, and both files go again (D-146). A PUT cancelled by an account change writes
   // nothing.
@@ -512,6 +538,7 @@ export class UploadRunner {
     call: Call,
     transition: Transition,
     verifications: VerificationRecords = [],
+    sentAt?: number,
   ): Promise<Attempt> {
     const { userId, id } = row;
     switch (transition.type) {
@@ -534,6 +561,7 @@ export class UploadRunner {
         );
         if (transition.state === 'waiting_verification')
           await this.recheckVerification(store, row, verifications);
+        else if (sentAt !== undefined) await this.recheckAlbum(store, row, sentAt);
         return 'next';
       case 'resend': {
         const failures = row.retryCount + 1;
