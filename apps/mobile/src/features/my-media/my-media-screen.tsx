@@ -10,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Fab } from '@/components/ui/fab';
 import { FormMessage } from '@/components/ui/form-message';
 import { GLYPH } from '@/components/ui/glyph';
+import { addMediaMode } from '@/features/album/album-state';
+import { useAlbumSwitch } from '@/features/album/use-album-switch';
 import { useEventId } from '@/features/event-shell/event-id';
 import { useEvent } from '@/features/event-shell/use-event';
 import { EventTabScreen } from '@/features/event-shell/event-tab-screen';
@@ -31,7 +33,7 @@ import { useLocationCheck } from '@/features/verification/use-gps-check';
 import { checkInRows } from './check-in-banner';
 import { pickMedia, pickedCapturedAt } from './picker';
 import { PhotoTile } from './photo-tile';
-import { KEEP_OPEN_ROW, StatusBanner } from './queue-banner';
+import { ALBUM_CLOSED_ROW, KEEP_OPEN_ROW, StatusBanner } from './queue-banner';
 import {
   deleteWarning,
   mediaRows,
@@ -60,6 +62,11 @@ function MediaContent({ eventId }: { eventId: string }) {
   const background = useTokenColor('background');
   const schedule = useSubEvents(eventId);
   const event = useEvent(eventId);
+  // While the album is closed "+ Add Media" adds nothing: a Guest's and a Photographer's button is
+  // disabled, and the Admin's asks to open the album (D-161).
+  const album = useAlbumSwitch(eventId);
+  const albumClosed = event.data?.event.albumOpen === false;
+  const addMode = addMediaMode(event.data?.event.role, event.data?.event.albumOpen);
   const heldIds = useHeldReadings(eventId);
   const subEvents = schedule.data?.subEvents ?? EMPTY_SCHEDULE;
   const nextChange = useCallback((at: Date) => nextStatusChange(subEvents, at), [subEvents]);
@@ -134,7 +141,7 @@ function MediaContent({ eventId }: { eventId: string }) {
 
   async function add(subEventId: string) {
     const owner = queue.userId;
-    if (!owner || picking) return;
+    if (!owner || picking || addMode !== 'add') return;
     setPicking(subEventId);
     setProblem(undefined);
     let added = 0;
@@ -285,6 +292,7 @@ function MediaContent({ eventId }: { eventId: string }) {
                   <StatusBanner
                     counts={queue.counts}
                     rows={[
+                      ...(albumClosed ? [ALBUM_CLOSED_ROW] : []),
                       ...checkInRows(checkIn, location, () =>
                         router.push({ pathname: '/scan-venue/[eventId]', params: { eventId } }),
                       ),
@@ -292,11 +300,17 @@ function MediaContent({ eventId }: { eventId: string }) {
                     ]}
                   />
                   {schedule.data && !live ? <CameraHint schedule={subEvents} now={now} /> : null}
-                  {problem || queue.error || captures.error || status.error || schedule.isError ? (
+                  {problem ||
+                  album.problem ||
+                  queue.error ||
+                  captures.error ||
+                  status.error ||
+                  schedule.isError ? (
                     <View className="px-5 pb-3">
                       <FormMessage
                         message={
                           problem ??
+                          album.problem ??
                           (queue.error
                             ? 'Your photos could not be read from this phone. Pull to refresh and try again.'
                             : 'The latest status could not be loaded. Your photos stay on this phone. Pull to refresh to try again.')
@@ -343,10 +357,21 @@ function MediaContent({ eventId }: { eventId: string }) {
                       icon="plus"
                       variant={IOS ? 'secondary' : 'tonal'}
                       size="small"
-                      busy={picking === section.key}
-                      disabled={picking !== null || queue.loading || queue.error}
-                      accessibilityHint={`Choose up to 50 photos for ${section.name}.`}
-                      onPress={() => void add(section.key)}
+                      busy={picking === section.key || (addMode === 'ask-to-open' && album.busy)}
+                      disabled={
+                        picking !== null || queue.loading || queue.error || addMode === 'disabled'
+                      }
+                      accessibilityHint={
+                        addMode === 'disabled'
+                          ? 'The album is closed. New photos wait until the organizer opens it.'
+                          : addMode === 'ask-to-open'
+                            ? 'The album is closed. Asks to open it first.'
+                            : `Choose up to 50 photos for ${section.name}.`
+                      }
+                      onPress={() => {
+                        if (addMode === 'ask-to-open') album.askToOpen();
+                        else void add(section.key);
+                      }}
                     />
                   ) : null}
                 </View>
