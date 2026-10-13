@@ -174,6 +174,7 @@ describe('GetEventResponse verification', () => {
     startsAt: subEvent.startsAt,
     endsAt: subEvent.endsAt,
     archivedAt: null,
+    albumOpen: false,
   };
 
   it('preserves absence for an old cache or an Events-list seed', () => {

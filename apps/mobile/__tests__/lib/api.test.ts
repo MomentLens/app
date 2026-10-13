@@ -748,7 +748,12 @@ describe('getHealth', () => {
 
 describe('getMyProfile', () => {
   const USER_ID = '5f3a4c2e-8b1d-4e6f-9a7c-2d1e0b3f4a5c';
-  const profile = { userId: USER_ID, fullName: 'Ayesha Khan', avatar: null };
+  const profile = {
+    userId: USER_ID,
+    fullName: 'Ayesha Khan',
+    avatar: null,
+    consentRequired: false,
+  };
 
   function signedIn(accessToken: string): SessionResult {
     return { data: { session: { access_token: accessToken } }, error: null };
@@ -952,6 +957,7 @@ describe('event endpoints', () => {
     startsAt: '2026-10-03T13:00:00.000Z',
     endsAt: '2026-10-03T18:00:00.000Z',
     archivedAt: null,
+    albumOpen: false,
   };
   const createRequest = {
     requestId: 'e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b',

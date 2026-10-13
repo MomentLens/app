@@ -31,10 +31,15 @@ export type FullName = z.infer<typeof FullName>;
  *
  * `avatar` is null when the caller has no profile photo. The caller always sees their own, Do
  * Not Publish or not, because the owner is the one person a Do Not Publish avatar is shown to.
+ *
+ * `consentRequired` is true while the caller has no `consent` row for `PRIVACY_POLICY_VERSION`.
+ * While it is true the app shows the consent screen before anything else, and on the invite path
+ * before Join Confirmation. No other endpoint checks consent (spec §4.18, D-161).
  */
 export const ProfileResponse = z.object({
   userId: z.uuid(),
   fullName: FullName,
   avatar: PresignedImage.nullable(),
+  consentRequired: z.boolean(),
 });
 export type ProfileResponse = z.infer<typeof ProfileResponse>;

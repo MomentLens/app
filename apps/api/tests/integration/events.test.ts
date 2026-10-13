@@ -150,6 +150,8 @@ class FakeEvents implements EventStore {
       startsAt: event.startsAt,
       endsAt: event.endsAt,
       archivedAt: event.archivedAt,
+      // Closed, as findAccess answers. S-31's api build gives the fake an album state.
+      albumOpen: false,
       qrSecret: event.qrSecret,
     } as EventRecord;
   }
@@ -1030,6 +1032,7 @@ describe('GET /events/{eventId}', () => {
         startsAt: event.startsAt,
         endsAt: event.endsAt,
         archivedAt: null,
+        albumOpen: false,
       },
       verification: { everySubEvent: role !== 'guest', subEventIds: [] },
     });

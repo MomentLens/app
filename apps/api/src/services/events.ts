@@ -45,6 +45,7 @@ export interface EventRecord {
   startsAt: string;
   endsAt: string;
   archivedAt: string | null;
+  albumOpen: boolean;
 }
 
 // What create_event did (supabase/migrations/..._create_event_venue_sub_event_membership.sql).
@@ -131,6 +132,7 @@ const EventRow = z.object({
   starts_at: z.string().transform(toTimestamp),
   ends_at: z.string().transform(toTimestamp),
   archived_at: z.string().transform(toTimestamp).nullable(),
+  album_open: z.boolean(),
 });
 
 function toRecord(row: z.infer<typeof EventRow>): EventRecord {
@@ -143,6 +145,7 @@ function toRecord(row: z.infer<typeof EventRow>): EventRecord {
     startsAt: row.starts_at,
     endsAt: row.ends_at,
     archivedAt: row.archived_at,
+    albumOpen: row.album_open,
   };
 }
 
@@ -448,6 +451,7 @@ async function toSummary(record: EventRecord, presignGet: PresignGet): Promise<E
     startsAt: record.startsAt,
     endsAt: record.endsAt,
     archivedAt: record.archivedAt,
+    albumOpen: record.albumOpen,
   };
 }
 
