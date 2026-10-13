@@ -1083,6 +1083,286 @@ describe('found by the done stage review', () => {
   });
 });
 
+// Native protection ends with expiry, refusal or service shutdown, and the runner suspends until
+// the app returns to the foreground (D-158). Unlike shutdown(), suspension can be undone, and it
+// keeps every photo's step, prepared file, hash and retry count.
+describe('reversible suspension (D-158)', () => {
+  // A call that never answers by itself and fails once its attempt is aborted, as fetch does.
+  const untilAborted =
+    <T>(fail: () => T) =>
+    (signal: AbortSignal) =>
+      new Promise<T>((resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          try {
+            resolve(fail());
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+  const abortAnswer = () => {
+    throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+  };
+  const live = () => timers.filter((timer) => !timer.cancelled);
+
+  it('aborts a pre-flight in flight, writes nothing, and resumes through pre-flight with the stored bytes', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.preflightScript.push(untilAborted<PreflightUploadResponse>(abortAnswer));
+    const runner = createRunner();
+    const running = runner.run();
+    await until(() => server.count('preflight') === 1);
+    const before = await only();
+    expect(before).toMatchObject({ state: 'queued', step: 'preflight', retryCount: 0 });
+
+    runner.suspend();
+    await running;
+    expect(await only()).toEqual(before);
+    expect(live()).toEqual([]);
+
+    runner.resume();
+    await runner.retryNow();
+    const after = await only();
+    expect(after.state).toBe('uploaded');
+    expect(prepares).toEqual(['item-1']);
+    const hashes = server.calls.flatMap((entry) =>
+      entry.call === 'preflight' ? [entry.body.contentHash] : [],
+    );
+    expect(hashes).toEqual([before.contentHash, before.contentHash]);
+  });
+
+  it.each<[string, number]>([
+    ['photo', 0],
+    ['thumbnail', 1],
+  ])(
+    'aborts the %s PUT without counting a failure, and recovery returns through pre-flight',
+    async (_file, index) => {
+      await store.enqueue('A', EVENT, SUB, photo);
+      if (index === 1) putScript.push(async () => 'ok');
+      putScript.push(untilAborted<PutResult>(() => 'failed'));
+      const runner = createRunner();
+      const running = runner.run();
+      await until(() => puts.length === index + 1);
+      const before = await only();
+
+      runner.suspend();
+      await running;
+      expect(await only()).toEqual(before);
+      expect(before).toMatchObject({ state: 'uploading', retryCount: 0 });
+
+      runner.resume();
+      await runner.retryNow();
+      expect(server.count('preflight')).toBe(2);
+      expect(server.rows.size).toBe(1);
+      expect(prepares).toEqual(['item-1']);
+      expect(await only()).toMatchObject({ state: 'uploaded', retryCount: 0 });
+      // Both files went again on the resumed row, from the same upload.jpg.
+      expect(puts.slice(-2).map((entry) => entry.path)).toEqual([
+        'A/item-1/upload.jpg',
+        before.thumbnailPath,
+      ]);
+    },
+  );
+
+  it('after the completion checkpoint, retries completion only', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.completeScript.push(untilAborted<CompleteUploadResponse>(abortAnswer));
+    const runner = createRunner();
+    const running = runner.run();
+    await until(() => server.count('complete') === 1);
+
+    runner.suspend();
+    await running;
+    expect(await only()).toMatchObject({ state: 'uploading', step: 'complete', retryCount: 0 });
+
+    // A relaunch's recovery leaves it at completion too.
+    await store.recover('A');
+    runner.resume();
+    await runner.retryNow();
+    expect(server.count('preflight')).toBe(1);
+    expect(server.count('complete')).toBe(2);
+    expect(puts).toHaveLength(2);
+    expect((await only()).state).toBe('uploaded');
+  });
+
+  it('lets Stage 1 store its bytes once, then sends nothing until resumed', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    const stage1 = deferred<{ photoPath: string; contentHash: string }>();
+    const runner = createRunner({
+      prepare: async (item) => {
+        prepares.push(item.id);
+        return stage1.promise;
+      },
+    });
+    const running = runner.run();
+    await until(() => prepares.length === 1);
+
+    runner.suspend();
+    const bytes = new TextEncoder().encode('jpeg:item-1');
+    disk.set('A/item-1/upload.jpg', bytes);
+    stage1.resolve({ photoPath: 'A/item-1/upload.jpg', contentHash: sha256(bytes) });
+    await running;
+    expect(await only()).toMatchObject({
+      state: 'queued',
+      step: 'preflight',
+      contentHash: sha256(bytes),
+    });
+    expect(server.calls).toEqual([]);
+
+    runner.resume();
+    await runner.retryNow();
+    expect(prepares).toEqual(['item-1']);
+    expect((await only()).state).toBe('uploaded');
+  });
+
+  it('starts no pass, Stage 1 or timer while suspended, whatever wakes it', async () => {
+    const runner = createRunner();
+    runner.suspend();
+    await store.enqueue('A', EVENT, SUB, photo);
+    await runner.run();
+    await runner.retryNow();
+    await runner.accountChanged();
+    expect(prepares).toEqual([]);
+    expect(server.calls).toEqual([]);
+    expect(live()).toEqual([]);
+  });
+
+  it('keeps backoff and retry counts, cancels the timer, and a wake while suspended clears nothing', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.preflightScript.push(() => Promise.reject(noAnswer()));
+    const runner = createRunner();
+    await runner.run();
+    const backingOff = await only();
+    expect(backingOff).toMatchObject({ retryCount: 1, nextRetryAt: clock + 5_000 });
+    expect(live()).toHaveLength(1);
+
+    runner.suspend();
+    expect(live()).toEqual([]);
+    // A reconnect in the background, after protection ended, waits for the foreground.
+    await runner.retryNow();
+    runner.resume();
+    await runner.run();
+    expect(await only()).toEqual(backingOff);
+    expect(server.count('preflight')).toBe(1);
+    // The resumed runner sets its own timer for the backoff it kept.
+    expect(live().map((timer) => timer.at)).toEqual([clock + 5_000]);
+
+    await fireNextTimer(runner);
+    expect((await only()).state).toBe('uploaded');
+  });
+
+  it('a release in the background stores its change and waits for the foreground to send', async () => {
+    const item = await store.enqueue('A', EVENT, SUB, photo);
+    await store.update('A', item.id, { state: 'waiting_album' });
+    const runner = createRunner();
+    runner.suspend();
+    // queue.ts's release: the durable write, then a wake.
+    expect(await store.release('A', EVENT, 'waiting_album')).toBe(1);
+    await runner.retryNow();
+    await runner.run();
+    expect(await only()).toMatchObject({ state: 'queued' });
+    expect(prepares).toEqual([]);
+    expect(server.calls).toEqual([]);
+
+    runner.resume();
+    await runner.retryNow();
+    expect((await only()).state).toBe('uploaded');
+  });
+
+  it('shutdown stays permanent after a suspension', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    const runner = createRunner();
+    runner.suspend();
+    runner.shutdown();
+    runner.resume();
+    await runner.retryNow();
+    expect(server.calls).toEqual([]);
+  });
+});
+
+// What the runner reports after each pass. The coordinator keeps native protection only while the
+// report is uploading or backoff (D-158).
+describe('activity reports', () => {
+  function recorded() {
+    const reports: [string, string][] = [];
+    const runner = createRunner({
+      activity: (userId, activity) => {
+        reports.push([userId, activity]);
+      },
+    });
+    return { reports, runner };
+  }
+
+  it('reports uploading while an attempt runs, then idle once nothing is left', async () => {
+    const { reports, runner } = recorded();
+    await runner.run();
+    expect(reports).toEqual([['A', 'idle']]);
+    reports.length = 0;
+    await store.enqueue('A', EVENT, SUB, photo);
+    await runner.run();
+    expect(reports).toEqual([
+      ['A', 'uploading'],
+      ['A', 'idle'],
+    ]);
+  });
+
+  it('reports backoff while queued work waits on a timer, for a pause or a photo backoff', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.preflightScript.push(() => Promise.reject(noAnswer()));
+    const { reports, runner } = recorded();
+    await runner.run();
+    expect(reports.at(-1)).toEqual(['A', 'backoff']);
+  });
+
+  it.each(['waiting_album', 'waiting_verification', 'stopped', 'local_only'] as const)(
+    'reports idle when only %s photos remain',
+    async (state) => {
+      const item = await store.enqueue('A', EVENT, SUB, photo);
+      await store.update('A', item.id, {
+        state,
+        ...(state === 'stopped' ? { stoppedReason: 'event_full' as const } : {}),
+      });
+      const { reports, runner } = recorded();
+      await runner.run();
+      expect(reports).toEqual([['A', 'idle']]);
+    },
+  );
+
+  it.each(['offline', 'cellular'] as const)(
+    'reports %s when the gate is closed',
+    async (closed) => {
+      await store.enqueue('A', EVENT, SUB, photo);
+      gate = closed;
+      const { reports, runner } = recorded();
+      await runner.run();
+      expect(reports).toEqual([['A', closed]]);
+    },
+  );
+
+  it('reports session after a 401', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.preflightScript.push(() => Promise.reject(new AnswerError(401, 'no_session')));
+    const { reports, runner } = recorded();
+    await runner.run();
+    expect(reports.at(-1)).toEqual(['A', 'session']);
+  });
+
+  it('reports nothing for a pass that a suspension or an account change cut short', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    putScript.push(
+      (signal) =>
+        new Promise<PutResult>((resolve) => {
+          signal.addEventListener('abort', () => resolve('failed'));
+        }),
+    );
+    const { reports, runner } = recorded();
+    const running = runner.run();
+    await until(() => puts.length === 1);
+    runner.suspend();
+    await running;
+    expect(reports).toEqual([['A', 'uploading']]);
+  });
+});
+
 describe('the network gate (D-146)', () => {
   it.each<[boolean, boolean, string | undefined, NetworkGate]>([
     [false, true, 'WIFI', 'offline'],
