@@ -17,6 +17,7 @@ function event(startsAt: string, endsAt: string, extra: Partial<EventSummary> = 
     startsAt,
     endsAt,
     archivedAt: null,
+    albumOpen: false,
     ...extra,
   };
 }

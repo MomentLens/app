@@ -86,7 +86,12 @@ describe('GET /profiles/me', () => {
     const response = await getMe('token-b');
     const text = await response.text();
     const body = ProfileResponse.parse(JSON.parse(text));
-    expect(body).toEqual({ userId: B, fullName: 'Bilal Ahmed', avatar: null });
+    expect(body).toEqual({
+      userId: B,
+      fullName: 'Bilal Ahmed',
+      avatar: null,
+      consentRequired: true,
+    });
     expect(text).not.toContain(A);
     expect(text).not.toContain('Ayesha');
   });
