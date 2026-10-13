@@ -79,6 +79,10 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     checkDatabase: () => Promise.resolve('ok'),
     verifyToken: () => Promise.resolve(null),
     findProfile: () => Promise.resolve(null),
+    consent: {
+      accepted: () => Promise.resolve(false),
+      accept: () => Promise.reject(new Error('no consent store in this test')),
+    },
     events: noEvents,
     attendees: {
       list: () => Promise.reject(new Error('no attendee store in this test')),
