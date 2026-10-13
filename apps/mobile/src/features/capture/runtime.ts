@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { File } from 'expo-file-system';
 import { randomUUID } from 'expo-crypto';
+import type { GetEventResponse } from '@momentlens/shared-types';
+import { queryClient } from '@/lib/query-client';
+import { eventQueryKey } from '@/features/event-shell/use-event';
 import { createMMKV } from 'react-native-mmkv';
 import { excludeMediaFromBackup } from '../../../modules/local-media';
 import { getQueue, runUploads } from '@/features/upload-queue/queue';
@@ -15,7 +18,12 @@ const preferences = createMMKV({ id: 'device-preferences' });
 export const readStartingMode = () => startingMode(preferences.getString('cameraStartsIn'));
 export const hasLocalNotice = (owner: string) => preferences.getBoolean(noticeKey(owner)) === true;
 export const rememberLocalNotice = (owner: string) => preferences.set(noticeKey(owner), true);
-export const getCaptures = async () => new CaptureStore(await getQueue(), captureFiles);
+export const getCaptures = async () =>
+  new CaptureStore(await getQueue(), captureFiles, (owner, eventId) =>
+    useAuthStore.getState().userId === owner
+      ? queryClient.getQueryData<GetEventResponse>(eventQueryKey(eventId))?.event.albumOpen
+      : undefined,
+  );
 export function captureController(take: () => Promise<string>) {
   return new CaptureController({
     userId: () => useAuthStore.getState().userId,

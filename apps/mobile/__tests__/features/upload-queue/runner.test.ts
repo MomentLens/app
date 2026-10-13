@@ -1377,3 +1377,84 @@ describe('the network gate (D-146)', () => {
     expect(gateFor(online, mobileData, type)).toBe(expected);
   });
 });
+
+// The album can open while a pre-flight is in flight. The release that the event answer starts
+// then finds nothing waiting, so the runner checks again after its own waiting write (arch §4.3,
+// D-161).
+describe('S-31: the album opening during a pre-flight', () => {
+  type AlbumAnswer = { open: boolean; at: number };
+  function albumRunner(answer: () => AlbumAnswer | undefined) {
+    const asked: [string, string][] = [];
+    const runner = createRunner({
+      albumAnswer: (userId, eventId) => {
+        asked.push([userId, eventId]);
+        return answer();
+      },
+    });
+    return { runner, asked };
+  }
+
+  it('releases the photo when an open answer arrived after its pre-flight was sent', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    let answer: AlbumAnswer | undefined;
+    server.preflightScript.push(async () => {
+      // The Admin opens the album and the event refetch lands before this refusal does.
+      clock += 10;
+      answer = { open: true, at: clock };
+      throw new AnswerError(409, 'album_closed');
+    });
+    const { runner, asked } = albumRunner(() => answer);
+    await runner.run();
+    expect((await only()).state).toBe('uploaded');
+    expect(server.count('preflight')).toBe(2);
+    expect(asked).toContainEqual(['A', EVENT]);
+  });
+
+  it('keeps the photo waiting when the open answer arrived before its pre-flight was sent', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    const answer: AlbumAnswer = { open: true, at: clock - 1 };
+    server.preflightScript.push(() => Promise.reject(new AnswerError(409, 'album_closed')));
+    const { runner } = albumRunner(() => answer);
+    await runner.run();
+    expect((await only()).state).toBe('waiting_album');
+    expect(server.count('preflight')).toBe(1);
+  });
+
+  it('keeps the photo waiting when the newer answer shows the album closed', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    let answer: AlbumAnswer | undefined;
+    server.preflightScript.push(async () => {
+      clock += 10;
+      answer = { open: false, at: clock };
+      throw new AnswerError(409, 'album_closed');
+    });
+    const { runner } = albumRunner(() => answer);
+    await runner.run();
+    expect((await only()).state).toBe('waiting_album');
+    expect(server.count('preflight')).toBe(1);
+  });
+
+  it('keeps the photo waiting with no fetched answer at all', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    server.preflightScript.push(() => Promise.reject(new AnswerError(409, 'album_closed')));
+    const { runner } = albumRunner(() => undefined);
+    await runner.run();
+    expect((await only()).state).toBe('waiting_album');
+  });
+
+  it('writes nothing more when the account changed during the refused pre-flight', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    let answer: AlbumAnswer | undefined;
+    server.preflightScript.push(async () => {
+      clock += 10;
+      answer = { open: true, at: clock };
+      user = 'B';
+      throw new AnswerError(409, 'album_closed');
+    });
+    const { runner } = albumRunner(() => answer);
+    await runner.run();
+    // The answer belongs to an account that is gone, so the photo is left as it was.
+    expect((await only()).state).toBe('queued');
+    expect(server.count('preflight')).toBe(1);
+  });
+});
