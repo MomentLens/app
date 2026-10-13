@@ -1176,6 +1176,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Amended (see D-141).** The accepted reference that turns Do Not Publish on in an event is one the person added to that event, and matching there uses only that event's references.
 
 ### D-130: Only the uploader or the Admin deletes a photo, and nobody restores it
+**Amended (see D-160).** `DELETE /media/{mediaId}` answers a repeat by the same caller on a photo it already deleted as it answered the first call. My Media also calls it, for Delete and for Move to Local Only on this account's uploaded photos. The multi-select delete in My Media is not built.
 **Decision.** Amends D-42, D-96 and D-123, and spec §2.5.6, §2.5.7 and §4.21.
 - A photo is deleted by the person who uploaded it or by the event's Admin, and by nobody else. The API answers anyone else 403.
 - Deletion is permanent. Neither the uploader nor the Admin can restore the photo, and the 30-day window for photos goes. The Review Queue loses its Removed Photos section and every Restore button.
@@ -1356,6 +1357,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Reopen if.** An Admin needs to see who was rejected, or testers find a batch refused at the cap confusing.
 
 ### D-145: My Media rulings from S-10's read-back
+**Amended (see D-160).** Tapping any My Media tile opens S-30's full-screen viewer. Delete covers every photo of the account, an uploaded one through `DELETE /media/{mediaId}`. Move to Local Only covers every photo local Delete covers, and published ones. A `deleted` status for a photo in the middle of a move completes the move instead of removing the photo.
 **Amended (see D-159).** The queue banner and the check-in banner are one status banner, with a short row for each message. S-14's mobile build merges them.
 **Amended (see D-157).** S-17 separates queued, waiting-album, waiting-check-in and uploading counts. Only waiting_verification reads as "waiting to check in"; the ended-sub-event message remains S-15/S-16's existing UI.
 **Amended (see D-156).** S-15 supplies My Media's check-in notice and ended-sub-event message. S-16 adds the QR scanner; S-17 retains manual check-in, the attendee filter and queue counts.
@@ -1498,6 +1500,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Reopen if.** Admins need a role invite disabled without a replacement, offline sharing proves necessary, concurrent rotation makes shared codes unreliable, or an API consumer requires OpenAPI before the separate tooling ships.
 
 ### D-153: Viewfinder rulings from S-09's read-back
+**Amended (see D-160).** S-30's moves to Local Only run the iOS backup-exclusion helper first, and a failure refuses the move.
 **Decision.** Amends D-20, D-21, D-34, D-90, D-105 and D-145, spec §2.5.4, §4.7, §4.12 and §4.19, and the scopes of S-09 and S-30. Ukasha answered "approved" to all six recommendations on 2026-10-10, at S-09's read-back.
 - S-09 persists Local Only captures directly into `queue_item` as `local_only`, with no temporary queued state, and shows the first-use notice. Originals and thumbnails belong to the account that captured them. Local Only calls no gallery save, upload, hash, deduplication or location-verification operation. S-30 adds the full viewer, local deletion and conversion of queued Public photos, reusing S-09's persistence. A Local Only capture still cannot become Public (spec §4.12).
 - S-09 excludes local media files and their databases from cloud backup and device transfer on both platforms. A local iOS native helper applies and checks exclusion; an Android config plugin supplies the backup and transfer rules. A sandbox path alone does not meet the promise. No external dependency is added, but the team must rebuild the native apps. Physical iOS and Android checks must verify the exclusions.
@@ -1607,6 +1610,28 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** A third banner for the keep-open notice. A separate slice for the merge, which would build the notice as a banner and then rebuild it.
 **Cost.** S-14's mobile build also changes `queue-banner.tsx` and `check-in-banner.tsx`, which S-10, S-16 and S-17 built. Their device reports describe the old banners, so S-14's physical check covers the merged one.
 **Reopen if.** Testers at the rehearsal miss the Scan Venue QR button inside the merged banner.
+
+### D-160: My Media viewer, Delete and Local Only rulings from S-30's read-back
+**Decision.** Amends D-130, D-145 and D-153, spec §2.5.3 and §4.12, arch §4.2, and the scopes of S-22 and S-30. Ukasha ruled on each of these on 2026-10-13, at S-30's read-back.
+- My Media offers Move to Local Only wherever it offers local Delete, outside "Removed sub-event": a queued photo, one waiting for the album or for check-in, a stopped one, and a Public draft whose gallery save is not running. The move is one guarded write on the queue's mutation chain, so the runner's next state write finds no match and the photo is never PUT. A draft moves in one SQLite transaction that inserts its `local_only` row and deletes its journal row.
+- A photo moved after its pre-flight keeps its unfinished server row, D-122's accepted cost. The phone sends none of its bytes after the move. The move clears the row's media id, hash, retry count, backoff and stopped reason.
+- A published photo of this account can move to Local Only too. The phone downloads the file the image-serving endpoint gives this account, stores it in the photo's queue folder, then calls `DELETE /media/{mediaId}`, which removes the photo from the album, the database and R2 (D-130). The row becomes `local_only` once the delete succeeds. A photo still processing cannot move.
+- S-22's `DELETE /media/{mediaId}` answers a repeat by the same caller on a photo it already deleted as it answered the first call, so the phone can retry after a lost answer.
+- A moved photo keeps any copy already in the gallery: a Public capture was saved there (D-90), and a "+ Add Media" photo came from there. The move's confirm says so. The copy taken from a published photo is the processed file, with its EXIF removed and other Do Not Publish subjects' faces blurred.
+- On iOS a move runs S-09's backup-exclusion helper first, and a failure refuses the move. The helper otherwise runs only before a shot, so a phone that never took one has never marked the folders.
+- Tapping any tile in My Media opens a full-screen viewer for that one photo, fitted to the screen, with no swipe and no pinch-zoom. A queued photo, a draft and a Local Only photo open from their file on the phone. A published photo opens through `POST /events/{eventId}/media/images`, cached under the key that endpoint returns (root invariants 2 and 3). A photo still processing shows its 300px thumbnail with "Processing" until it is published. A photo in "Removed sub-event" opens too.
+- My Media offers Delete for every photo of the account: Local Only, queued, draft, processing and published. A Local Only, queued or draft photo is deleted on the phone, and a processing or published one through `DELETE /media/{mediaId}` with D-130's confirm. In Home the uploader's Delete stays in S-22's single photo view, and Home's grid gets no long press. A photo of the account means one this account uploaded, from the camera or "+ Add Media" (D-130).
+- S-30 depends on S-22 and S-22a and calls S-22's endpoint. It adds no endpoint, migration or job, and stays a mobile-only slice.
+- Local Only photos of an event the person can no longer open, after a removal, a block or the event's deletion, stay on the phone out of reach until the person is re-admitted or uninstalls the app.
+- Routine calls:
+  - The menu label is "Move to Local Only", beside Delete in the long-press menu. A move shows no first-use notice; its confirm states the tradeoff.
+  - The Local Only delete warning reads "This removes it from MomentLens on this phone and cannot be undone. A photo taken in Local Only has no other copy."
+  - A published row that holds a full file is a move in progress. A `deleted` answer from the status read or from Realtime completes the move to Local Only instead of removing the photo, and the next launch resumes the delete. A definite refusal of the delete deletes the downloaded file and leaves the photo published.
+  - My Media deletes one photo at a time. D-130's multi-select delete is not built.
+**Why.** S-30's read-back found three descriptions of which photos can move (spec §2.5.3, spec §4.12, arch §4.2), a rule that Local Only never touches the network which a photo moved after pre-flight breaks, a first-use notice that calls a moved photo absent from the gallery when it is there, a backup exclusion that only a shot sets, and D-145 leaving a tapped tile to "S-22 or S-30". Ukasha then asked for a viewer for every photo, Delete for every photo of one's own in My Media and Home, and a way to take an uploaded photo off the server into Local Only.
+**Rejected.** Moving only queued and waiting photos, which leaves a draft whose gallery save failed with a retry or the deletion of its only copy. Refusing a move once a server row exists, which leaves stopped photos with Delete alone. Keeping every uploaded file on the phone so an uploaded photo moves with its original, which holds about 2 GB for a Photographer's 500 photos. S-30 building the delete endpoint, function, migration and job itself, which triples S-30 and splits S-22. A long press on Home's grid.
+**Cost.** S-30 waits for S-22 and S-22a. A photo moved from the album is the processed copy, not the original. A move after pre-flight leaves an unfinished server row holding a cap slot (D-122). A processing photo shows a 300px preview. Local Only photos of an event the person can no longer open cannot be reached. Spec §4.12 was locked and gains a feature it did not have.
+**Reopen if.** Testers want the original back after moving a published photo, or ask to see the Local Only photos of an event they left.
 
 ### D-161: Album toggle, consent and service rulings from S-31's read-back
 **Decision.** Amends D-146, spec §2.5.2, §2.5.3, §2.5.7, §2.5.8, §4.9, §4.18, §5.4 and §5.6, hb §5.3, and arch §1, arch:event, arch:consent and arch §4.3. Ukasha answered "approved" to the five recommendations and the routine calls on 2026-10-13, at S-31's read-back.
