@@ -7,6 +7,7 @@ let database: DatabaseSync;
 let queue: QueueStore;
 let captures: CaptureStore;
 let disk: Set<string>;
+let albumOpen: boolean | undefined;
 beforeEach(() => {
   database = new DatabaseSync(':memory:');
   disk = new Set();
@@ -43,7 +44,8 @@ beforeEach(() => {
     },
   };
   queue = new QueueStore(db, files, () => 'unused');
-  captures = new CaptureStore(queue, cameraFiles);
+  albumOpen = undefined;
+  captures = new CaptureStore(queue, cameraFiles, () => albumOpen);
 });
 const shot = {
   userId: 'A',
@@ -106,5 +108,23 @@ describe('capture journal and atomic handoff', () => {
     expect(await captures.list('A', 'event')).toEqual([]);
     expect((await queue.listForEvent('A', 'event'))[0]?.state).toBe('local_only');
     expect(await queue.nextUpload('A', Date.now(), [])).toBeNull();
+  });
+});
+
+describe('Public captures in a closed album (D-161)', () => {
+  it('waits for the album without sending a pre-flight, even offline', async () => {
+    albumOpen = false;
+    await captures.persist('closed', shot, 'file:///camera.jpg');
+    await captures.claimGallery('A', 'closed', false);
+    await captures.galleryResult('A', 'closed', true);
+    await captures.handoff('A', 'closed');
+    expect(await queue.listForEvent('A', 'event')).toMatchObject([{ state: 'waiting_album' }]);
+    expect(await queue.nextUpload('A', Date.now(), [])).toBeNull();
+  });
+
+  it('leaves a Local Only capture local while the album is closed', async () => {
+    albumOpen = false;
+    await captures.persist('local', { ...shot, mode: 'local_only' }, 'file:///camera.jpg');
+    expect(await queue.listForEvent('A', 'event')).toMatchObject([{ state: 'local_only' }]);
   });
 });
