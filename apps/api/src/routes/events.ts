@@ -11,6 +11,8 @@ export interface EventHandlers {
   setCover: RequestHandler;
   getSettings: RequestHandler;
   updateSettings: RequestHandler;
+  getAlbum: RequestHandler;
+  setAlbum: RequestHandler;
   cancelJoinRequest: RequestHandler;
 }
 
@@ -25,6 +27,8 @@ export function eventsRouter(auth: RequestHandler, handlers: EventHandlers): Rou
   router.put('/events/:eventId/cover', auth, jsonBody, handlers.setCover);
   router.get('/events/:eventId/settings', auth, handlers.getSettings);
   router.patch('/events/:eventId/settings', auth, jsonBody, handlers.updateSettings);
+  router.get('/events/:eventId/album', auth, handlers.getAlbum);
+  router.put('/events/:eventId/album', auth, jsonBody, handlers.setAlbum);
   router.delete('/events/:eventId/join-request', auth, handlers.cancelJoinRequest);
   return router;
 }

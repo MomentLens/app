@@ -12,9 +12,11 @@ import {
 import {
   createCoverUploadController,
   createEventController,
+  getAlbumStatusController,
   getEventController,
   getEventSettingsController,
   listEventsController,
+  setAlbumController,
   setEventCoverController,
   updateEventSettingsController,
 } from './controllers/events';
@@ -114,6 +116,8 @@ export function createApp(deps: AppDeps): Express {
       setCover: setEventCoverController(deps.events, deps.objectExists, deps.presignGet),
       getSettings: getEventSettingsController(deps.events, deps.presignGet),
       updateSettings: updateEventSettingsController(deps.events, deps.presignGet),
+      getAlbum: getAlbumStatusController(deps.events),
+      setAlbum: setAlbumController(deps.events),
       cancelJoinRequest: cancelJoinRequestController(deps.invites),
     }),
   );
