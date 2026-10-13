@@ -1,0 +1,5 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": { "modules": ["BackgroundUploadModule"] },
+  "android": { "modules": ["expo.modules.backgroundupload.BackgroundUploadModule"] }
+}

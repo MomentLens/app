@@ -15,6 +15,9 @@ web-build/
 # Native (regenerated via expo prebuild — don't hand-edit these)
 apps/mobile/ios/
 apps/mobile/android/
+# Gradle output from a local Expo module's own android folder
+apps/mobile/modules/*/android/build/
+apps/mobile/modules/*/android/.cxx/
 
 # API / build output
 apps/api/dist/
