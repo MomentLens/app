@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'me.momentlens'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.backgroundupload"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // The app's own React Native, for the Headless JS task (D-158). It adds no artifact the app
+  // does not already ship.
+  implementation 'com.facebook.react:react-android'
+}
