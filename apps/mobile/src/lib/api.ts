@@ -106,6 +106,14 @@ export class AccountChangedError extends Error {
   }
 }
 
+// The error a caller's abort produces when it lands before the request goes out, shaped like the
+// one fetch rejects with. RN's AbortSignal polyfill has no `reason` to throw instead.
+function abortError(): Error {
+  return Object.assign(new Error('The request was cancelled before it was sent.'), {
+    name: 'AbortError',
+  });
+}
+
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 interface RequestOptions {
@@ -122,6 +130,11 @@ async function request(
 ) {
   if (!API_URL) {
     throw new ApiError('EXPO_PUBLIC_API_URL is not set. Add it to apps/mobile/.env, then reload.');
+  }
+  // An abort that landed while the token lookup or refresh was pending. A listener added to an
+  // aborted signal never fires, so without this the request would go out anyway (D-158).
+  if (signal?.aborted) {
+    throw abortError();
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -233,6 +246,11 @@ async function authenticatedRequest(
   const first = await request(path, options, await accessToken(owner));
   if (first.status !== 401) {
     return first;
+  }
+  // A cancelled caller gets no refresh and no resend. request() checks again once the refresh
+  // returns, for an abort that lands while it is pending (D-158).
+  if (options.signal?.aborted) {
+    throw abortError();
   }
   return request(path, options, await refreshedAccessToken(owner));
 }
