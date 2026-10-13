@@ -241,6 +241,7 @@ Every endpoint follows these, so the app has one way to read an answer. They exi
 - A 409 `venue_qr_changed` on S-16's QR regeneration means `expectedSecret` no longer matches that venue's current secret. The transaction writes nothing. Refetch before another explicit action and after an uncertain result; never queue or retry an uncertain rotation. The single resend after a 401 and Auth refresh remains (D-156).
 
 - A failure no other row covers is a 500 with `internal_error`, which Sentry reports. Its `message` names no cause, because the cause goes to Sentry and the logs.
+- **A 500 cannot say that Supabase is down**, so after any 500, and after a Supabase Auth call that answers 5xx, the app asks `GET /health`. A 503 with `database: error` shows Supabase Unavailable (spec §2.5.8). Any other answer leaves the failure to the screen that drew it (D-161).
 
 | Status | Means | `code` values so far |
 |---|---|---|
