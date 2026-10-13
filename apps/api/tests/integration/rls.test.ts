@@ -515,6 +515,7 @@ if (project === null) {
         startsAt: iso(T0),
         endsAt: iso(T0 + 52 * HOUR),
         archivedAt: null,
+        albumOpen: false,
       });
 
       const row = await admin
@@ -752,6 +753,8 @@ if (project === null) {
         archived_at: null,
         every_sub_event: null,
         verified_sub_event_ids: null,
+        // Withheld with the rest, so a refused caller learns nothing about the album (D-161).
+        album_open: null,
       };
       const row = async (userId: string) => {
         const result = await admin.rpc('get_my_event', {
@@ -779,6 +782,7 @@ if (project === null) {
       await expect(row(a.id)).resolves.toMatchObject({
         name: 'RLS Test Wedding',
         cover_key: coverKey,
+        album_open: false,
       });
 
       await admin.from('event').update({ deleted_at: new Date().toISOString() }).eq('id', event.id);
