@@ -182,7 +182,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 | S-21 | Blur pipeline: public file and one variant per DNP subject (N+1), their blurred thumbnails, every stored blur region applied, versioned keys on the rows, the subject's file and own-variant flag added to S-13's **image-serving endpoint**, retire `thumbnail_dims` | §4.11.4.1, §4.11.4.2, §4.11.4.3, §4.13, D-57, D-60, D-69, D-72, D-83, D-86, D-27, D-30, arch §1, arch §3, arch §5, arch §6, arch:subject, arch:dnp_subject, D-93 | U | S-13, S-19a, S-20 |
 | S-23 | Find My Photos inside one event, against that event's references, the People half of the filter sheet, and the Recognized Faces strip, from stored matches, **viewer-scoped filter** | §4.11.3, §4.11.4.2, §2.5.2, §4.10, D-74, D-29, D-35, D-141 | C | S-20, S-13 |
 | S-22a | `media_delete` job: delete every object under a deleted photo's `{media_id}/` prefix and its `face`, `dnp_subject` and `manual_blur_region` rows, and skip a deleted photo in every other job | §4.21, D-130, D-96, arch §5, arch:media | U | S-21 |
-| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Blur a region (opening S-19's screen) and Delete for the uploader and the Admin, permanent, with its confirm, `DELETE /media/{mediaId}` and `delete_media`, and the migration that lets a deleted photo upload again | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, D-130, HB §4, arch:media, arch:photo_flag | B | S-21, S-22a |
+| S-22 | Single photo view: pager, metadata overlay, **self-visible marker**, pinch-zoom, the action bar with Flag, Blur a region (opening S-19's screen) and Delete for the uploader and the Admin, permanent, with its confirm, `DELETE /media/{mediaId}` and `delete_media`, and the migration that lets a deleted photo upload again | §2.5.6, §4.11.4.2, §4.21, D-77, D-60, D-130, D-160, HB §4, arch:media, arch:photo_flag | B | S-21, S-22a |
 | S-25 | `reprocess` job: retroactive DNP for the one event it was turned on in, reference changes, late joiners, blur regions kept, **thumbnails included** | §4.11.4.5, D-69, D-27, D-66, D-83, D-84, D-129, arch §3, arch §5, D-142 | U | S-21, S-07 |
 | S-24 | Review Queue: blur regions (Keep / Remove) and flagged photos (Keep / Delete, permanent). No removed photos and no Restore | §2.5.7, §4.11.4.4, §4.21, D-83, D-24, D-130, arch:manual_blur_region, arch:photo_flag | U | S-19a, S-22, S-07a |
 
@@ -204,6 +204,8 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-22a before S-22.** S-22's `delete_media` sends `media_delete`, and a worker without the job archives the message on its first try, leaving the deleted photo's files in R2 (arch §5). S-22a tests the job with messages it sends itself.
 
+**S-22's delete must be safe to repeat.** S-30 calls `DELETE /media/{mediaId}` from My Media and retries after a lost answer, so a repeat by the same caller on a photo it already deleted answers as the first call did (D-160).
+
 ---
 
 # Phase 6 — the rest
@@ -212,7 +214,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 |---|---|---|---|---|
 | S-28 | Download and Share: multi-select, save to gallery, the share sheet, through the image-serving endpoint with no separate path (D-57) | §4.15, §4.13, §4.10, §2.5.6 | C | S-21, S-22 |
 | S-29 | Account Settings with its groups, theme, Event Preferences from the avatar, the **per-event Do Not Publish activation flow**, and the migration that moves `dnp_activated_at` from `subject` to `membership`. Reference photo management is S-20's | §4.19, §2.5.9, §2.5.11, D-35, D-56, D-87, D-129, D-132, D-140, arch:membership, arch:subject, D-141, D-143, D-144, D-146 | B | S-01, S-06, S-20, S-25 |
-| S-30 | Local Only full viewer and deletion in My Media, and conversion of queued Public photos, reusing S-09's storage and backup exclusions | §4.12, D-34, D-145, D-153 | C | S-09 |
+| S-30 | My Media viewer for every photo, Delete for every photo of the account, and Move to Local Only for queued, draft and published photos, reusing S-09's storage and backup exclusions and S-22's `DELETE /media/{mediaId}` | §4.12, §2.5.3, D-34, D-130, D-145, D-153, D-160 | C | S-09, S-22, S-22a |
 | S-31 | The §2.5.8 screens no earlier slice builds (Access Removed, Consent re-gate, Supabase unavailable), consent screens, the Manage live status card, the album open/close **toggle** with its confirm dialog and the Realtime event that flips the banner, and switching on pre-flight's album-open check | §2.5.8, §4.18, §4.9, §2.5.2, §2.1.4 Phase D, arch §1, D-82, arch:event, arch:consent, arch §4.1, arch §4.3, D-146 | B | S-08, S-13, S-12, S-07a, S-11 |
 | S-27 | Push notifications, two channels only, deep links | §4.16, §2.5.10, arch:push_token, arch:profile, D-142 | C | S-07, S-31 |
 | S-31a | Delete and archive event from Event Settings' Danger Zone, with the Album Lifecycle push each sends | §4.3, §4.21, §4.16, §2.5.7 | C | S-27, S-07a |
@@ -232,6 +234,8 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 **S-29's Camera Starts In control writes S-09's device preference** (spec §4.19, D-153). MMKV store `device-preferences` holds `cameraStartsIn`, whose values are `public` and `local_only`, with Public as the default. Changing the running camera's mode never writes that preference.
 
 **S-31's Access Removed replaces the interim state S-08 shows on a `not_member`** inside the Event shell (D-118).
+
+**S-30 moves a published photo off the server.** It downloads the file the image-serving endpoint gives the account, stores it, then calls S-22's delete (D-160). A published row that holds a full file is a move in progress: a `deleted` status completes the move instead of removing the photo, and a launch resumes the delete.
 
 **S-31 adds the album state to the event response** when it switches the album check on, and moves `waiting_album` photos back to queued through the release S-11 exports once it shows the album open (D-146). It also draws the Album Closed banner on Home, which S-13 leaves out (D-148).
 
