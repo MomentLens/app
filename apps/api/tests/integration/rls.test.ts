@@ -99,6 +99,52 @@ jest.setTimeout(30_000);
 // after it.
 const it = jestIt.concurrent;
 
+// Jest limits concurrent tests, but a pagination fixture creates 51 accounts inside one test.
+// Cap fixture Auth calls separately. Database race tests still send their writes together.
+const AUTH_CONCURRENCY = 4;
+
+function limitAuthRequests() {
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  return async <T>(request: () => Promise<T>): Promise<T> => {
+    if (active < AUTH_CONCURRENCY) {
+      active += 1;
+    } else {
+      await new Promise<void>((resolve) => waiting.push(resolve));
+    }
+    try {
+      return await request();
+    } finally {
+      const next = waiting.shift();
+      if (next) next();
+      else active -= 1;
+    }
+  };
+}
+
+jestIt('bounds a 51-account Auth burst and releases slots after a failed request', async () => {
+  const limited = limitAuthRequests();
+  let active = 0;
+  let peak = 0;
+  const failure = new Error('fixture request failed');
+  const results = await Promise.allSettled(
+    Array.from({ length: 51 }, (_, index) =>
+      limited(async () => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await Promise.resolve();
+        active -= 1;
+        if (index === 0) throw failure;
+        return index;
+      }),
+    ),
+  );
+  expect(peak).toBe(AUTH_CONCURRENCY);
+  expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(50);
+  expect(results[0]).toEqual({ status: 'rejected', reason: failure });
+  await expect(limited(() => Promise.resolve('next request'))).resolves.toBe('next request');
+});
+
 function projectFromEnv() {
   const url = process.env.SUPABASE_URL;
   const secretKey = process.env.SUPABASE_SECRET_KEY;
@@ -123,8 +169,9 @@ if (project === null) {
   const silent = pino({ level: 'silent' });
   const admin = createServerClient(project.url, project.secretKey);
   const created: string[] = [];
+  const authRequest = limitAuthRequests();
 
-  // One delete per account the file made, ten at a time. One at a time, the 200 or so accounts
+  // One delete per account the file made, four at a time. One at a time, the 200 or so accounts
   // took a minute from a GitHub runner. A failed delete fails the suite. An account whose media
   // rows outlived their event cannot be deleted, and would otherwise stay on the shared dev project
   // unnoticed. An account a test already deleted answers 404.
@@ -139,7 +186,7 @@ if (project === null) {
         }
       }
     };
-    await Promise.all(Array.from({ length: 10 }, deleteNext));
+    await Promise.all(Array.from({ length: AUTH_CONCURRENCY }, deleteNext));
     if (failed.length > 0) {
       throw new Error(`Could not delete ${failed.length} test accounts:\n${failed.join('\n')}`);
     }
@@ -152,12 +199,14 @@ if (project === null) {
   // Creates a confirmed account with this signup metadata, as the app's signUp sends it.
   async function createUser(metadata: Record<string, unknown>, email = newEmail()) {
     const password = randomUUID();
-    const result = await admin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: metadata,
-    });
+    const result = await authRequest(() =>
+      admin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: metadata,
+      }),
+    );
     if (result.data.user) {
       created.push(result.data.user.id);
     }
