@@ -11,6 +11,7 @@ import {
   MAX_SUB_EVENTS,
 } from '@momentlens/shared-types';
 import type {
+  AlbumStatusResponse,
   CreateCoverUploadResponse,
   CreateEventRequest,
   EventSettings,
@@ -20,6 +21,8 @@ import type {
   JoinRequest,
   ListEventsResponse,
   PresignedImage,
+  SetAlbumRequest,
+  SetAlbumResponse,
   SetEventCoverResponse,
   UpdateEventSettingsRequest,
   UpdateEventSettingsResponse,
@@ -82,13 +85,18 @@ export interface SettingsRecord {
   pendingPhotographers: string[];
 }
 
+// Manage's status card as album_status reads it (D-161). It is the response as it stands: nothing
+// in it is presigned.
+export type AlbumStatusRecord = AlbumStatusResponse;
+
 // What update_event_settings did (supabase/migrations/..._update_event_settings.sql). not_found is
 // an event soft-deleted after the service's check, and then nothing was written.
 export type UpdateSettingsResult =
   { outcome: 'updated'; admitted: number; settings: SettingsRecord } | { outcome: 'not_found' };
 
 // Every read and write of event, venue, sub_event and membership that S-02 makes, S-03's list of
-// join requests, and S-07a's settings. It checks nothing about who asks; the functions below do.
+// join requests, S-07a's settings and S-31's album state. It checks nothing about who asks; the
+// functions below do.
 export interface EventStore {
   create(userId: string, request: CreateEventRequest): Promise<CreateEventResult>;
   // Every event where the user's membership is active, soft-deleted events left out (D-110).
@@ -109,6 +117,11 @@ export interface EventStore {
     request: UpdateEventSettingsRequest,
     maxGuests: number,
   ): Promise<UpdateSettingsResult>;
+  // Null when the event does not exist or is soft-deleted.
+  albumStatus(eventId: string): Promise<AlbumStatusRecord | null>;
+  // Sets album_open and returns the state it set. Null when the event does not exist or is
+  // soft-deleted, and then nothing was written.
+  setAlbum(eventId: string, open: boolean): Promise<boolean | null>;
 }
 
 // Postgres prints a timestamptz with microseconds and +00:00. The contract wants toISOString's
@@ -207,6 +220,21 @@ const UpdateSettingsRow = z.union([
     .object({ outcome: z.literal('not_found'), admitted: z.literal(0), settings: z.null() })
     .transform(() => ({ outcome: 'not_found' as const })),
 ]);
+
+// album_status's object. Parsed rather than cast, so a renamed key fails here. So does a null in
+// photographers_without_uploads, a Photographer with no profile, rather than leave them out of the
+// Close Album dialog.
+const AlbumStatusRow = z
+  .object({
+    album_open: z.boolean(),
+    upload_count: z.int().min(0),
+    photographers_without_uploads: z.array(z.string()),
+  })
+  .transform((row): AlbumStatusRecord => ({
+    albumOpen: row.album_open,
+    uploadCount: row.upload_count,
+    photographersWithoutUploads: row.photographers_without_uploads,
+  }));
 
 const AccessRows = {
   event: z.object({ deleted_at: z.string().nullable(), album_open: z.boolean() }),
@@ -407,6 +435,34 @@ export function createEventStore(supabase: Supabase): EventStore {
         throw result.error;
       }
       return SettingsRow.nullable().parse(result.data as unknown);
+    },
+
+    async albumStatus(eventId) {
+      // An rpc so the state, the count and the names come from one snapshot (D-161).
+      const result = await supabase.rpc('album_status', { p_event_id: eventId });
+      if (result.error) {
+        throw result.error;
+      }
+      return AlbumStatusRow.nullable().parse(result.data as unknown);
+    },
+
+    async setAlbum(eventId, open) {
+      // One update by primary key. The deleted_at filter makes it refuse an event deleted since
+      // findAccess read it, as setCover's does. Two writes resolve as last write wins (D-142).
+      const { data, error } = await supabase
+        .from('event')
+        .update({ album_open: open })
+        .eq('id', eventId)
+        .is('deleted_at', null)
+        .select('album_open');
+      if (error) {
+        throw error;
+      }
+      const rows = z.array(z.object({ album_open: z.boolean() })).parse(data);
+      if (rows.length > 1) {
+        throw new Error(`The album write changed ${rows.length} events, expected at most 1`);
+      }
+      return rows[0]?.album_open ?? null;
     },
 
     async updateSettings(eventId, request, maxGuests) {
@@ -652,4 +708,42 @@ export async function updateEventSettings(
     settings: await toSettings(result.settings, presignGet),
     admitted: result.admitted,
   };
+}
+
+const ALBUM_REFUSAL = "Only the event's Admin reads or changes the album's state";
+
+// GET /events/{eventId}/album, for the event's Admin only (D-161). Manage's status card and the
+// Close Album dialog read it. The check runs before the read, so a refused caller learns nothing
+// about the album, its count or who has uploaded.
+export async function getAlbumStatus(
+  store: EventStore,
+  userId: string,
+  eventId: string,
+): Promise<AlbumStatusResponse> {
+  await requireAdmin(store, eventId, userId, ALBUM_REFUSAL);
+  const status = await store.albumStatus(eventId);
+  if (status === null) {
+    // Soft-deleted after the check.
+    throw new ApiError('not_found', 'No such event');
+  }
+  return status;
+}
+
+// PUT /events/{eventId}/album, for the event's Admin only (D-161). The store is called only after
+// the check, so a refused caller changes nothing. A repeat sets the same state again, and an
+// archived event takes it (D-142). Each write reaches open phones through Realtime on event, which
+// makes them refetch the event; pre-flight reads the state on every call (D-122).
+export async function setAlbumOpen(
+  store: EventStore,
+  userId: string,
+  eventId: string,
+  request: SetAlbumRequest,
+): Promise<SetAlbumResponse> {
+  await requireAdmin(store, eventId, userId, ALBUM_REFUSAL);
+  const albumOpen = await store.setAlbum(eventId, request.open);
+  if (albumOpen === null) {
+    // Soft-deleted after the check.
+    throw new ApiError('not_found', 'No such event');
+  }
+  return { albumOpen };
 }
