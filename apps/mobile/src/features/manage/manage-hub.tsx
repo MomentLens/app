@@ -8,6 +8,8 @@ import { tabHref } from '@/features/event-shell/tabs';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { byPlatform } from '@/lib/copy';
 
+import { StatusCard } from './status-card';
+
 const IOS = Platform.OS === 'ios';
 
 // S-24 enables Review Queue. Until then its row announces that it is disabled (D-142).
@@ -30,9 +32,9 @@ function detail(text: string | undefined) {
 }
 
 // The Admin's Manage tab, a hub of grouped rows that each open a screen of their own (spec
-// §2.5.7). Pending Approvals stays apart from the Review Queue on purpose: different data and
-// different actions. The live status card arrives at the top with S-31, and has no placeholder
-// until then (D-142).
+// §2.5.7). The live status card sits on top, with the album switch Home's banner also carries
+// (D-161). Pending Approvals stays apart from the Review Queue on purpose: different data and
+// different actions.
 export function ManageHub({ eventId }: { eventId: string }) {
   const router = useRouter();
   // The Schedule's own persisted query, so the count is there whenever the Schedule has loaded.
@@ -42,6 +44,8 @@ export function ManageHub({ eventId }: { eventId: string }) {
 
   return (
     <EventTabScreen contentClassName="pt-2">
+      <StatusCard eventId={eventId} />
+      <SectionGap />
       <Section>
         <Row
           title={byPlatform('Pending Approvals', 'Pending approvals')}
