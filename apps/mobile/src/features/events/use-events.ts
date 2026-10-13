@@ -49,10 +49,12 @@ export function rememberCover(eventId: string, cover: PresignedImage): void {
 
 // Puts what the Admin saved in Event Settings into the listed event, so the Events tab shows the
 // new name or cover without waiting for its next fetch (D-142). A new cover carries the cacheKey
-// of its own upload, so the card stops showing the old one (root invariant 2).
+// of its own upload, so the card stops showing the old one (root invariant 2). The album switch
+// writes its answer here too; a written copy releases no waiting photo, the refetch after does
+// (D-161).
 export function rememberEventChanges(
   eventId: string,
-  changes: Partial<Pick<EventSummary, 'name' | 'cover'>>,
+  changes: Partial<Pick<EventSummary, 'name' | 'cover' | 'albumOpen'>>,
 ): void {
   queryClient.setQueryData<ListEventsResponse>(EVENTS_QUERY_KEY, (list) => {
     const event = list?.events.find((existing) => existing.id === eventId);
