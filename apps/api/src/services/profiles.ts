@@ -64,5 +64,8 @@ export async function getOwnProfile(
     userId: record.userId,
     fullName: record.fullName,
     avatar: await presignAvatar(record, userId, presignGet),
+    // S-31's api build reads consent here. Until POST /profiles/me/consent exists nothing writes a
+    // consent row, so no account has accepted the current version.
+    consentRequired: true,
   };
 }

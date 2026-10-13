@@ -63,6 +63,7 @@ const EVENT: EventSummary = {
   startsAt: '2026-10-29T13:00:00.000Z',
   endsAt: '2026-10-31T18:00:00.000Z',
   archivedAt: null,
+  albumOpen: false,
 };
 const PICKED = { uri: 'file:///cover.jpg', width: 1200, height: 800 };
 

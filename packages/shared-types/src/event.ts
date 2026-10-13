@@ -188,6 +188,12 @@ export type CreateEventRequest = z.infer<typeof CreateEventRequest>;
  * `startsAt` and `endsAt` are the span, computed from the sub-events on every read and never
  * stored (D-88). `role` is the caller's own. `cover` is null until a cover is set, so it is
  * always null in a create's response. Pass the event to `eventTiming` for its tab.
+ *
+ * `albumOpen` is the album's state when the API read the event. A create answers false, and a
+ * repeated create answers the state at the repeat. Only the event's Admin changes it, through
+ * PUT /events/{eventId}/album. A Realtime change on `event` makes the app refetch the event and
+ * never patches this field, because only an answer from the API releases `waiting_album` photos
+ * (D-161).
  */
 export const EventSummary = z.object({
   id: z.uuid(),
@@ -198,6 +204,7 @@ export const EventSummary = z.object({
   startsAt: Timestamp,
   endsAt: Timestamp,
   archivedAt: Timestamp.nullable(),
+  albumOpen: z.boolean(),
 });
 export type EventSummary = z.infer<typeof EventSummary>;
 
