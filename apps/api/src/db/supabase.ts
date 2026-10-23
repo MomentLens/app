@@ -7,7 +7,18 @@ import type { Env } from '../config';
 // client the API uses, including with the publishable key it must never be able to read with.
 export function createServerClient(url: string, key: string) {
   return createClient(url, key, {
+    // The phone owns retries. Hidden SDK retries can outlive its request deadline.
+    db: { retry: false },
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: {
+      fetch: (input, init) => {
+        const caller = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+        return fetch(input, {
+          ...init,
+          signal: AbortSignal.any([AbortSignal.timeout(3000), ...(caller ? [caller] : [])]),
+        });
+      },
+    },
   });
 }
 
