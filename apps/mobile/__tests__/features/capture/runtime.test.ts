@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
-import { createElement, type ReactElement } from 'react';
+import { createElement, useEffect, type ReactElement } from 'react';
 
 import type { ShotContext } from '@/features/capture/context';
 import {
@@ -106,6 +106,7 @@ beforeEach(async () => {
   database = new DatabaseSync(':memory:');
   store = new QueueStore(adapt(), disk, () => 'unused');
   await store.initialize();
+  mockGetQueue.mockReset().mockResolvedValue(store);
   mockGallerySave.mockReset();
   mockGallerySave.mockResolvedValue(undefined);
   useAuthStore.setState({ status: 'signedIn', userId: 'A' });
@@ -194,4 +195,32 @@ describe('the drafts My Media reads', () => {
       tree?.unmount();
     });
   });
+});
+
+it('retries an initial database failure and subscribes after drafts reload', async () => {
+  await draftInState();
+  mockGetQueue.mockRejectedValueOnce(new Error('disk unavailable'));
+  let current: ReturnType<typeof useCaptureDrafts>;
+  function RetryProbe() {
+    const snapshot = useCaptureDrafts('A', EVENT);
+    useEffect(() => {
+      current = snapshot;
+    }, [snapshot]);
+    return null;
+  }
+  let tree: ReturnType<TestRenderer['create']>;
+  await renderer.act(async () => {
+    tree = renderer.create(createElement(RetryProbe));
+  });
+  expect(current!.error).toBe(true);
+  await renderer.act(async () => {
+    current!.reload();
+  });
+  expect(current!.error).toBe(false);
+  expect(current!.drafts).toHaveLength(1);
+  await renderer.act(async () => {
+    await new CaptureStore(store, files).persist('capture-2', shot, 'file:///camera-2.jpg');
+  });
+  expect(current!.drafts).toHaveLength(2);
+  await renderer.act(async () => tree.unmount());
 });

@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { DatabaseSync } from 'node:sqlite';
+import { refreshMediaStatus } from '@/features/my-media/status';
 
 import {
   QueueStore,
@@ -270,5 +271,114 @@ describe('S-17 four stored queue counts', () => {
       waitingVerification: 0,
       uploading: 0,
     });
+  });
+});
+
+describe('status recovery transactions', () => {
+  const mediaId = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+  async function seed(count: number) {
+    await store.initialize();
+    const insert = database.prepare(
+      "INSERT INTO queue_item (id,userId,eventId,subEventId,thumbnailPath,createdAt,state,step,mediaId) VALUES (?,'A','event','sub',?,?,'uploaded','complete',?)",
+    );
+    for (let i = 0; i < count; i++) insert.run(`row-${i}`, `thumb-${i}`, i, mediaId(i));
+  }
+  it('recovers 2000 photos with one notification and 40 bounded SQL updates', async () => {
+    await seed(2000);
+    const changed = jest.fn();
+    store.subscribe(changed);
+    const read = jest.spyOn(store, 'listForEvent');
+    const writes: number[] = [];
+    const original = database.prepare.bind(database);
+    jest.spyOn(database, 'prepare').mockImplementation((sql) => {
+      if (sql.startsWith('UPDATE queue_item')) writes.push((sql.match(/\?/g) ?? []).length);
+      return original(sql);
+    });
+    const request = jest.fn(async (ids: string[]) => ({
+      statuses: ids.map((id) => ({ mediaId: id, status: 'published' as const })),
+    }));
+    await refreshMediaStatus(store, 'A', 'event', true, request, () => true);
+    expect(request).toHaveBeenCalledTimes(40);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(writes).toHaveLength(40);
+    expect(Math.max(...writes)).toBeLessThanOrEqual(52);
+    expect((await store.listForEvent('A', 'event')).every((row) => row.state === 'published')).toBe(
+      true,
+    );
+  });
+  it('applies received statuses when the next network batch fails', async () => {
+    await seed(51);
+    const request = jest.fn(async (ids: string[]) => ({
+      statuses: ids.map((id) => ({ mediaId: id, status: 'published' as const })),
+    }));
+    request
+      .mockReset()
+      .mockImplementationOnce(async (ids) => ({
+        statuses: ids.map((id) => ({ mediaId: id, status: 'published' as const })),
+      }))
+      .mockRejectedValueOnce(new Error('offline'));
+    await expect(
+      refreshMediaStatus(store, 'A', 'event', true, request, () => true),
+    ).rejects.toThrow('offline');
+    expect(
+      (await store.listForEvent('A', 'event')).filter((row) => row.state === 'published'),
+    ).toHaveLength(50);
+  });
+  it('scopes changes to finished rows in the account and event, and removes deleted files', async () => {
+    await seed(4);
+    database.exec(
+      "UPDATE queue_item SET userId = 'B' WHERE id = 'row-1'; UPDATE queue_item SET eventId = 'other' WHERE id = 'row-2'; UPDATE queue_item SET state = 'uploading' WHERE id = 'row-3'",
+    );
+    files.add('thumb-0');
+    await store.reconcileMedia(
+      'A',
+      'event',
+      [0, 1, 2, 3].map((i) => ({ mediaId: mediaId(i), status: 'deleted' })),
+      () => true,
+    );
+    expect(database.prepare('SELECT count(*) AS total FROM queue_item').get()).toEqual({
+      total: 3,
+    });
+    expect(files.has('thumb-0')).toBe(false);
+  });
+  it('rolls back earlier deletions when a later SQL write fails, retaining files for retry', async () => {
+    await seed(2);
+    files.add('thumb-0');
+    database.exec(
+      "CREATE TRIGGER fail_publish BEFORE UPDATE ON queue_item WHEN NEW.state = 'published' BEGIN SELECT RAISE(ABORT, 'disk write failed'); END",
+    );
+    const changed = jest.fn();
+    store.subscribe(changed);
+    await expect(
+      store.reconcileMedia(
+        'A',
+        'event',
+        [
+          { mediaId: mediaId(0), status: 'deleted' },
+          { mediaId: mediaId(1), status: 'published' },
+        ],
+        () => true,
+      ),
+    ).rejects.toThrow('disk write failed');
+    expect(await store.listForEvent('A', 'event')).toHaveLength(2);
+    expect(files.has('thumb-0')).toBe(true);
+    expect(changed).not.toHaveBeenCalled();
+  });
+  it('rolls back SQL and retains files when the account changes before commit', async () => {
+    await seed(1);
+    files.add('thumb-0');
+    const changed = jest.fn();
+    store.subscribe(changed);
+    let checks = 0;
+    await store.reconcileMedia(
+      'A',
+      'event',
+      [{ mediaId: mediaId(0), status: 'deleted' }],
+      () => ++checks < 3,
+    );
+    expect(await store.listForEvent('A', 'event')).toHaveLength(1);
+    expect(files.has('thumb-0')).toBe(true);
+    expect(changed).not.toHaveBeenCalled();
   });
 });

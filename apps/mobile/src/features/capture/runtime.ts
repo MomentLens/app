@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { File } from 'expo-file-system';
 import { randomUUID } from 'expo-crypto';
 import type { GetEventResponse } from '@momentlens/shared-types';
@@ -92,10 +92,12 @@ function unqueuedMessage(state: GalleryState | null): string {
 export function useCaptureDrafts(owner: string | null, eventId: string) {
   const [drafts, setDrafts] = useState<CaptureDraft[]>([]);
   const [error, setError] = useState(false);
+  const [version, setVersion] = useState(0);
+  const reload = useCallback(() => setVersion((value) => value + 1), []);
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => void) | undefined;
-    const reload = async () => {
+    const load = async () => {
       if (!owner) return;
       try {
         const items = await (await getCaptures()).list(owner, eventId);
@@ -110,8 +112,8 @@ export function useCaptureDrafts(owner: string | null, eventId: string) {
     void getQueue()
       .then((queue) => {
         if (!active) return;
-        unsubscribe = queue.subscribe(() => void reload());
-        void reload();
+        unsubscribe = queue.subscribe(() => void load());
+        void load();
       })
       .catch(() => {
         if (active) setError(true);
@@ -120,11 +122,11 @@ export function useCaptureDrafts(owner: string | null, eventId: string) {
       active = false;
       unsubscribe?.();
     };
-  }, [owner, eventId]);
+  }, [owner, eventId, version]);
   // My Media's sections memo depends on this array, so it changes only with the drafts or the scope.
   const scoped = useMemo(
     () => drafts.filter((draft) => draft.userId === owner && draft.eventId === eventId),
     [drafts, owner, eventId],
   );
-  return { drafts: scoped, error };
+  return { drafts: scoped, error, reload };
 }

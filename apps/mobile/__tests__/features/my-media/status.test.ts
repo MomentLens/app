@@ -21,11 +21,13 @@ function fake(rows: QueueItem[]) {
   const update = jest.fn(async () => true);
   const remove = jest.fn(async () => true);
   const listForEvent = jest.fn(async () => rows);
+  const reconcileMedia = jest.fn<QueueStore['reconcileMedia']>(async () => undefined);
   return {
-    store: { update, remove, listForEvent } as unknown as QueueStore,
+    store: { update, remove, listForEvent, reconcileMedia } as unknown as QueueStore,
     update,
     remove,
     listForEvent,
+    reconcileMedia,
   };
 }
 describe('publish metadata refresh', () => {
@@ -60,7 +62,7 @@ describe('publish metadata refresh', () => {
     expect(remove).not.toHaveBeenCalled();
   });
   it('removes a deleted photo and marks publication only from the server answer', async () => {
-    const { store, update, remove } = fake(items(3));
+    const { store, reconcileMedia } = fake(items(3));
     await refreshMediaStatus(
       store,
       'A',
@@ -75,8 +77,15 @@ describe('publish metadata refresh', () => {
       }),
       () => true,
     );
-    expect(remove).toHaveBeenCalledWith('A', 'local-0');
-    expect(update.mock.calls).toEqual([['A', 'local-1', { state: 'published' }]]);
+    expect(reconcileMedia.mock.calls[0]?.slice(0, 3)).toEqual([
+      'A',
+      'event',
+      [
+        { mediaId: media(0), status: 'deleted' },
+        { mediaId: media(1), status: 'published' },
+        { mediaId: media(2), status: 'processing' },
+      ],
+    ]);
   });
   it('writes nothing when every answer matches the local state', async () => {
     const rows = items(2);
@@ -101,7 +110,7 @@ describe('publish metadata refresh', () => {
   it('moves a published photo back to processing when the worker unpublished it (D-108)', async () => {
     const rows = items(1);
     rows[0]!.state = 'published';
-    const { store, update } = fake(rows);
+    const { store, reconcileMedia } = fake(rows);
     await refreshMediaStatus(
       store,
       'A',
@@ -110,19 +119,21 @@ describe('publish metadata refresh', () => {
       async () => ({ statuses: [{ mediaId: media(0), status: 'processing' }] }),
       () => true,
     );
-    expect(update).toHaveBeenCalledWith('A', 'local-0', { state: 'uploaded' });
+    expect(reconcileMedia.mock.calls[0]?.[2]).toEqual([
+      { mediaId: media(0), status: 'processing' },
+    ]);
   });
   it('leaves a malformed id out of the batch and matches ids in any case', async () => {
     const rows = items(2);
     rows[0]!.mediaId = 'not-a-uuid';
     rows[1]!.mediaId = media(1).toUpperCase();
-    const { store, update } = fake(rows);
+    const { store, reconcileMedia } = fake(rows);
     const read = jest.fn(async (_ids: string[]) => ({
       statuses: [{ mediaId: media(1), status: 'published' as const }],
     }));
     await refreshMediaStatus(store, 'A', 'event', false, read, () => true);
     expect(read.mock.calls).toEqual([[[media(1)]]]);
-    expect(update.mock.calls).toEqual([['A', 'local-1', { state: 'published' }]]);
+    expect(reconcileMedia.mock.calls[0]?.[2]).toEqual([{ mediaId: media(1), status: 'published' }]);
   });
   it('discards a late response after switching accounts', async () => {
     const { store, update, remove } = fake(items(1));

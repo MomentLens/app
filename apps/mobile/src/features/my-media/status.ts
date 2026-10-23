@@ -28,25 +28,19 @@ export async function refreshMediaStatus(
       : [],
   );
   const ids = [...new Set(items.map(({ mediaId }) => mediaId))];
-  for (let offset = 0; offset < ids.length; offset += MAX_MEDIA_STATUS_BATCH) {
-    if (!isCurrent()) return;
-    const batch = ids.slice(offset, offset + MAX_MEDIA_STATUS_BATCH);
-    const response = await read(batch);
-    if (!isCurrent()) return;
-    const targets = new Set(batch);
-    for (const result of response.statuses) {
-      if (!targets.has(result.mediaId)) continue;
-      for (const { item } of items.filter(({ mediaId }) => mediaId === result.mediaId)) {
-        if (!isCurrent()) return;
-        if (result.status === 'deleted') {
-          await store.remove(userId, item.id);
-          continue;
-        }
-        // Each write redraws My Media, so a row whose state already matches is left alone.
-        const state = result.status === 'published' ? 'published' : 'uploaded';
-        if (item.state !== state) await store.update(userId, item.id, { state });
-      }
+  const received: MediaStatusResponse['statuses'] = [];
+  try {
+    for (let offset = 0; offset < ids.length; offset += MAX_MEDIA_STATUS_BATCH) {
+      if (!isCurrent()) return;
+      const batch = ids.slice(offset, offset + MAX_MEDIA_STATUS_BATCH);
+      const response = await read(batch);
+      if (!isCurrent()) return;
+      const targets = new Set(batch);
+      received.push(...response.statuses.filter((result) => targets.has(result.mediaId)));
     }
+  } finally {
+    // Apply answered batches even if a later request fails, and notify the list once.
+    if (isCurrent()) await store.reconcileMedia(userId, eventId, received, isCurrent);
   }
 }
 

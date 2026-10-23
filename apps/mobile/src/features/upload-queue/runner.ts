@@ -147,6 +147,16 @@ export class UploadRunner {
     return this.retryNow();
   }
 
+  // Transport and preference changes also stop a PUT already in flight (D-146).
+  async networkChanged(): Promise<void> {
+    try {
+      if ((await this.deps.gate()) !== 'open') this.controller?.abort();
+    } catch {
+      this.controller?.abort();
+    }
+    return this.run();
+  }
+
   // Stops the runner for good. The current attempt is cancelled as an account change cancels it,
   // and no pass or timer starts again. queue.ts calls it when Fast Refresh replaces this runner.
   shutdown(): void {
@@ -244,6 +254,16 @@ export class UploadRunner {
     return !signal.aborted && !this.stopped && !this.suspended && this.deps.userId() === userId;
   }
 
+  private async canSend(userId: string, signal: AbortSignal): Promise<boolean> {
+    if (!this.live(userId, signal)) return false;
+    if ((await this.deps.gate()) !== 'open') {
+      this.controller?.abort();
+      this.again = true;
+      return false;
+    }
+    return this.live(userId, signal);
+  }
+
   // Every attempt that returns `next` leaves its photo settled or backing off past now, so the
   // pass never picks it twice without a skip list. Only a thrown queue write needs one.
   private async pass(userId: string, signal: AbortSignal, fresh: boolean): Promise<Pass> {
@@ -266,6 +286,7 @@ export class UploadRunner {
       try {
         attempt = await this.attempt(store, item, signal);
       } catch (error) {
+        if (!this.live(userId, signal)) return 'idle';
         // A failed queue write. The photo stays as the last write left it, and waits for the
         // next round.
         this.deps.warn?.('An upload attempt failed', error);
@@ -366,6 +387,7 @@ export class UploadRunner {
     // leaves waiting (D-161).
     const sentAt = this.deps.now();
     let upload: PreflightUploadResponse;
+    if (!(await this.canSend(userId, signal))) return 'cancelled';
     try {
       upload = await this.deps.preflight(
         userId,
@@ -418,11 +440,13 @@ export class UploadRunner {
 
     // Each file goes only to its own URL. The thumbnail is unblurred, so it goes to R2 and
     // nowhere else (root invariant 13).
+    if (!(await this.canSend(userId, signal))) return 'cancelled';
     const photo = await this.deps.put(row.photoPath, upload.photoUploadUrl, PHOTO_TYPE, signal);
     if (photo !== 'ok') return this.putFailed(store, uploading, photo, signal);
     if (!this.live(userId, signal)) return 'cancelled';
     if (!(await store.update(userId, id, { step: 'put_thumbnail' }, ['uploading']))) return 'next';
 
+    if (!(await this.canSend(userId, signal))) return 'cancelled';
     const thumbnail = await this.deps.put(
       row.thumbnailPath,
       upload.thumbnailUploadUrl,
@@ -514,7 +538,7 @@ export class UploadRunner {
       await this.stop(store, row, 'invalid_request');
       return 'next';
     }
-    if (!this.live(userId, signal)) return 'cancelled';
+    if (!(await this.canSend(userId, signal))) return 'cancelled';
     try {
       await this.deps.complete(userId, row.mediaId, signal);
     } catch (error) {

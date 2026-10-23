@@ -1,3 +1,4 @@
+import type { MediaStatusResponse } from '@momentlens/shared-types';
 import { backoffDelay } from './transitions';
 import { CAPTURE_SCHEMA } from '@/features/capture/capture-store';
 import { GPS_SCHEMA } from '@/features/verification/readings';
@@ -153,6 +154,80 @@ export class QueueStore {
       eventId,
     );
     return rows.map((row) => this.hydrate(row));
+  }
+
+  // A status refresh commits together and wakes My Media once. SQL batches stay below bind limits.
+  reconcileMedia(
+    userId: string,
+    eventId: string,
+    statuses: MediaStatusResponse['statuses'],
+    isCurrent: () => boolean,
+  ): Promise<void> {
+    return this.mutate(async () => {
+      if (!isCurrent() || statuses.length === 0) return;
+      const answers = new Map(
+        statuses.map((status) => [status.mediaId.toLowerCase(), status.status]),
+      );
+      const cleanup: string[] = [];
+      let changes = 0;
+      await this.db.execAsync('BEGIN IMMEDIATE');
+      try {
+        const ids = [...answers.keys()];
+        for (let offset = 0; offset < ids.length; offset += 50) {
+          const batch = ids.slice(offset, offset + 50);
+          const rows = await this.db.getAllAsync<StoredItem>(
+            `SELECT ${COLUMNS} FROM queue_item WHERE userId = ? AND eventId = ? AND state IN ('uploaded','published') AND lower(mediaId) IN (${batch.map(() => '?').join(',')})`,
+            userId,
+            eventId,
+            ...batch,
+          );
+          if (!isCurrent()) {
+            await this.db.execAsync('ROLLBACK');
+            return;
+          }
+          for (const target of ['deleted', 'published', 'uploaded'] as const) {
+            const selected = rows.filter((row) => {
+              const status = answers.get(row.mediaId!.toLowerCase());
+              return (
+                (status === 'deleted'
+                  ? 'deleted'
+                  : status === 'published'
+                    ? 'published'
+                    : 'uploaded') === target && row.state !== target
+              );
+            });
+            if (!selected.length) continue;
+            const placeholders = selected.map(() => '?').join(',');
+            const sql =
+              target === 'deleted'
+                ? `DELETE FROM queue_item WHERE userId = ? AND id IN (${placeholders})`
+                : `UPDATE queue_item SET state = ?, photoPath = NULL WHERE userId = ? AND id IN (${placeholders})`;
+            changes += (
+              await this.db.runAsync(
+                sql,
+                ...(target === 'deleted' ? [] : [target]),
+                userId,
+                ...selected.map((row) => row.id),
+              )
+            ).changes;
+            for (const row of selected) {
+              if (target === 'deleted') cleanup.push(row.thumbnailPath);
+              if (row.photoPath) cleanup.push(row.photoPath);
+            }
+          }
+        }
+        if (!isCurrent()) {
+          await this.db.execAsync('ROLLBACK');
+          return;
+        }
+        await this.db.execAsync('COMMIT');
+      } catch (error) {
+        await this.db.execAsync('ROLLBACK');
+        throw error;
+      }
+      if (changes) this.changed();
+      await Promise.allSettled(cleanup.map((path) => this.files.delete(path)));
+    });
   }
   enqueue(
     userId: string,

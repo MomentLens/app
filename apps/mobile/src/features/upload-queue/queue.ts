@@ -361,11 +361,11 @@ export function startUploads(): void {
   // Joining Wi-Fi from cellular, which onlineManager does not report, lets a photo waiting on
   // Mobile Data go. So does S-29's toggle turning it on.
   const network = addNetworkStateListener(() => {
-    void runner.run();
+    void runner.networkChanged();
   });
   unsubscribers.push(() => network.remove());
   const mobileData = preferences.addOnValueChangedListener((key) => {
-    if (key === MOBILE_DATA_KEY) void runner.run();
+    if (key === MOBILE_DATA_KEY) void runner.networkChanged();
   });
   unsubscribers.push(() => mobileData.remove());
   // A photo that drew a 401 waits for the session (arch §4). A sign-in changes the account above.
