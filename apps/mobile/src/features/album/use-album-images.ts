@@ -2,10 +2,16 @@ import {
   MAX_MEDIA_IMAGES_BATCH,
   type AlbumMediaItem,
   type MediaImage,
-  type MediaImagesResponse,
 } from '@momentlens/shared-types';
-import { useQueries, type UseQueryResult } from '@tanstack/react-query';
-import { useCallback, useMemo, useState } from 'react';
+import {
+  useQueries,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+  type Query,
+  skipToken,
+} from '@tanstack/react-query';
+import { useCallback, useMemo, useRef } from 'react';
 
 import { getMediaImages } from '@/lib/api';
 
@@ -26,61 +32,113 @@ function versionKey(item: Versioned): string {
   return `${item.id}:${item.variantVersion}`;
 }
 
+const RENEW_AFTER = 45 * 60 * 1000;
+type CachedImage = { version: number; image: MediaImage | null; renewAt: number };
+type ImageCache = Record<string, CachedImage>;
+type SignedBatch = { renewAt: number };
+
 export interface ThumbnailMap {
-  // Each photo's signed thumbnail, by media id.
   images: Readonly<Record<string, MediaImage>>;
-  // Ids the serving endpoint answered without, whose tiles the app drops (D-148).
   omitted: ReadonlySet<string>;
+  retry: (mediaId: string) => void;
 }
 
-// POST /events/{eventId}/media/images for the album's thumbnails.
-//
-// A photo arriving by Realtime shifts every later batch, which then loads under a new key. Until
-// it answers, a tile keeps the image it had at the same version, so the grid does not blank. A
-// photo whose version changed has no such image and waits for its new one, so the pre-blur file
-// is never kept on purpose.
 export function useThumbnailMap(eventId: string, media: readonly Versioned[]): ThumbnailMap {
+  const client = useQueryClient();
   const batches = useMemo(() => thumbnailBatches(media), [media]);
-
-  // Last image seen per id and version, for this mount. Media ids are uuids, so two events'
-  // photos never share an entry. The Map is mutated in place: filling it never needs a re-render,
-  // because the batch that fills it re-renders anyway.
-  const [seen] = useState(() => new Map<string, MediaImage>());
+  const cacheKey = useMemo(() => ['media-images', eventId, 'thumbnail-cache'], [eventId]);
+  // One observed cache holds each photo's signing time, even when incoming photos shift batches.
+  const cache = useQuery<ImageCache>({
+    queryKey: cacheKey,
+    queryFn: skipToken,
+    enabled: false,
+    initialData: {},
+    staleTime: Infinity,
+    gcTime: 60 * 60 * 1000,
+  });
+  const errors = useRef(new Map<string, number>());
+  const retry = useCallback(
+    (mediaId: string) => {
+      const now = Date.now();
+      const errorKey = `${eventId}:${mediaId}`;
+      const previous = errors.current.get(errorKey);
+      if (previous !== undefined && now - previous < 30_000) return;
+      errors.current.set(errorKey, now);
+      client.setQueryData<ImageCache>(cacheKey, (current) => {
+        const entry = current?.[mediaId];
+        return entry ? { ...current, [mediaId]: { ...entry, renewAt: 0 } } : current;
+      });
+      void client.invalidateQueries({ queryKey: ['media-images', eventId, 'thumbnail'] });
+    },
+    [client, cacheKey, eventId],
+  );
 
   const combine = useCallback(
-    (results: UseQueryResult<MediaImagesResponse>[]): ThumbnailMap => {
+    (results: UseQueryResult<SignedBatch>[]): ThumbnailMap => {
       const images: Record<string, MediaImage> = {};
       const omitted = new Set<string>();
-      results.forEach((result, index) => {
+      results.forEach((_result, index) => {
         for (const item of batches[index] ?? []) {
-          const image = result.data?.images[item.id];
-          if (image !== undefined) {
-            images[item.id] = image;
-            seen.set(versionKey(item), image);
-          } else if (result.isSuccess) {
-            omitted.add(item.id);
-          } else {
-            const previous = seen.get(versionKey(item));
-            if (previous !== undefined) images[item.id] = previous;
-          }
+          const entry = cache.data?.[item.id];
+          if (entry?.version !== item.variantVersion) continue;
+          // The server's omission wins over an older query result after access changes.
+          if (entry.image === null) omitted.add(item.id);
+          else images[item.id] = entry.image;
         }
       });
-      return { images, omitted };
+      return { images, omitted, retry };
     },
-    [batches, seen],
+    [batches, cache.data, retry],
   );
 
   return useQueries({
     queries: batches.map((batch) => ({
       queryKey: ['media-images', eventId, 'thumbnail', batch.map(versionKey).join(',')],
-      queryFn: ({ signal }: { signal: AbortSignal }) =>
-        getMediaImages(
-          eventId,
-          { mediaIds: batch.map((item) => item.id), size: 'thumbnail' },
-          signal,
-        ),
-      // Presigned URLs live an hour, so a batch is signed again before its URLs run out.
-      staleTime: 45 * 60 * 1000,
+      queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SignedBatch> => {
+        const now = Date.now();
+        let entries = client.getQueryData<ImageCache>(cacheKey) ?? {};
+        const missing = batch.filter((item) => {
+          const entry = entries[item.id];
+          return entry?.version !== item.variantVersion || entry.renewAt <= now;
+        });
+        if (missing.length) {
+          const response = await getMediaImages(
+            eventId,
+            {
+              mediaIds: missing.map((item) => item.id),
+              size: 'thumbnail',
+            },
+            signal,
+          );
+          if (signal.aborted)
+            throw Object.assign(new Error('Thumbnail request cancelled'), { name: 'AbortError' });
+          client.setQueryData<ImageCache>(cacheKey, (current) => {
+            const next = { ...current };
+            for (const item of missing)
+              next[item.id] = {
+                version: item.variantVersion,
+                image: response.images[item.id] ?? null,
+                renewAt: now + RENEW_AFTER,
+              };
+            return next;
+          });
+          entries = client.getQueryData<ImageCache>(cacheKey) ?? {};
+        }
+        let renewAt = Infinity;
+        for (const item of batch) {
+          const entry = entries[item.id];
+          if (entry?.version !== item.variantVersion) continue;
+          renewAt = Math.min(renewAt, entry.renewAt);
+        }
+        return { renewAt };
+      },
+      // Reusing a cached URL must not restart its lifetime.
+      staleTime: (query: Query<SignedBatch>) =>
+        Math.max(0, (query.state.data?.renewAt ?? 0) - query.state.dataUpdatedAt),
+      refetchInterval: (query: Query<SignedBatch>) =>
+        query.state.status === 'error'
+          ? 60_000
+          : Math.max(1000, (query.state.data?.renewAt ?? Date.now() + RENEW_AFTER) - Date.now()),
       gcTime: 60 * 60 * 1000,
     })),
     combine,

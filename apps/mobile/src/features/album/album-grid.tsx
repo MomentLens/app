@@ -1,12 +1,17 @@
 import type { MediaImage } from '@momentlens/shared-types';
 import { FlashList } from '@shopify/flash-list';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
+import type { LargeTitleList } from '@/components/ui/large-title-screen.types';
 
 import { formatDay } from '@/features/events/format';
 import { romanNumeral } from '@/features/schedule/schedule';
 import { PhotoTile } from './photo-tile';
 import type { AlbumListItem } from './types';
+
+type GridItem = AlbumListItem | { type: 'top'; key: string } | { type: 'empty'; key: string };
+const AnimatedList = Animated.createAnimatedComponent(FlashList<GridItem>);
 
 interface AlbumGridProps {
   items: readonly AlbumListItem[];
@@ -15,7 +20,11 @@ interface AlbumGridProps {
   stickyIndices: readonly number[];
   isFetchingNextPage: boolean;
   onEndReached: () => void;
-  ListHeaderComponent?: React.ReactElement;
+  scroll: LargeTitleList['scroll'];
+  header: React.ReactElement;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onImageError: (mediaId: string) => void;
   ListEmptyComponent?: React.ReactElement;
 }
 
@@ -28,11 +37,26 @@ export function AlbumGrid({
   stickyIndices,
   isFetchingNextPage,
   onEndReached,
-  ListHeaderComponent,
+  scroll,
+  header,
+  refreshing,
+  onRefresh,
+  onImageError,
   ListEmptyComponent,
 }: AlbumGridProps) {
+  const data = useMemo<GridItem[]>(
+    () => [
+      { type: 'top', key: 'top' },
+      ...items,
+      ...(items.length ? [] : [{ type: 'empty' as const, key: 'empty' }]),
+    ],
+    [items],
+  );
+  const sticky = useMemo(() => stickyIndices.map((index) => index + 1), [stickyIndices]);
   const renderItem = useCallback(
-    ({ item }: { item: AlbumListItem }) => {
+    ({ item }: { item: GridItem }) => {
+      if (item.type === 'top') return header;
+      if (item.type === 'empty') return ListEmptyComponent ?? null;
       if (item.type === 'header') {
         const { subEvent, numeral, count, isLive } = item;
         return (
@@ -67,32 +91,33 @@ export function AlbumGrid({
 
       return (
         <View className="p-[0.5px]">
-          <PhotoTile image={images[item.media.id]} />
+          <PhotoTile mediaId={item.media.id} image={images[item.media.id]} onError={onImageError} />
         </View>
       );
     },
-    [images],
+    [images, header, ListEmptyComponent, onImageError],
   );
 
   return (
-    <FlashList
-      data={items as AlbumListItem[]}
+    <AnimatedList
+      {...scroll}
+      data={data}
       numColumns={3}
       keyExtractor={(item) => item.key}
       getItemType={(item) => item.type}
       overrideItemLayout={(layout, item) => {
-        if (item.type === 'header') {
+        if (item.type !== 'media') {
           layout.span = 3;
         } else {
           layout.span = 1;
         }
       }}
-      stickyHeaderIndices={stickyIndices as number[]}
+      stickyHeaderIndices={sticky}
       renderItem={renderItem}
       onEndReached={onEndReached}
       onEndReachedThreshold={0.5}
-      ListHeaderComponent={ListHeaderComponent}
-      ListEmptyComponent={ListEmptyComponent}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
       ListFooterComponent={
         isFetchingNextPage ? (
           <View className="py-6 items-center justify-center">
