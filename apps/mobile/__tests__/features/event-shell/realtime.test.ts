@@ -3,6 +3,10 @@ import { createRequire } from 'node:module';
 import { createElement, type ReactElement } from 'react';
 import { useMediaRealtime } from '@/features/event-shell/use-media-realtime';
 
+let mockStatus: (status: string) => void;
+let mockUser = 'A';
+const mockRefresh = jest.fn(async (..._args: unknown[]) => undefined);
+const mockStatusRead = jest.fn(async () => ({ statuses: [] }));
 const mockListeners = new Map<string, (payload?: unknown) => void>();
 const mockInvalidate = jest.fn();
 const mockRecheck = jest.fn();
@@ -12,7 +16,10 @@ const mockChannel = {
     mockListeners.set(filter.table, callback);
     return mockChannel;
   },
-  subscribe: () => mockChannel,
+  subscribe: (callback: (status: string) => void) => {
+    mockStatus = callback;
+    return mockChannel;
+  },
 };
 jest.mock('@/features/album/use-album-switch', () => ({
   albumStatusQueryKey: (id: string) => ['album-status', id],
@@ -20,7 +27,11 @@ jest.mock('@/features/album/use-album-switch', () => ({
 jest.mock('@/features/event-shell/use-event', () => ({
   recheckEvent: (id: string) => mockRecheck(id),
 }));
-jest.mock('@/features/my-media/status', () => ({ applyMediaChange: async () => undefined }));
+jest.mock('@/features/my-media/status', () => ({
+  applyMediaChange: async () => undefined,
+  refreshMediaStatus: (...args: unknown[]) => mockRefresh(...args),
+}));
+jest.mock('@/lib/api', () => ({ getMediaStatus: () => mockStatusRead() }));
 jest.mock('@/features/upload-queue/queue', () => ({ getQueue: async () => ({}) }));
 jest.mock('@/lib/query-client', () => ({
   queryClient: {
@@ -34,7 +45,7 @@ jest.mock('@/lib/supabase', () => ({
   },
 }));
 jest.mock('@/stores/auth', () => ({
-  useAuthStore: Object.assign(() => 'A', { getState: () => ({ userId: 'A' }) }),
+  useAuthStore: Object.assign(() => mockUser, { getState: () => ({ userId: mockUser }) }),
 }));
 interface Renderer {
   create(element: ReactElement): { unmount(): void };
@@ -50,6 +61,7 @@ function Probe() {
 }
 beforeEach(async () => {
   jest.useFakeTimers();
+  mockUser = 'A';
   mockListeners.clear();
   jest.clearAllMocks();
   await renderer.act(async () => {
@@ -77,4 +89,31 @@ it('refreshes the Manage upload count after a media change', async () => {
     jest.advanceTimersByTime(1000);
   });
   expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ['album-status', 'event'], exact: true });
+});
+
+it('reconciles missed publication, unpublication and deletion on rejoin with a session guard', async () => {
+  mockStatus('SUBSCRIBED');
+  expect(mockRefresh).not.toHaveBeenCalled();
+  await renderer.act(async () => {
+    mockStatus('SUBSCRIBED');
+  });
+  expect(mockRefresh).toHaveBeenCalledTimes(1);
+  const args = mockRefresh.mock.calls[0]!;
+  expect(args.slice(1, 4)).toEqual(['A', 'event', true]);
+  const current = args[5] as () => boolean;
+  expect(current()).toBe(true);
+  mockUser = 'B';
+  expect(current()).toBe(false);
+});
+it('invalidates the prior reconciliation when another rejoin starts', async () => {
+  await renderer.act(async () => {
+    mockStatus('SUBSCRIBED');
+    mockStatus('SUBSCRIBED');
+  });
+  const previous = mockRefresh.mock.calls[0]![5] as () => boolean;
+  await renderer.act(async () => {
+    mockStatus('SUBSCRIBED');
+  });
+  expect(previous()).toBe(false);
+  expect((mockRefresh.mock.calls[1]![5] as () => boolean)()).toBe(true);
 });

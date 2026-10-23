@@ -17,11 +17,14 @@ export function useQueue(eventId: string) {
   const reload = useCallback(() => setVersion((value) => value + 1), []);
   useEffect(() => {
     let alive = true;
-    let request = 0;
+    let loading = false;
+    let dirty = false;
     let unsubscribe: (() => void) | undefined;
     if (!userId) return undefined;
     const load = async () => {
-      const serial = ++request;
+      dirty = true;
+      if (loading) return;
+      loading = true;
       try {
         const store = await getQueue();
         if (!alive) return;
@@ -29,10 +32,13 @@ export function useQueue(eventId: string) {
           unsubscribe = store.subscribe(() => {
             void load();
           });
-        const items = await store.listForEvent(userId, eventId);
-        if (alive && serial === request) setSnapshot({ userId, eventId, items, error: false });
+        while (alive && dirty) {
+          dirty = false;
+          const items = await store.listForEvent(userId, eventId);
+          if (alive && !dirty) setSnapshot({ userId, eventId, items, error: false });
+        }
       } catch {
-        if (alive && serial === request)
+        if (alive)
           setSnapshot((previous) => ({
             userId,
             eventId,
@@ -40,6 +46,8 @@ export function useQueue(eventId: string) {
               previous?.userId === userId && previous.eventId === eventId ? previous.items : [],
             error: true,
           }));
+      } finally {
+        loading = false;
       }
     };
     void load();

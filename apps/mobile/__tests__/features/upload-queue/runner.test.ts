@@ -1458,3 +1458,90 @@ describe('S-31: the album opening during a pre-flight', () => {
     expect(server.count('preflight')).toBe(1);
   });
 });
+
+describe('transport changes during an attempt', () => {
+  it.each(['preflight', 'photo', 'thumbnail', 'complete'] as const)(
+    'cancels %s on disallowed cellular and resumes its durable checkpoint',
+    async (stage) => {
+      await store.enqueue('A', EVENT, SUB, photo);
+      const blocked = (signal: AbortSignal) =>
+        new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () =>
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' })),
+          );
+        });
+      if (stage === 'preflight') server.preflightScript.push(blocked);
+      else if (stage === 'complete') server.completeScript.push(blocked);
+      else {
+        if (stage === 'thumbnail') putScript.push(async () => 'ok');
+        putScript.push(blocked);
+      }
+      const runner = createRunner();
+      const running = runner.run();
+      await until(() =>
+        stage === 'preflight'
+          ? server.count('preflight') === 1
+          : stage === 'complete'
+            ? server.count('complete') === 1
+            : puts.length === (stage === 'photo' ? 1 : 2),
+      );
+      const before = await only();
+      gate = 'cellular';
+      await runner.networkChanged();
+      await running;
+      expect(await only()).toEqual(
+        stage === 'photo' || stage === 'thumbnail'
+          ? { ...before, state: 'queued', step: 'preflight' }
+          : before,
+      );
+      expect(server.count('complete')).toBe(stage === 'complete' ? 1 : 0);
+      gate = 'open';
+      await runner.networkChanged();
+      expect((await only()).state).toBe('uploaded');
+      expect(prepares).toEqual(['item-1']);
+      expect(server.count('preflight')).toBe(stage === 'complete' ? 1 : 2);
+      runner.shutdown();
+    },
+  );
+  it('finishes local preparation but sends nothing when Wi-Fi disappears', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    const prepared = deferred<{ photoPath: string; contentHash: string }>();
+    const runner = createRunner({
+      prepare: async (item) => {
+        prepares.push(item.id);
+        return prepared.promise;
+      },
+    });
+    const running = runner.run();
+    await until(() => prepares.length === 1);
+    gate = 'cellular';
+    const changed = runner.networkChanged();
+    const bytes = new TextEncoder().encode('jpeg:item-1');
+    disk.set('A/item-1/upload.jpg', bytes);
+    prepared.resolve({ photoPath: 'A/item-1/upload.jpg', contentHash: sha256(bytes) });
+    await changed;
+    await running;
+    expect(server.calls).toHaveLength(0);
+    gate = 'open';
+    await runner.networkChanged();
+    expect(prepares).toEqual(['item-1']);
+    expect((await only()).state).toBe('uploaded');
+    runner.shutdown();
+  });
+  it('checks the gate between successful PUTs even if the transport event arrives late', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    putScript.push(async () => {
+      gate = 'cellular';
+      return 'ok';
+    });
+    const runner = createRunner();
+    await runner.run();
+    expect(puts).toHaveLength(1);
+    expect(server.count('complete')).toBe(0);
+    expect((await only()).retryCount).toBe(0);
+    gate = 'open';
+    await runner.networkChanged();
+    expect((await only()).state).toBe('uploaded');
+    runner.shutdown();
+  });
+});

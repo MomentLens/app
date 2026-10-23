@@ -4,7 +4,8 @@ import { AppState } from 'react-native';
 
 import { albumStatusQueryKey } from '@/features/album/use-album-switch';
 import { recheckEvent } from '@/features/event-shell/use-event';
-import { applyMediaChange } from '@/features/my-media/status';
+import { applyMediaChange, refreshMediaStatus } from '@/features/my-media/status';
+import { getMediaStatus } from '@/lib/api';
 import { getQueue } from '@/features/upload-queue/queue';
 import { queryClient } from '@/lib/query-client';
 import { supabase } from '@/lib/supabase';
@@ -45,6 +46,29 @@ export function useMediaRealtime(eventId: string) {
 
     let refetchTimer: ReturnType<typeof setTimeout> | undefined;
     let firstPendingAt: number | null = null;
+    let active = true;
+    let statusFlight: AbortController | undefined;
+
+    async function reconcileQueue() {
+      if (!currentUserId) return;
+      statusFlight?.abort();
+      const controller = new AbortController();
+      statusFlight = controller;
+      const current = () =>
+        active && !controller.signal.aborted && useAuthStore.getState().userId === currentUserId;
+      try {
+        await refreshMediaStatus(
+          await getQueue(),
+          currentUserId,
+          eventId,
+          true,
+          (mediaIds) => getMediaStatus(eventId, { mediaIds }, controller.signal),
+          current,
+        );
+      } catch (error) {
+        if (current()) console.warn('Realtime queue recovery error', error);
+      }
+    }
 
     function refetchAlbum() {
       if (refetchTimer !== undefined) clearTimeout(refetchTimer);
@@ -130,6 +154,7 @@ export function useMediaRealtime(eventId: string) {
           if (subscribedOnce) {
             refetchAlbum();
             refetchEvent();
+            void reconcileQueue();
           }
           subscribedOnce = true;
         }
@@ -141,6 +166,8 @@ export function useMediaRealtime(eventId: string) {
     });
 
     return () => {
+      active = false;
+      statusFlight?.abort();
       if (refetchTimer !== undefined) clearTimeout(refetchTimer);
       appStateSub.remove();
       void supabase.removeChannel(channel);

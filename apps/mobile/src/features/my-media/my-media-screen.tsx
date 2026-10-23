@@ -232,6 +232,7 @@ function MediaContent({ eventId }: { eventId: string }) {
     if (pulling) return;
     setPulling(true);
     queue.reload();
+    captures.reload();
     await Promise.allSettled([event.refetch(), schedule.refetch(), status.refresh(true)]);
     setPulling(false);
   }
