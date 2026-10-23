@@ -1,11 +1,12 @@
 import { afterEach, expect, it, jest } from '@jest/globals';
-import { createServerClient } from '../../src/db/supabase';
+import { createServerClient, SUPABASE_TIMEOUT_MS } from '../../src/db/supabase';
 import { createTokenVerifier } from '../../src/middleware/auth';
 
 afterEach(() => {
   jest.restoreAllMocks();
 });
-const client = () => createServerClient('https://example.test', 'test-key');
+const client = () =>
+  createServerClient('https://example.test', 'test-key', { timeoutMs: SUPABASE_TIMEOUT_MS });
 function stalled() {
   const deadline = new AbortController();
   const timeout = jest.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal);
@@ -36,7 +37,22 @@ it('bounds a stalled database call and does not retry its timeout', async () => 
   const result = await pending;
   expect(result.error).not.toBeNull();
   expect(request).toHaveBeenCalledTimes(1);
-  expect(timeout).toHaveBeenCalledWith(3000);
+  expect(timeout).toHaveBeenCalledWith(SUPABASE_TIMEOUT_MS);
+});
+it('sets no deadline when the caller passes none', async () => {
+  const { timeout, request } = stalled();
+  const caller = new AbortController();
+  const pending = Promise.resolve(
+    createServerClient('https://example.test', 'test-key')
+      .from('event')
+      .select('id')
+      .abortSignal(caller.signal),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(timeout).not.toHaveBeenCalled();
+  caller.abort();
+  expect((await pending).error).not.toBeNull();
+  expect(request).toHaveBeenCalledTimes(1);
 });
 it('preserves caller cancellation', async () => {
   const { request } = stalled();
