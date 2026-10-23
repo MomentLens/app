@@ -29,6 +29,7 @@ import { useThumbnailMap } from '@/features/album/use-album-images';
 import { nextStatusChange } from '@/features/schedule/schedule';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useNow } from '@/hooks/use-now';
+import { queryClient } from '@/lib/query-client';
 
 const EMPTY_SCHEDULE: SubEvent[] = [];
 
@@ -154,6 +155,7 @@ function HomeContent({
     setPulling(true);
     await Promise.allSettled([
       albumQuery.refetch(),
+      queryClient.invalidateQueries({ queryKey: ['media-images', eventId, 'thumbnail'] }),
       scheduleQuery.refetch(),
       uploadersQuery.refetch(),
     ]);
@@ -206,6 +208,10 @@ function HomeContent({
         actions={headerActions}
         renderList={({ scroll, header }) => (
           <AlbumGrid
+            scroll={scroll}
+            refreshing={pulling}
+            onRefresh={() => void refresh()}
+            onImageError={thumbnails.retry}
             items={items}
             images={thumbnails.images}
             stickyIndices={stickyIndices}
@@ -215,7 +221,7 @@ function HomeContent({
                 void albumQuery.fetchNextPage();
               }
             }}
-            ListHeaderComponent={
+            header={
               <View>
                 {header}
                 {/* Subtitle with live status and count */}
