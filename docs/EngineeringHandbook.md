@@ -525,7 +525,7 @@ The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. F
 
 #### 13.3.5 Deploying an update
 
-**Deploying an update** is `ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh'`, through the alias §13.4 sets up. The script pulls, installs the API's dependencies, builds and restarts the API. It reinstalls and restarts the worker only if something under `worker/` changed between the old commit and the new one; `--skip-worker` leaves it alone regardless. It never rewrites the units, so a unit change needs `provision.sh`.
+**Deploying an update** is `ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh'`, through the alias §13.4 sets up. The script pulls, installs the API's dependencies, builds and restarts the API. It reinstalls and restarts the worker whenever the worker files and service unit exist. This also repairs a retry after an earlier deploy advanced Git but failed before restarting the worker. `--skip-worker` leaves the worker alone for that invocation. It never rewrites the units, so a unit change needs `provision.sh`.
 
 **Logs**: `journalctl -u momentlens-worker -f`. Learn this command in week one. It is where every mysterious failure will be explained.
 

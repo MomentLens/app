@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Deploys the checked-out branch onto a server that scripts/provision.sh already set up:
-# pull, install, build the API, restart it, and touch the worker only when something
-# under worker/ changed. Handbook §13, "Deploying an update".
+# pull, install, build the API, and restart the API and worker.
 #
 # It installs no system packages, writes no secrets, and leaves nginx and TLS alone.
 # When a pinned toolchain version changes, run provision.sh again instead.
@@ -12,7 +11,7 @@
 #   ssh SERVER 'sudo bash /srv/momentlens/scripts/deploy.sh'
 #
 #   --branch        branch to deploy (default: the one already checked out)
-#   --skip-worker   leave the worker alone even if its files changed
+#   --skip-worker   leave the worker alone
 
 set -euo pipefail
 umask 022
@@ -103,24 +102,17 @@ if [ -f "$APP_DIR/worker/requirements.txt" ] &&
   WORKER_READY=1
 fi
 
-# True when this deploy brought in a change under worker/.
-worker_changed() {
-  [ "$BEFORE" != "$AFTER" ] || return 1
-  ! git_app diff --quiet "$BEFORE" "$AFTER" -- worker/
-}
-
 if [ "$WORKER_READY" -eq 0 ]; then
   note "Skipped: worker/app/main.py, worker/requirements.txt or the unit does not exist yet."
 elif [ "$SKIP_WORKER" -eq 1 ]; then
   note "Skipped because --skip-worker was passed."
-elif worker_changed || ! systemctl is-enabled --quiet momentlens-worker; then
+else
+  # A failed deploy may already have advanced HEAD without restarting the worker.
   log "Updating the worker"
   [ -x "$APP_DIR/worker/.venv/bin/pip" ] || die "worker/.venv is missing. Run scripts/provision.sh."
   as_app "$APP_DIR/worker/.venv/bin/pip" install --requirement "$APP_DIR/worker/requirements.txt"
   systemctl enable momentlens-worker
   systemctl restart momentlens-worker
-else
-  note "Nothing under worker/ changed, so the worker was left running."
 fi
 
 # --- Check ----------------------------------------------------------------------------
