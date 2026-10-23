@@ -584,7 +584,7 @@ pnpm exec supabase db push                 # asks for the database password
 ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh'
 ```
 
-It pulls the branch the server has checked out, builds and restarts the API, and restarts the worker only when `worker/` changed (§13.3.5).
+It pulls the branch the server has checked out, builds and restarts the API, and reinstalls and restarts the worker unless `--skip-worker` is passed (§13.3.5).
 
 **Trying an unmerged API change on a phone.** Every phone talks to `api.momentlens.me`, the dev server, through `EXPO_PUBLIC_API_URL`. To test a slice's API before its stack merges, push its migration first if it has one, then deploy its branch, and put `main` back when you are done. Tell the team both times, because the server runs one branch at a time for all three phones.
 
