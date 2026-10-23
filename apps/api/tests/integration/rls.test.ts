@@ -3552,6 +3552,32 @@ if (project === null) {
         expect(sent).toHaveLength(1);
       });
 
+      it.each(['removed', 'blocked'] as const)(
+        'refuses completion after membership becomes %s',
+        async (status) => {
+          const a = await createNamedUser();
+          const g = await createNamedUser();
+          const { event, mehndi } = await eventWithSchedule(a.id);
+          await addMember(event.id, g.id, 'guest', 'active');
+          const upload = newUpload(event.id, mehndi, g.id);
+          started(await media.start(upload, UPLOAD_LIMITS));
+          const changed = await admin
+            .from('membership')
+            .update({ status })
+            .eq('event_id', event.id)
+            .eq('user_id', g.id);
+          expect(changed.error).toBeNull();
+          await expect(media.complete(upload.mediaId, g.id, 10)).resolves.toEqual({
+            outcome: 'not_member',
+          });
+          await expect(mediaRow(upload.mediaId)).resolves.toMatchObject({
+            uploaded_at: null,
+            size_bytes: null,
+            processed_at: null,
+          });
+        },
+      );
+
       it('answers not_uploader to anyone else, not_found for a soft-deleted event, and gone for no row, changing nothing', async () => {
         const a = await createNamedUser();
         const g = await createNamedUser();

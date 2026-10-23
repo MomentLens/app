@@ -104,7 +104,7 @@ export interface UploadRecord {
 // `not_found` is an event soft-deleted since the service's check.
 export type CompleteResult =
   | { outcome: 'completed'; messageId: number | null }
-  | { outcome: 'duplicate' | 'gone' | 'not_uploader' | 'not_found' };
+  | { outcome: 'duplicate' | 'gone' | 'not_uploader' | 'not_found' | 'not_member' };
 
 // Every read and write of media that upload makes. It checks nothing about who asks; the functions
 // below do, before each call.
@@ -167,7 +167,7 @@ const CompleteRow = z.union([
     .transform((row) => ({ outcome: row.outcome, messageId: row.message_id })),
   z
     .object({
-      outcome: z.enum(['duplicate', 'gone', 'not_uploader', 'not_found']),
+      outcome: z.enum(['duplicate', 'gone', 'not_uploader', 'not_found', 'not_member']),
       message_id: z.null(),
     })
     .transform((row) => ({ outcome: row.outcome })),
@@ -495,5 +495,7 @@ export async function completeUpload(
       throw new ApiError('not_uploader', 'Only the uploader completes an upload');
     case 'not_found':
       throw new ApiError('not_found', 'No such event');
+    case 'not_member':
+      throw new ApiError('not_member', 'You are no longer an active member of this event');
   }
 }

@@ -208,9 +208,11 @@ class FakeBucket {
   readonly deletes: string[] = [];
   failDeletes = new Set<string>();
   presignGets = 0;
+  duringHead: (() => void) | undefined;
 
   objectSize = (key: string): Promise<number | null> => {
     this.heads.push(key);
+    this.duringHead?.();
     return Promise.resolve(this.objects.get(key) ?? null);
   };
 
@@ -284,6 +286,7 @@ beforeEach(() => {
   media.completes.length = 0;
   media.startAnswer = null;
   media.completeAnswer = null;
+  bucket.duringHead = undefined;
   media.messages = 0;
   media.failWith = null;
   bucket.objects.clear();
@@ -1192,6 +1195,23 @@ describe('POST /media/{mediaId}/complete', () => {
     expect(media.messages).toBe(1);
   });
 
+  it.each(['removed', 'blocked'] as const)(
+    'refuses completion when membership becomes %s during the R2 read',
+    async (status) => {
+      const row = seedUpload(GUEST);
+      bucket.duringHead = () => {
+        events.events.get(eventId)?.members.set(GUEST, { role: 'guest', status });
+        media.completeAnswer = { outcome: 'not_member' };
+      };
+      const response = await send('POST', completePath(row.id), 'token-guest');
+      expect(response.status).toBe(403);
+      await expect(errorCode(response)).resolves.toBe('not_member');
+      expect(media.completes).toHaveLength(1);
+      expect(media.rows.get(row.id)?.uploaded).toBe(false);
+      expect(media.messages).toBe(0);
+    },
+  );
+
   it('answers a repeat 200 completed again and sends no second message', async () => {
     const row = seedUpload(GUEST);
     const first = await send('POST', completePath(row.id), 'token-guest');
@@ -1331,6 +1351,7 @@ describe('POST /media/{mediaId}/complete', () => {
   it.each([
     ['not_found', 404, 'not_found'],
     ['not_uploader', 403, 'not_uploader'],
+    ['not_member', 403, 'not_member'],
   ] as const)(
     'answers complete_upload refusing with %s as %i %s',
     async (outcome, status, code) => {
@@ -1500,6 +1521,18 @@ describe('POST /events/{eventId}/media/status', () => {
     const response = await send('POST', statusPath(), 'token-guest', { mediaIds: [randomUUID()] });
     expect(response.status).toBe(500);
     await expect(errorCode(response)).resolves.toBe('internal_error');
+  });
+});
+
+it('decodes the completion RPC membership refusal without treating it as a database failure', async () => {
+  const client = createClient('https://database.test', 'test-key', {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: {
+      fetch: () => Promise.resolve(Response.json([{ outcome: 'not_member', message_id: null }])),
+    },
+  });
+  await expect(createMediaStore(client).complete(randomUUID(), GUEST, 123)).resolves.toEqual({
+    outcome: 'not_member',
   });
 });
 
