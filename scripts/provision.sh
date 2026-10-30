@@ -305,18 +305,19 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    # Self-hosted Supabase, through its gateway on loopback (infra/supabase). The app talks to
-    # Auth and Realtime. PostgREST is public as on hosted Supabase, for API runs on laptops, and
-    # RLS denies it everything but SELECT on media and event (D-73).
+    # Self-hosted Supabase, through its gateway on loopback 54321 (infra/supabase), since the
+    # worker's /health holds 8000. The app talks to Auth and Realtime. PostgREST is public as on
+    # hosted Supabase, for API runs on laptops, and RLS denies it everything but SELECT on media
+    # and event (D-73).
     location /auth/v1/ {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:54321;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
     location /rest/v1/ {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:54321;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -325,7 +326,7 @@ server {
     # Without the Upgrade and Connection headers the WebSocket never opens, and the album's live
     # status stops updating with no error anywhere (S-31). The long timeout keeps idle sockets open.
     location /realtime/v1/ {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:54321;
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";

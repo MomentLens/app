@@ -12,8 +12,9 @@ services:
     # Upstream waits for Studio, which we do not run.
     depends_on: !reset {}
     # Loopback only. nginx is the public entry and forwards /auth/v1/, /rest/v1/ and /realtime/v1/.
+    # 54321 on the host, as the Supabase CLI uses, because the worker's /health holds 8000.
     ports: !override
-      - 127.0.0.1:8000:8000/tcp
+      - 127.0.0.1:54321:8000/tcp
 
   db:
     # Upstream reaches Postgres only through Supavisor. We publish it on loopback instead, for the
