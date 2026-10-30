@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Sets up a fresh Ubuntu 24.04 server for MomentLens end to end: system packages, the
 # Node, pnpm and Python versions the repo pins, the momentlens service user, the repo
-# checkout and API build, both systemd units, nginx, the firewall and TLS.
+# checkout and API build, Docker and the self-hosted Supabase stack (infra/supabase/setup.sh),
+# both systemd units, nginx, the firewall and TLS.
 # Handbook §13 explains each step. Every step checks before it acts, so running the
 # script again is safe, and running it again is also how the server picks up a new pin.
 #
@@ -10,13 +11,15 @@
 #
 # From your own machine:
 #   scp scripts/provision.sh root@SERVER_IP:/root/
-#   ssh root@SERVER_IP 'bash /root/provision.sh --domain api.example.com --email you@example.com'
+#   ssh -t root@SERVER_IP 'bash /root/provision.sh --domain api.example.com --email you@example.com --mail-from noreply@example.com'
 # Or, logged in as a sudo user on the server:
 #   sudo bash provision.sh --domain api.example.com --email you@example.com
 #
 #   --domain   hostname nginx serves and certbot certifies (required)
 #   --email    Let's Encrypt account email. Passing it accepts Let's Encrypt's terms.
 #              Leave it out to skip TLS until DNS points at this server.
+#   --mail-from  sender address for Auth's emails. Passing it runs infra/supabase/setup.sh,
+#              which asks for the Resend API key when run over ssh -t.
 #   --branch   branch to check out (default: main)
 #   --repo     git URL to clone (default: the public MomentLens repo)
 
@@ -27,6 +30,7 @@ REPO_URL="https://github.com/MomentLens/app.git"
 BRANCH="main"
 DOMAIN=""
 EMAIL=""
+MAIL_FROM=""
 
 APP_USER="momentlens"
 APP_HOME="/var/lib/momentlens" # kept outside the checkout so caches never land in the git tree
@@ -42,7 +46,7 @@ die() {
 
 usage() {
   cat <<'EOF'
-Usage: provision.sh --domain HOSTNAME [--email ADDRESS] [--branch NAME] [--repo URL]
+Usage: provision.sh --domain HOSTNAME [--email ADDRESS] [--mail-from ADDRESS] [--branch NAME] [--repo URL]
 Run as root on a fresh Ubuntu 24.04 server. See the header of this file for details.
 EOF
   exit "$1"
@@ -51,11 +55,12 @@ EOF
 while [ $# -gt 0 ]; do
   case "$1" in
     -h | --help) usage 0 ;;
-    --domain | --email | --branch | --repo)
+    --domain | --email | --mail-from | --branch | --repo)
       [ $# -ge 2 ] || die "$1 needs a value"
       case "$1" in
         --domain) DOMAIN="$2" ;;
         --email) EMAIL="$2" ;;
+        --mail-from) MAIL_FROM="$2" ;;
         --branch) BRANCH="$2" ;;
         --repo) REPO_URL="$2" ;;
       esac
@@ -115,6 +120,22 @@ else
   packages+=(ufw)
 fi
 apt-get install -y --no-install-recommends "${packages[@]}"
+
+if [ -n "$MAIL_FROM" ]; then
+  # Docker's own apt repository, because the self-hosted Supabase compose file needs Compose
+  # 2.24.4 or later for the !reset and !override tags in infra/supabase.
+  log "Installing Docker"
+  if ! command -v docker >/dev/null || ! docker compose version >/dev/null 2>&1; then
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL --retry 3 https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${UBUNTU_CODENAME:-$VERSION_CODENAME} stable" >/etc/apt/sources.list.d/docker.list
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  fi
+  systemctl enable --now docker
+  note "$(docker compose version)"
+fi
 
 # --- Service user and checkout -------------------------------------------------------
 
@@ -203,13 +224,25 @@ log "Installing dependencies and building the API"
 as_app pnpm --dir "$APP_DIR" install --filter "api..." --frozen-lockfile
 as_app pnpm --dir "$APP_DIR" --filter api build
 
+# --- Supabase ------------------------------------------------------------------------
+
+if [ -n "$MAIL_FROM" ]; then
+  log "Self-hosted Supabase"
+  bash "$APP_DIR/infra/supabase/setup.sh" --domain "$DOMAIN" --mail-from "$MAIL_FROM"
+else
+  note "Skipped the self-hosted Supabase stack because no --mail-from was given."
+fi
+
 # --- systemd -------------------------------------------------------------------------
 
 log "Writing systemd units"
 cat >/etc/systemd/system/momentlens-api.service <<EOF
 [Unit]
 Description=MomentLens Express API
-After=network.target
+# Supabase runs in Docker on this machine. Restart=always covers the seconds before Postgres
+# accepts connections after a boot.
+After=network-online.target docker.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -228,7 +261,8 @@ EOF
 cat >/etc/systemd/system/momentlens-worker.service <<EOF
 [Unit]
 Description=MomentLens AI Worker
-After=network.target
+After=network-online.target docker.service
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -269,6 +303,38 @@ server {
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
         proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    # Self-hosted Supabase, through its gateway on loopback (infra/supabase). The app talks to
+    # Auth and Realtime. PostgREST is public as on hosted Supabase, for API runs on laptops, and
+    # RLS denies it everything but SELECT on media and event (D-73).
+    location /auth/v1/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location /rest/v1/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    # Without the Upgrade and Connection headers the WebSocket never opens, and the album's live
+    # status stops updating with no error anywhere (S-31). The long timeout keeps idle sockets open.
+    location /realtime/v1/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
     }
 }
 EOF

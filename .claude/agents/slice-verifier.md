@@ -3,7 +3,8 @@ name: slice-verifier
 description: Read-only verification of checks, named negative tests and invariant suspicions for a slice diff. Use only when the main agent establishes the total-token saving required by the slice skill.
 tools: Read, Grep, Glob, Bash
 disallowedTools: Edit, Write, NotebookEdit, Agent
-model: sonnet
+model: haiku
+effort: max
 maxTurns: 30
 omitClaudeMd: true
 color: yellow
