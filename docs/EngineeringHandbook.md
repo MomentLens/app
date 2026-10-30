@@ -337,7 +337,7 @@ There is no role branch left to unit-test here. The pre-flight checks are worth 
 
 ## 9. Development environment — Windows (x86, no GPU)
 
-Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differences. Native Windows is the default since D-162, and WSL2 is optional.
+Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differences. Native Windows is the default since D-162, and WSL2 is optional. Android Studio is there for the Android SDK, JDK 17 and `adb`, which build the app and install it on your phone. Skip its virtual device step, because B and C run every build on a physical phone and never on an emulator.
 
 - **PowerShell 7 and Git for Windows.** Install them with `winget install Microsoft.PowerShell Git.Git`. The commands in root `AGENTS.md` chain steps with `&&`, which PowerShell 7 runs and the older Windows PowerShell 5.1 refuses. Git for Windows also installs Git Bash, which runs the pre-commit hook. Keep `core.autocrlf` false or unset, because `.gitattributes` already checks files out with LF line endings; `pnpm check:machine` fails when it is `true`.
 - **Clone onto a local folder outside OneDrive**, such as `C:\dev\MomentLens`. OneDrive syncs every file in `node_modules` and `worker\.venv` and locks files while it uploads them, which breaks `pnpm install`.
