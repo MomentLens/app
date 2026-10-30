@@ -62,6 +62,16 @@ def test_the_env_file_fills_gaps_and_never_overrides(tmp_path):
     }
 
 
+def test_the_env_file_reads_utf8_with_a_byte_order_mark(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_bytes("R2_BUCKET=first\nR2_ACCOUNT_ID=café\n".encode("utf-8-sig"))
+    environ = {}
+
+    config.load_env_file(env_file, environ)
+
+    assert environ == {"R2_BUCKET": "first", "R2_ACCOUNT_ID": "café"}
+
+
 def test_a_missing_env_file_is_fine(tmp_path):
     environ = {}
     config.load_env_file(tmp_path / "absent", environ)

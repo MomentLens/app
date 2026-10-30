@@ -337,17 +337,21 @@ There is no role branch left to unit-test here. The pre-flight checks are worth 
 
 ## 9. Development environment — Windows (x86, no GPU)
 
-Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differences:
+Same Node/pnpm/Android Studio/Python/EAS/VS Code steps as §8, with these differences. Native Windows is the default since D-162, and WSL2 is optional.
 
-- Use **WSL2** (Ubuntu 24.04, the server's release) for the backend (Express and FastAPI), general Node tooling and the agent. It avoids a long tail of path-handling and native-module-compilation quirks. Clone the repo into the WSL2 filesystem (`~/`), not `/mnt/c`, where file watching and installs are slow; `pnpm check:machine` warns when it sees `/mnt/`.
-- Install Node, pnpm, uv and Python **inside WSL2**, not the Windows-native versions, so the toolchain stays consistent. Ubuntu has no Homebrew, so two of §8's steps change: install fnm with `curl -fsSL https://fnm.vercel.app/install | bash` and uv with `curl -LsSf https://astral.sh/uv/install.sh | sh`, open a new shell, then carry on from `fnm install` and `uv python install 3.12`.
-- **Test Android on a physical phone over USB**, running the development build. Builds are arm64-v8a only (`apps/mobile/AGENTS.md`), and the Android emulator on an x86 Windows machine runs x86_64 images, so it cannot install them. A phone is also what §10 recommends for the camera and GPS. Never Expo Go: since P0-9 the app needs native modules Expo Go does not ship, among them MMKV, the invite-link URL scheme and background upload. B and C run it on their own 64-bit Android phones, the arm64-v8a devices the build targets. **Open, to settle later:** whether the build is compiled on the Windows side or by EAS in the cloud, and how `adb` reaches the phone when Metro runs in WSL2.
+- **PowerShell 7 and Git for Windows.** Install them with `winget install Microsoft.PowerShell Git.Git`. The commands in root `AGENTS.md` chain steps with `&&`, which PowerShell 7 runs and the older Windows PowerShell 5.1 refuses. Git for Windows also installs Git Bash, which runs the pre-commit hook. Keep `core.autocrlf` false or unset, because `.gitattributes` already checks files out with LF line endings; `pnpm check:machine` fails when it is `true`.
+- **Clone onto a local folder outside OneDrive**, such as `C:\dev\MomentLens`. OneDrive syncs every file in `node_modules` and `worker\.venv` and locks files while it uploads them, which breaks `pnpm install`.
+- **Install fnm and uv with winget**, since Windows has no Homebrew: `winget install Schniz.fnm astral-sh.uv`. Add `fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression` to your PowerShell profile (`notepad $PROFILE`), open a new window, then carry on from §8's `fnm install` and `uv python install 3.12`.
+- **The worker's venv keeps its programs in `worker\.venv\Scripts\`**, where macOS and Linux use `.venv/bin/`. Create it with the same `uv venv --python 3.12` and `uv pip install -r requirements-dev.txt`. Run Ruff and pytest with `node scripts/verify.mjs worker`, which finds the venv on every platform, and the worker itself with `.venv\Scripts\python -m app.main` from `worker\`.
+- **CI runs on Ubuntu only.** A PR that changes `worker/` gets `node scripts/verify.mjs worker` run on B's or C's Windows machine before it merges, and its Tests section says who ran it and the result (D-162).
+- **WSL2 still works** for anyone who prefers it. Use Ubuntu 24.04, clone into `~/` rather than `/mnt/c`, where file watching and installs are slow (`pnpm check:machine` warns when it sees `/mnt/`), and install Node, pnpm, uv and Python inside WSL2, with fnm from `curl -fsSL https://fnm.vercel.app/install | bash` and uv from `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- **Test Android on a physical phone over USB**, running the development build. Builds are arm64-v8a only (`apps/mobile/AGENTS.md`), and the Android emulator on an x86 Windows machine runs x86_64 images, so it cannot install them. A phone is also what §10 recommends for the camera and GPS. Never Expo Go: since P0-9 the app needs native modules Expo Go does not ship, among them MMKV, the invite-link URL scheme and background upload. B and C run it on their own 64-bit Android phones, the arm64-v8a devices the build targets. **Open, to settle later:** whether the build is compiled on the Windows machine or by EAS in the cloud.
 - **The iOS Simulator does not exist on Windows.** Apple ships it only with Xcode. This is not workaround-able. Practically:
   - You can write and test 100% of the Android side locally, on a physical phone.
   - For iOS, **EAS Build compiles iOS binaries in the cloud with no local Mac**. You cannot run the Simulator, but you can build a real iOS app and install it on a physical iPhone via the Custom Dev Client, entirely from Windows. EAS Build's free tier covers a limited number of builds per month, which is enough if you are not rebuilding natively every day (§10 explains why you won't be).
   - For the rare Simulator-only moment, borrow Ukasha's machine.
-- **Codex, if you use it**, runs inside WSL2 too. Start it at the repository root, so it loads root `AGENTS.md`, and trust the project when it asks: Codex loads `.codex/config.toml` only for a trusted project. `pnpm check:machine` checks the trust. Start a slice with `$slice S-12` (§18.8).
-- **Architecture on the Python worker.** The server is x86-64 like your machine (D-78), so a wheel that installs in WSL2 should install on the server too. The M1 is now the machine that differs. If something fails only on the server, SSH in and debug it there.
+- **Codex, if you use it**: start it at the repository root, so it loads root `AGENTS.md`, and trust the project when it asks: Codex loads `.codex/config.toml` only for a trusted project. `pnpm check:machine` checks the trust. Start a slice with `$slice S-12` (§18.8).
+- **The Python worker on Windows.** The server is x86-64 like your machine (D-78), but it runs Linux, so pip installs a Linux wheel there and a Windows wheel for you. A worker change that passes on Windows can still fail on the server; CI's Ubuntu run is the closer check, and a failure that shows only on the server gets debugged there over SSH.
 
 ---
 
@@ -546,7 +550,7 @@ Both R2 and Supabase are external, so a compute swap moves no data. That is the 
 
 ### 13.4 Migrations, deploys and server logs
 
-All three developers share the dev Supabase project and the dev server, so every command here changes what the other two see. An agent asks before running any of them, every time (root `AGENTS.md`). Run them from the repo root, inside WSL2 on Windows.
+All three developers share the dev Supabase project and the dev server, so every command here changes what the other two see. An agent asks before running any of them, every time (root `AGENTS.md`). Run them from the repo root, in PowerShell 7 on Windows.
 
 **Once per machine.**
 

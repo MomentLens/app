@@ -18,7 +18,7 @@ Then, and only then:
 2. Read the `AGENTS.md` of every package the slice touches. Codex does not load one below the folder it started in.
 3. List what `packages/shared-types` exports, `grep -n '^export' packages/shared-types/src/*.ts`, and open only the files you will reuse or extend. Reuse a schema that exists. Never redeclare one.
 
-**If `doc.mjs` is unavailable**, read the sections the slice row cites directly: every one is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md` then `sed -n 'a,bp'`. Do not read a whole doc, and do not trust `grep -n '^#'` to find headings; it also matches a `#` comment inside a fenced code block. On Windows this needs Git Bash or WSL2.
+**If `doc.mjs` is unavailable**, read the sections the slice row cites directly: every one is numbered, so `grep -n '^#### 4.11.4' docs/Idea.md` then `sed -n 'a,bp'`. Do not read a whole doc, and do not trust `grep -n '^#'` to find headings; it also matches a `#` comment inside a fenced code block. On Windows this needs Git Bash, which Git for Windows installs.
 
 ## 2. Read the slice back before anything else
 

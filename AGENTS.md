@@ -1,6 +1,6 @@
 # AGENTS.md
 
-MomentLens: event photography and media management for South Asian weddings. React Native client, Express API, Python AI worker, Supabase, Cloudflare R2. Final-year project, three students, demo June 2027. Ukasha owns the docs, `docs/ARCHITECTURE.md` and the worker, and works on an M1 Mac. The two teammates, B and C in `docs/WorkSlices.md`, work on Windows through WSL2 (hb §9).
+MomentLens: event photography and media management for South Asian weddings. React Native client, Express API, Python AI worker, Supabase, Cloudflare R2. Final-year project, three students, demo June 2027. Ukasha owns the docs, `docs/ARCHITECTURE.md` and the worker, and works on an M1 Mac. The two teammates, B and C in `docs/WorkSlices.md`, work on native Windows, with WSL2 optional (hb §9, D-162).
 
 **Read every session, so it holds only what is needed every session.** There is an `AGENTS.md` in `apps/mobile/`, `apps/api/` and `worker/` with the rules for that surface. Everything else is behind a pointer, and pointers are meant to be followed before writing code in that area.
 
@@ -135,11 +135,11 @@ node scripts/verify.mjs api mobile # what CI runs, for those packages; also docs
 pnpm docs:check                   # the docs gate, also run by the pre-commit hook and CI
 pnpm --filter api test:rls        # RLS negative tests against the dev project
 cd worker && uv venv --python 3.12 && uv pip install -r requirements-dev.txt   # once, and after either requirements file changes
-cd worker && .venv/bin/ruff check . && .venv/bin/pytest
+node scripts/verify.mjs worker     # Ruff and pytest through worker/.venv, on every platform
 cd worker && .venv/bin/python -m app.main   # waits while the dev server's worker holds the queue (hb §13.4)
 ```
 
-On Windows everything above runs inside WSL2, as Handbook §9 sets up.
+On Windows these run in PowerShell 7, and the venv's programs are in `worker\.venv\Scripts\` instead of `.venv/bin/` (hb §9).
 
 **Shared infrastructure is Handbook §13.4**: a new migration, pushing it to the dev project, deploying the dev server, server logs. All three developers share the dev project and the dev server. Ask the developer before each of these, every time, even inside a task they already approved: `supabase db push`, any command over `ssh momentlens`, `gh pr merge`, and any force push. A migration that has reached the dev project is never edited again; a fix is a new migration (D-116).
 
