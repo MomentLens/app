@@ -24,6 +24,8 @@ STACK_ENV="$STACK_DIR/.env"
 APP_ENV="/srv/momentlens/.env"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICES=(db auth rest realtime api-gw)
+# The gateway's port on the host, set in docker-compose.override.yml. The worker holds 8000.
+GATEWAY="http://127.0.0.1:54321"
 
 DOMAIN=""
 MAIL_FROM=""
@@ -136,25 +138,25 @@ log "Checking the stack"
 publishable="$(get_env "$STACK_ENV" SUPABASE_PUBLISHABLE_KEY)"
 ok=0
 for _ in $(seq 1 60); do
-  if curl -fsS -o /dev/null -H "apikey: $publishable" http://127.0.0.1:8000/auth/v1/health; then
+  if curl -fsS -o /dev/null -H "apikey: $publishable" $GATEWAY/auth/v1/health; then
     ok=1
     break
   fi
   sleep 2
 done
 [ "$ok" -eq 1 ] || die "Auth is not answering through the gateway. Read: cd $STACK_DIR && docker compose logs auth api-gw"
-curl -fsS http://127.0.0.1:8000/auth/v1/.well-known/jwks.json | grep -q '"ES256"' ||
+curl -fsS $GATEWAY/auth/v1/.well-known/jwks.json | grep -q '"ES256"' ||
   die "The JWKS has no ES256 key, so apps/api cannot verify tokens. Check JWT_KEYS in $STACK_ENV."
 note "Auth answers and publishes an ES256 key."
 docker exec supabase-db psql -U postgres -tAc "select 1 from pg_available_extensions where name = 'pgmq'" | grep -q 1 ||
   die "This Postgres image has no pgmq extension, which the migrations need."
 note "pgmq is available."
-curl -fsS -o /dev/null -H "apikey: $publishable" http://127.0.0.1:8000/rest/v1/ ||
+curl -fsS -o /dev/null -H "apikey: $publishable" $GATEWAY/rest/v1/ ||
   note "PostgREST did not answer yet. Read: cd $STACK_DIR && docker compose logs rest"
 
 log "Writing the Supabase variables into $APP_ENV"
 if [ -f "$APP_ENV" ]; then
-  set_env "$APP_ENV" SUPABASE_URL http://127.0.0.1:8000
+  set_env "$APP_ENV" SUPABASE_URL "$GATEWAY"
   set_env "$APP_ENV" SUPABASE_PUBLISHABLE_KEY "$publishable"
   set_env "$APP_ENV" SUPABASE_SECRET_KEY "$(get_env "$STACK_ENV" SUPABASE_SECRET_KEY)"
   # Straight to Postgres on loopback: a session connection, which the worker's queue lock needs (D-123).

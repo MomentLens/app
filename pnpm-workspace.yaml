@@ -11,3 +11,7 @@ allowBuilds:
   esbuild: false
   unrs-resolver: false
 engineStrict: true
+# pnpm runs package scripts through cmd.exe on Windows, which cannot read POSIX syntax such as
+# test:rls's `REQUIRE_SUPABASE=1 node ...`. Its own cross-platform shell runs them the same on
+# all three machines (D-162).
+shellEmulator: true
