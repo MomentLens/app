@@ -1,0 +1,44 @@
+# Layered over Supabase's own docker/docker-compose.yml, pinned in setup.sh. setup.sh links this
+# file into that folder, where docker compose loads it automatically.
+#
+# We run five of its services: db, auth, rest, realtime and the api-gw gateway (Envoy).
+# setup.sh starts only those, so Studio, Storage, imgproxy, meta, functions and Supavisor never
+# start. The gateway still has routes for them, which answer 503.
+#
+# Needs Docker Compose 2.24.4 or later for !reset and !override.
+
+services:
+  api-gw:
+    # Upstream waits for Studio, which we do not run.
+    depends_on: !reset {}
+    # Loopback only. nginx is the public entry and forwards /auth/v1/, /rest/v1/ and /realtime/v1/.
+    ports: !override
+      - 127.0.0.1:8000:8000/tcp
+
+  db:
+    # Upstream reaches Postgres only through Supavisor. We publish it on loopback instead, for the
+    # worker (whose queue lock needs a session connection, D-123) and for migrations over an SSH
+    # tunnel. Never 0.0.0.0.
+    ports:
+      - 127.0.0.1:5432:5432
+
+  auth:
+    environment:
+      # Signing keys from utils/add-new-auth-keys.sh. The EC key comes first, so access tokens
+      # are ES256 and getClaims in apps/api verifies them against the JWKS endpoint.
+      GOTRUE_JWT_KEYS: ${JWT_KEYS:?run utils/add-new-auth-keys.sh --update-env}
+      # Mirrors supabase/config.toml, so the dev stack behaves like local Supabase.
+      GOTRUE_PASSWORD_MIN_LENGTH: '8'
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: 'true'
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: '10'
+      GOTRUE_RATE_LIMIT_EMAIL_SENT: '2'
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: '150'
+      GOTRUE_SMTP_MAX_FREQUENCY: 1s
+      GOTRUE_MAILER_OTP_EXP: '3600'
+      GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: 'true'
+
+  realtime:
+    environment:
+      # Without the public JWKS, Realtime rejects ES256 user tokens, RLS then hides every row,
+      # and the app's postgres_changes channel receives nothing and reports no error.
+      API_JWT_JWKS: ${JWT_JWKS:?run utils/add-new-auth-keys.sh --update-env}
