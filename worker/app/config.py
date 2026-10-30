@@ -45,7 +45,9 @@ def load_env_file(
     """Copies the file's variables into `environ`, skipping any name already there."""
     if not path.is_file():
         return
-    for line in path.read_text().splitlines():
+    # Windows reads a file in its own code page unless told otherwise, and Notepad can save a
+    # byte-order mark that would hide the first variable. utf-8-sig reads both cases.
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         match = _ENV_LINE.match(line)
         if match and match[1] not in environ:
             environ[match[1]] = re.sub(r"^['\"]|['\"]$", "", match[2].strip())

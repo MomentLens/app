@@ -1653,6 +1653,16 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** A reopened album can release a burst of guest photos taken while it was closed. A modified app can use the API without consent. The camera cannot be reached while Supabase Unavailable shows. A member's Realtime connection receives a deleted event's row, which `get_my_event` withholds. A Realtime change costs each open phone one `GET /events/{eventId}`. No separate Terms document exists for the viva.
 **Reopen if.** Testers lose photos they took while the album was closed, or the consent text needs a second version before the demo.
 
+### D-162: Windows developers work natively, and WSL2 is optional
+**Decision.** Amends hb §9. B and C may run the whole toolchain in native Windows, with PowerShell 7 and Git for Windows, instead of inside WSL2. Ukasha decided this on 2026-10-30.
+- The worker reads the root `.env` as UTF-8 and accepts a byte-order mark.
+- pnpm runs package scripts through its own shell (`shellEmulator: true` in `pnpm-workspace.yaml`), so a script written as `VAR=1 cmd`, such as the API's `test:rls`, runs on Windows.
+- CI stays on Ubuntu. A PR that changes `worker/` is checked on B's or C's Windows machine with `node scripts/verify.mjs worker` before it merges, and its Tests section says who ran it and the result.
+**Why.** B and C want to work on the AI pipeline and will not run Linux. hb §9 chose WSL2 to avoid path and native-build problems, but `scripts/doctor.mjs` and `scripts/verify.mjs` already handle Windows, the worker's current dependencies publish Windows wheels, and the worker builds R2 keys as strings. The gaps left were the `.env` encoding, one POSIX-only package script and the docs.
+**Rejected.** Keeping WSL2 mandatory, which B and C would not use. A Windows job in CI, which spends runner minutes on every push when the same check can be run by hand on the PRs that touch the worker.
+**Cost.** The Windows check is manual, so a worker PR merged without it can break B's and C's machines while CI is green. Windows and the server no longer share an operating system, so a pass on Windows says nothing about Linux. InsightFace is not in `requirements.txt` yet; the PR that adds it (P0-5) has to show it installs on Windows without a C compiler.
+**Reopen if.** A Windows-only failure reaches `main` twice, or InsightFace needs a C compiler to install on Windows.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
