@@ -509,7 +509,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Why.** Handbook §13 put the tunnel in Phase 0 for everyday remote testing, and the Oracle instance already gives the team a public HTTPS backend from Phase 0. The M1's advantage, faster inference (D-50), matters on demo day.
 **Rejected.** The tunnel in Phase 0 as the everyday remote-testing setup.
 **Cost.** The demo stack runs for the first time a month out. The M1 and Oracle share an architecture, so the remaining risk is configuration, which the Phase 7 rehearsal covers. If the M1 fails in demo week, Oracle only works as the fallback after its `.env` switches to the stable project, because the demo build logs in against stable.
-**Amended (see D-78).** From 2026-10-15 development runs on a Netcup server instead of the Oracle instance, and the demo stack goes up on that same server rather than on the M1. The one-month timing stands.
+**Amended (see D-78).** From 2026-10-15 development runs on an Azure Dubai VM instead of the Oracle instance, and the demo stack goes up on that same server rather than on the M1. The one-month timing stands.
 
 ### D-77: Pinch-zoom is core, as a named exception to D-44
 **Decision.** Amends D-59 and D-44. The single photo viewer ships with pinch-zoom and pan (spec §2.5) in S-22, although no demo beat shows it. It is the one named exception to D-44's rule that scope is what the demo script shows.
@@ -521,20 +521,20 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 
 # M. Decided after benchmarking the worker (2026-09-16)
 
-### D-78: One Netcup server runs development and the demo from 2026-10-15 ⚠
-**Decision.** Supersedes D-50 and D-51 and amends D-38 and D-76. From 15 October 2026 the API and worker run on one rented Netcup RS 1000 G12 root server (4 dedicated AMD EPYC 9645 cores, 8 GB DDR5 ECC, 256 GB NVMe, x86-64), set up by `scripts/provision.sh`. The team develops against it and the demo runs on it. The M1 is a development machine only, and there is no tunnel.
-**Why.** What the team develops and tunes against is what the panel sees, so an optimization measured during development holds on demo day. Demo morning stops depending on one laptop booting and a tunnel connecting. Netcup states 99.9% minimum availability. The free tier promises nothing, and Oracle halved the Always Free A1 allowance on 15 June 2026 without announcing it.
+### D-78: One Azure VM in Dubai runs development and the demo from 2026-10-15 ⚠
+**Decision.** Supersedes D-50 and D-51 and amends D-38 and D-76. From 15 October 2026 the API, worker, and self-hosted Supabase Lite stack run on an Azure VM in UAE North (Dubai) (`Standard_D4als_v7` or `Standard_F4als_v7`: 4 vCPUs, 8 GB RAM, x86-64), set up by `scripts/provision.sh` and `infra/supabase/setup.sh`. The team develops against it and the demo runs on it. The M1 is a development machine only, and there is no tunnel.
+**Why.** UAE North (Dubai) yields the lowest measured round-trip latency to the team. Running the server ~2 hours/day during development with a static public IP and standard storage keeps costs within Azure for Students credits ($100 per member), rotated across team members' accounts when depleted. What the team develops and tunes against is what the panel sees, so an optimization measured during development holds on demo day. Demo morning stops depending on one laptop booting and a tunnel connecting. The free tier promises nothing, and Oracle halved the Always Free A1 allowance on 15 June 2026 without announcing it.
 **Measured, 2026-09-15 and 2026-09-16.** InsightFace `buffalo_l` with detection and recognition only, on 23 openly licensed wedding and group photos resized to at most 4096px.
 - Time is a cost per photo plus a cost per face, because every face gets its own recognition pass. At two threads a 2-OCPU Oracle A1 instance took 0.40s per photo plus 201ms per face.
 - With default threads over the whole set, that instance took 3.5 times as long as the M1.
 - On one ONNX Runtime thread the M1 took 71.9s and the A1 took 170.7s, so an M1 core is 2.38 times an A1 core. Geekbench 6 single-core predicted 1.98 times, underselling the M1 by 20%.
 - Threads scale on A1. Two threads ran 1.84 times as fast as one, and four ran 3.11 times as fast.
 - Batching recognition gave identical embeddings and a 1 to 2% gain, so batching is not worth adding.
-- Netcup is estimated, not measured. Its cores score 1.5 to 1.9 times an A1 core on Geekbench, which at four threads puts it anywhere from somewhat faster than the M1 to about 1.6 times slower on large group photos once the 20% error is allowed for.
-**Rejected.** Staying on Oracle Always Free, which from 15 October is 2 OCPUs, where a median photo took 1.8s and a 40-face photo 8.4s, with no uptime guarantee. The M1 demo (D-50), which measured fastest but is a single laptop, a tunnel, and a different environment from the one the team develops against. Hetzner CPX32, at €35.49 a month after Hetzner's June 2026 price rise.
-**Cost.** ⚠ About €15 a month. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
-**Reopen if.** The benchmark on the server, run inside Netcup's 30-day refund window at four threads, is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
-**Open.** How the stable stack sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location was settled on 2026-09-16, Nuremberg, and the demo-week fallback by D-79.
+- The Azure v7 AMD cores are estimated to score comparably to or higher than an A1 core at four threads, providing headroom for InsightFace, Express, and local Supabase Lite.
+**Rejected.** Staying on Oracle Always Free, which from 15 October is 2 OCPUs, where a median photo took 1.8s and a 40-face photo 8.4s, with no uptime guarantee. The M1 demo (D-50), which measured fastest but is a single laptop, a tunnel, and a different environment from the one the team develops against. Hetzner CPX32, at €35.49 a month after Hetzner's June 2026 price rise. A Netcup RS 1000 G12 root server was considered for its dedicated cores, but was ruled out because Azure in UAE North (Dubai) provides significantly lower measured network latency, can be funded across the team's Azure for Students subscriptions, and avoids international ID verification delays.
+**Cost.** ⚠ Managed via student credit rotation. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
+**Reopen if.** The benchmark on the Azure Dubai server at four threads is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
+**Open.** How the stable database sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location is UAE North (Dubai), and the demo-week fallback by D-79.
 **Amended (see D-107).** This entry supersedes D-38, as D-38's heading says. "Amends D-38" above understates it.
 
 ### D-79: The standby is a rotation across three student credits, and it runs only twice ⚠
@@ -646,7 +646,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Blur and Find My Photos both rest on recognition accuracy, and a missed match is the costly failure (spec §4.11.4.5). `buffalo_l` is the more accurate pack, and D-78's timings were measured on it, so the latency the team knows is the latency of the model it ships.
 **Rejected.** `buffalo_s`, faster with lower accuracy, which trades away the one property a missed blur costs.
 **Cost.** A larger model and slower recognition on large group photos: D-78 measured about 200ms per face at two threads on the free-tier instance.
-**Reopen if.** The benchmark on the Netcup server misses D-78's bar.
+**Reopen if.** The benchmark on the Azure Dubai server misses D-78's bar.
 
 ### D-93: The image-serving endpoint is built in two steps, S-13 then S-21
 **Decision.** Changes the slice plan, not D-57. S-13 builds the one image-serving endpoint: a batch of media ids, the check that the requester may see each one (`docs/ARCHITECTURE.md` §1), the public file and public thumbnail only, and the cache key (D-86), with its negative test written first. S-21 adds the subject's own file and the own-variant flag to that same endpoint. There is still one endpoint and one check.
