@@ -482,7 +482,7 @@ It repeats no account-wide setting, because a switch on an event's screen reads 
 - Short invite code entry (6-character alphanumeric) as a manual alternative. Guest and Photographer codes are distinct values.
 - "Join with Invite Link" flow: a user with a code but no account is guided through registration and then to Join Confirmation for that event (§2.3.1).
 - Login: email and password. Password reset via a recovery link, handled natively by Supabase Auth.
-- Session management by Supabase Auth. The access token lasts an hour and refreshes itself. The free plan has no session time-box, so a session ends at sign-out, a password change or a rejected refresh token (D-109).
+- Session management by Supabase Auth. The access token lasts an hour and refreshes itself. The self-hosted Auth sets no session time-box, so a session ends at sign-out, a password change or a rejected refresh token (D-109, D-163).
 - Forced Logout when the Supabase session ends, and Access Removed when the user is removed or blocked from an event, which the app learns from the API's 403 for that event (§2.5.8). Neither is a silent bounce to Login. There is no account suspension in v1.
 - Multi-device login (the same account active on a tablet and phone simultaneously). The upload queue is stored in device-local SQLite and is therefore per-device: photos queued on a phone do not appear on a tablet. Each queued item, and each Local Only file, belongs to the account that created it, and a queued item uploads only under that account's session, so a shared phone never uploads one person's photos as another's.
 
@@ -786,7 +786,7 @@ There is no `PlanTier` concept in v1. Subscriptions are entirely Future Work (§
 - Maximum sub-events per event: **15** (§4.3)
 - Maximum reference photos per person in one event: **5** (§4.2, D-141)
 
-These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests on admission and on an active Photographer's conversion to Guest, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded. Every operation that admits an active Guest or converts a Photographer to Guest takes the same event-row lock before counting and writes in one SQL function called with `rpc`. A conversion at capacity answers 422 `event_full` and leaves the role unchanged (arch:membership, D-143).
+These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under self-hosted Realtime's default of 200 concurrent connections (D-33). Its default of 100 messages a second counts each delivery to each phone, so one photo published to a full event is 150 messages. What Realtime does then is open until a load test measures it (D-163). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests on admission and on an active Photographer's conversion to Guest, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded. Every operation that admits an active Guest or converts a Photographer to Guest takes the same event-row lock before counting and writes in one SQL function called with `rpc`. A conversion at capacity answers 422 `event_full` and leaves the role unchanged (arch:membership, D-143).
 
 ---
 
@@ -922,7 +922,7 @@ One table per area, so a slice cites the part it needs.
 | Scenario | System behavior |
 |---|---|
 | Admin deletes event mid-event | Attendees notified, 14-day soft delete, download still available. |
-| Supabase free-tier project auto-pauses after inactivity | Mitigated via a scheduled keep-alive ping. Surfaces a clear "temporarily unavailable" state with a retry action if it happens anyway. The app learns of it from `GET /health`, which it asks after an API 500 or a Supabase Auth 5xx (§2.5.8, D-161). |
+| Supabase's containers on the server are down while the API runs | Self-hosted Supabase never pauses (D-163), so this is a crash or a stopped stack. Surfaces a clear "temporarily unavailable" state with a retry action. The app learns of it from `GET /health`, which it asks after an API 500 or a Supabase Auth 5xx (§2.5.8, D-161). |
 
 ---
 
