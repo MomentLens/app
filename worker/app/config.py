@@ -28,7 +28,8 @@ class ConfigError(Exception):
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True)
 
-    # The Supabase session pooler on 5432, because the queue lock needs a session (D-123).
+    # Postgres on the server's loopback, or a laptop's SSH tunnel to it, never a transaction
+    # pooler, because the queue lock needs a session (D-123, D-163).
     database_url: str
     r2_account_id: str
     r2_access_key_id: str
@@ -72,7 +73,8 @@ def load(environ: Mapping[str, str] = os.environ) -> Settings:
         raise ConfigError(f"DATABASE_URL does not parse: {type(error).__name__}") from None
     if str(port) == "6543":
         raise ConfigError(
-            "DATABASE_URL points at the transaction pooler on 6543. The queue lock needs a"
-            " session, so use the session pooler's string on 5432 (D-123)"
+            "DATABASE_URL points at a transaction pooler on 6543. The queue lock needs a"
+            " session, so connect to Postgres on 5432, or to the SSH tunnel on 15432 from a"
+            " laptop (D-123, D-163)"
         )
     return Settings(**values)
