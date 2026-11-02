@@ -249,19 +249,19 @@ if (!sshHost || sshHost === 'momentlens')
     'no "momentlens" host in ~/.ssh/config, needed to deploy the dev server (Handbook §13.4)',
   );
 
-// supabase db push targets the project this checkout is linked to, never the one in .env.
+// Migrations reach the self-hosted database with db push --db-url through an SSH tunnel (D-163).
+// A checkout still linked to a hosted project pushes there when --db-url is left off, and the
+// server never gets the migration.
 let linked = null;
 try {
   linked = JSON.parse(read('supabase/.temp/linked-project.json')).name;
 } catch {
-  // Not linked in this checkout. A worktree never is, since supabase/.temp is gitignored.
+  // Not linked in this checkout, which is what D-163 wants.
 }
-if (linked !== 'momentlens-dev')
+if (linked)
   warn(
     'supabase',
-    linked
-      ? `linked to ${linked}, so db push would go there, not to momentlens-dev`
-      : 'not linked, needed only to push a migration (Handbook §13.4)',
+    `linked to ${linked}, so db push without --db-url would go there and miss the server. Run pnpm exec supabase unlink (Handbook §13.4)`,
   );
 
 // WSL2 reaches the Windows drive through a slow network filesystem that breaks file watching.
