@@ -228,6 +228,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** The old numbers were chosen without reference to any free tier. Supabase's free plan allows 200 peak concurrent Realtime connections and 2 million Realtime messages per month; a 500-guest event broadcasting every upload exceeds both from a single wedding.
 **Cost.** None practically. Both numbers are far above anything a demo will produce.
 **Amended (see D-102).** The 150 counts active Guests. The Admin and Photographers do not count.
+**Amended (see D-163).** Supabase runs self-hosted on the server now, so the free plan's numbers no longer apply. The pinned Realtime image defaults to 200 concurrent connections and 100 messages a second, and every message delivered to a phone counts toward the second. A full event's 150 Guests stay under the first. One photo published to all of them is 150 messages, over the second, and what happens then is Open.
 
 ---
 
@@ -426,9 +427,9 @@ Two constraints settled a third of these before any of them were argued individu
 **Decision.** The reprocess job compares stored embeddings against the newly-active reference set, then regenerates variants for matched photos only.
 **Why.** Every face in every photo already has an embedding from its original processing pass. Re-running the model is the expensive version of a job that is milliseconds of cosine comparison. The naive reading of "asynchronous reprocessing" is the expensive one, which is why it is stated as a rule.
 
-### D-67 — The Supabase keep-alive runs from GitHub Actions
+### D-67 — The Supabase keep-alive runs from GitHub Actions ~~(SUPERSEDED by D-163)~~
 **Decision.** A scheduled workflow, not a cron on the compute box.
-**Why.** D-38 put the keep-alive on the instance it was meant to protect against, chaining two failures together. Under D-50 it is worse, because the laptop will not be running at 3am on a Tuesday. One YAML file, independent failure domain.
+**Removed.** The rest of this entry is in git history: `git show 4a3f737:docs/DecisionLog.md`.
 
 ### D-68 — Code comprehension is not a merge gate, and simplicity is not an instruction to the agent
 **Decision.** Supersedes D-45.
@@ -543,6 +544,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Rejected.** A warm standby running continuously, which spends a credit to guard against something that has not happened. One provider with no successor, which is D-38's plan and ends the day that credit expires.
 **Cost.** ⚠ The rehearsal proves one provider. Switching later makes it stale, and a different image or firewall model is exactly where `scripts/provision.sh` would break. Ubuntu 24.04 everywhere keeps that small, and the script refuses anything else.
 **What makes it real.** Handbook §13's three criteria. The script exists. The DNS record is written down in `docs/ARCHITECTURE.md` §7, with the registrar, the A record and its 300s TTL. The rehearsal is still owed, half a day in Phase 7.
+**Amended (see D-163).** The database now lives on the server's disk, so a swap to the standby has to carry it, which R2 never needed. How it moves is Open, and the rehearsal has to move it too. D-67, which the Why line cites, is superseded, and no keep-alive runs anywhere now.
 
 ---
 
@@ -806,6 +808,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
 **Amended (see D-129).** The avatar is hidden from everyone but the user only where an event in which their membership has Do Not Publish on shows them.
 **Amended (see D-141).** The profile photo is never a reference, so S-20 sets one with no `profile` reference and no `reference_process` message. A reference photo belongs to one event, its key carries that event, and only its owner gets it presigned.
+**Amended (see D-163).** Auth runs self-hosted on the server. `infra/supabase/setup.sh` sets the settings above in place of the two dashboards. Recovery mail goes through Resend over SMTP once its key is set, and Auth sends at most 2 emails an hour. Neither `setup.sh` nor either compose file sets a session time-box or an inactivity timeout, so a session still ends at sign-out, a password change or a rejected refresh token.
 
 ### D-110: Event rulings from S-02's read-back
 **Decision.** Amends D-105. Ukasha ruled on each of these on 2026-09-25.
@@ -1069,6 +1072,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Reopen if.** The worker needs to run jobs in parallel, which the lock and the order both forbid.
 **Amended (see D-130).** The worker no longer processes a soft-deleted photo. A message naming one is deleted as done, and `media_delete` removes its files.
 **Amended (see D-149).** The SQL test runs in one CI job on every pull request, which runs it when `worker/`, `supabase/`, CI's workflow or `scripts/verify.mjs` changed and passes at once otherwise. That job is a required check on `main`, so a pgmq call or a media update the real database refuses blocks the merge.
+**Amended (see D-163).** `DATABASE_URL` is Postgres on the server's loopback, `127.0.0.1:5432`, which `infra/supabase/setup.sh` writes. It is still a session connection, as the lock needs. A laptop's worker reaches it through the SSH tunnel in hb §13.4. GitHub's runners cannot reach it, so where the SQL test's CI job runs is Open.
 
 ### D-124: Each platform draws the controls, and the brand stays in the content
 **Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
@@ -1663,6 +1667,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** The Windows check is manual, so a worker PR merged without it can break B's and C's machines while CI is green. Windows and the server no longer share an operating system, so a pass on Windows says nothing about Linux. InsightFace is not in `requirements.txt` yet; the PR that adds it (P0-5) has to show it installs on Windows without a C compiler.
 **Reopen if.** A Windows-only failure reaches `main` twice, or InsightFace needs a C compiler to install on Windows.
 
+### D-163: Procedures for the self-hosted Supabase stack
+**Decision.** Supersedes D-67 and amends D-33, D-79, D-109 and D-123. Ukasha decided this on 2026-11-03, after D-78 moved Supabase onto the server. In the docs, "the dev project" now means the dev database in that stack.
+- The keep-alive is retired and `.github/workflows/keepalive.yml` is deleted. A self-hosted stack never pauses, and the server is deallocated about 22 hours a day, so a daily run would fail on most days. `pnpm --filter api test:rls` checks the same RLS rule on `health_check`.
+- Migrations reach the dev database through an SSH tunnel to the server's loopback, where Postgres listens and nowhere else (`infra/supabase/docker-compose.override.yml`), and `supabase db push --db-url` sends them (hb §13.4). A checkout linked to a hosted project with `supabase link` would push there and miss the server with no error, so `pnpm check:machine` warns on any link.
+- The worker's `DATABASE_URL` is Postgres on the server's loopback, which `infra/supabase/setup.sh` writes. A laptop's worker reaches it through the same tunnel.
+- Auth's settings come from `infra/supabase/setup.sh`, not from a dashboard.
+- Realtime runs with the pinned image's defaults: 200 concurrent connections and 100 messages a second, where every message delivered to a phone counts. One photo published to a full 150-Guest event is 150 messages. What Realtime does then is Open until a load test measures it, and no limit changes before that.
+**Why.** D-78 moved Supabase onto the server and left the procedures written for hosted projects. A migration pushed with the old steps goes to the hosted project and never reaches the server, and nothing reports it.
+**Rejected.** Keeping the keep-alive as a manual check, which repeats `test:rls` and runs only when someone remembers. Leaving the workflow as it was, failing on most days or keeping unused hosted projects awake. Rewriting the migration steps later, which leaves a teammate able to push to the wrong database until then. Raising Realtime's message limit now, with a number chosen before any measurement.
+**Cost.** Everyone who pushes a migration holds the dev database's `postgres` password, and a push needs the server running. Nobody has run the tunnel commands against the server yet. Two things D-78 changed are still Open: how the standby carries the database, and where CI's RLS and worker SQL job runs, since GitHub's runners cannot reach Postgres on the server's loopback and reach the API only while the server runs.
+**Reopen if.** A push through the tunnel fails on the server, or the tunnel will not stay open from a Windows machine.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -1672,5 +1688,8 @@ These are not settled and should not be treated as though they are.
 - **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
+- **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
+- **Where CI's RLS and worker SQL job runs.** Its secrets name the dev project, and GitHub's runners cannot reach Postgres on the server's loopback (D-163). The job is a required check on `main` (D-149).
+- **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
 - **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
