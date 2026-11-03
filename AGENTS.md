@@ -112,6 +112,7 @@ worker/          Python worker   → see worker/AGENTS.md
 packages/shared-types/           zod schemas, the app↔API contract, and the sub-event status function (TS only)
 supabase/migrations/
 e2e/             Maestro flows
+loadtest/        k6 load test of the dev server: guests over HTTP and Realtime → see loadtest/README.md
 docs/            spec, handbook, decision log, work slices, ARCHITECTURE.md
 .claude/skills/  /slice, which runs a work slice: SKILL.md routes to one file per stage in stages/; .agents/skills/slice is Codex's copy, which the gate keeps identical
 .claude/agents/  slice-auditor and slice-verifier, the subagents /slice calls; .codex/agents holds Codex's copies, which the gate checks
