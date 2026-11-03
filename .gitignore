@@ -50,3 +50,8 @@ worker/**/__pycache__/
 
 # Per-slice agent logs and scratch (Handbook §18.8)
 .slices/
+
+# Load test: seed files hold the test accounts' password; results stay on the machine that ran them
+loadtest/.seed/
+loadtest/results/*
+!loadtest/results/.gitkeep
