@@ -305,18 +305,10 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    # Self-hosted Supabase, through its gateway on loopback 54321 (infra/supabase), since the
-    # worker's /health holds 8000. The app talks to Auth and Realtime. PostgREST is public as on
-    # hosted Supabase, for API runs on laptops, and RLS denies it everything but SELECT on media
-    # and event (D-73).
+    # Self-hosted Supabase, through the loopback server on 54321 below, which routes to Auth and
+    # Realtime (infra/supabase). The app talks to those two only. There is no PostgREST: the API
+    # reads Postgres directly (D-164).
     location /auth/v1/ {
-        proxy_pass http://127.0.0.1:54321;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-    }
-    location /rest/v1/ {
         proxy_pass http://127.0.0.1:54321;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -345,6 +337,43 @@ else
   die "$site already exists for a different hostname. Remove it, or pass the hostname it already has."
 fi
 ln -sfn "$site" /etc/nginx/sites-enabled/momentlens
+
+# Takes the place of Supabase's Envoy gateway on loopback 54321, which setup.sh stopped above
+# (D-164). The public site and the API both send Auth and Realtime traffic here. Rewritten on every
+# run, unlike the public site, because certbot never edits it. A public site written before D-164
+# still has a /rest/v1/ block; it now gets this server's 404.
+loopback="/etc/nginx/sites-available/momentlens-supabase"
+cat >"$loopback" <<'EOF'
+server {
+    listen 127.0.0.1:54321;
+    client_max_body_size 1m;
+
+    # Auth serves from /, so the prefix comes off, as Envoy did.
+    location /auth/v1/ {
+        proxy_pass http://127.0.0.1:9999/;
+        proxy_set_header X-Forwarded-Prefix /auth/v1;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # The app's WebSocket and nothing else of Realtime's, so its tenant API stays closed. Realtime
+    # reads the tenant from the first label of Host, and its self-hosted seed names it realtime-dev.
+    location = /realtime/v1/websocket {
+        proxy_pass http://127.0.0.1:4000/socket/websocket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host realtime-dev.supabase-realtime;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+ln -sfn "$loopback" /etc/nginx/sites-enabled/momentlens-supabase
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable nginx
