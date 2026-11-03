@@ -1,15 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
-import type { Env } from '../config';
-
-// How long the API waits for one Supabase request. The phone gives up after 10 s, so a stalled
+// How long the API waits for one Auth request. The phone gives up after 10 s, so a stalled
 // call fails here first.
 export const SUPABASE_TIMEOUT_MS = 3000;
 
-// A Supabase client for code running on a server. There is no user session, so nothing is
-// persisted or refreshed. The RLS test builds its clients here too, so it exercises the client the
-// API uses, including with the publishable key it must never be able to read with. Only the API
-// passes `timeoutMs`: the test reaches the dev project from a CI runner, where one call can take
+// A Supabase Auth client for checking access tokens. There is no user session, so nothing is
+// persisted or refreshed. The API reads and writes data through its SQL pool instead (db/sql.ts,
+// D-164). The auth tests build their clients here too, so they exercise the client the API uses.
+// Only the API passes `timeoutMs`: a test reaches Auth from a CI runner, where one call can take
 // longer than the API's deadline.
 export function createServerClient(
   url: string,
@@ -38,11 +36,3 @@ export function createServerClient(
 // The client's own inferred type. The bare SupabaseClient type widens one of its generics to
 // any, which the type-checked lint rules reject as an unsafe conversion.
 export type Supabase = ReturnType<typeof createServerClient>;
-
-// The API's one Supabase client. It holds the secret key, so RLS never applies to its queries
-// and every authorization decision lives in the service layer (D-73).
-export function createSupabase(env: Env): Supabase {
-  return createServerClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
-    timeoutMs: SUPABASE_TIMEOUT_MS,
-  });
-}

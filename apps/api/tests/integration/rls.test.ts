@@ -10,20 +10,33 @@
 // functions through the API's attendee store (D-143), the Pending Approvals functions through
 // the API's join request store (D-144), and S-31's event policy, its Realtime delivery,
 // album_status, the album write and the consent table through the API's stores (D-161). It needs a
-// real project, so it reads SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the
-// dev project from the environment. Each test makes its own accounts under @momentlens.me and
-// deletes them after, and deletes the events it made. No email is sent, because the accounts are
-// created confirmed through the admin API.
+// real project, so it reads five settings for the dev project from the environment:
+//
+// - SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY, the anon JWT, for Auth and Realtime, as the app uses
+//   them.
+// - SUPABASE_SERVICE_ROLE_KEY, the service-role JWT, for Auth's admin API only. The API never reads
+//   it.
+// - API_DATABASE_URL, the API's own login, which runs as service_role. The stores and every
+//   fixture write use it, as the API does (D-164).
+// - DATABASE_URL, the postgres login, which may switch to anon and authenticated. A client that
+//   skips the API runs as one of those two, with a signed-in user's claims, as PostgREST ran it
+//   before D-164 removed PostgREST (tests/support/sql-client.ts).
+//
+// Postgres listens on the server's loopback only, so both database URLs go through the SSH tunnel
+// in Handbook §13.4. Each test makes its own accounts under @momentlens.me and deletes them after,
+// and deletes the events it made. No email is sent, because the accounts are created confirmed
+// through the admin API.
 //
 // `pnpm --filter api test:rls` loads them from the root .env when it exists and sets
 // REQUIRE_SUPABASE, so a missing value fails there instead of skipping. Plain `pnpm test` skips
-// this file. CI runs test:rls through scripts/verify.mjs in the dev-project job of
-// .github/workflows/ci.yml, with the dev project's keys as repository secrets (D-106).
+// this file. Where CI runs it is Open since D-163, because GitHub's runners cannot reach Postgres
+// on the server.
 import { randomBytes, randomUUID } from 'node:crypto';
 
 import { afterAll, describe, expect, it as jestIt, jest } from '@jest/globals';
-import { createClient, REALTIME_SUBSCRIBE_STATES } from '@supabase/supabase-js';
+import { REALTIME_SUBSCRIBE_STATES } from '@supabase/supabase-js';
 import { pino } from 'pino';
+import postgres from 'postgres';
 import { z } from 'zod';
 
 import {
@@ -41,6 +54,8 @@ import type {
   VenueChoice,
 } from '@momentlens/shared-types';
 
+import { createSql } from '../../src/db/sql';
+import type { Sql } from '../../src/db/sql';
 import { createServerClient } from '../../src/db/supabase';
 import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
@@ -87,6 +102,8 @@ import {
   updateSubEventParams,
 } from '../../src/services/sub-events';
 import { createVenueQrStore } from '../../src/services/venue-qrs';
+import { claimsOf, sqlClient } from '../support/sql-client';
+import type { SqlClient } from '../support/sql-client';
 
 // A test here makes up to about 20 requests in sequence to the dev project in Frankfurt, two of
 // them account creations, and from a GitHub runner that passed Jest's default 5 seconds.
@@ -145,11 +162,21 @@ jestIt('bounds a 51-account Auth burst and releases slots after a failed request
   await expect(limited(() => Promise.resolve('next request'))).resolves.toBe('next request');
 });
 
+const SETTINGS = [
+  'SUPABASE_URL',
+  'SUPABASE_PUBLISHABLE_KEY',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'API_DATABASE_URL',
+  'DATABASE_URL',
+] as const;
+
 function projectFromEnv() {
-  const url = process.env.SUPABASE_URL;
-  const secretKey = process.env.SUPABASE_SECRET_KEY;
-  const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
-  return url && secretKey && publishableKey ? { url, secretKey, publishableKey } : null;
+  const [url, publishableKey, serviceRoleKey, apiDatabaseUrl, ownerDatabaseUrl] = SETTINGS.map(
+    (name) => process.env[name],
+  );
+  return url && publishableKey && serviceRoleKey && apiDatabaseUrl && ownerDatabaseUrl
+    ? { url, publishableKey, serviceRoleKey, apiDatabaseUrl, ownerDatabaseUrl }
+    : null;
 }
 
 const project = projectFromEnv();
@@ -158,37 +185,51 @@ const required = process.env.REQUIRE_SUPABASE === '1';
 if (project === null) {
   if (required) {
     jestIt('has the dev project settings it needs', () => {
-      throw new Error(
-        'Set SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_PUBLISHABLE_KEY for the dev project in the root .env',
-      );
+      throw new Error(`Set ${SETTINGS.join(', ')} for the dev project in the root .env`);
     });
   } else {
     jestIt.skip('needs the dev project; run pnpm --filter api test:rls', () => undefined);
   }
 } else {
   const silent = pino({ level: 'silent' });
-  const admin = createServerClient(project.url, project.secretKey);
+  // The API's login, as the stores use it. No statement deadline, as before D-164, so a slow
+  // round trip through the tunnel fails on Jest's timeout with a clear message instead.
+  const db = createSql(project.apiDatabaseUrl);
+  // The postgres login, which only switches to anon or authenticated here.
+  const owner = createSql(project.ownerDatabaseUrl);
+  // Reads and writes as service_role through `db`, and Auth's admin API with the service-role JWT.
+  const admin = {
+    ...sqlClient(db, { role: 'service_role' }),
+    auth: createServerClient(project.url, project.serviceRoleKey).auth,
+  };
+  // A client with only the anon key, which PostgREST ran as anon.
+  const anon = sqlClient(owner, { role: 'anon' });
   const created: string[] = [];
   const authRequest = limitAuthRequests();
 
   // One delete per account the file made, four at a time. One at a time, the 200 or so accounts
   // took a minute from a GitHub runner. A failed delete fails the suite. An account whose media
   // rows outlived their event cannot be deleted, and would otherwise stay on the shared dev project
-  // unnoticed. An account a test already deleted answers 404.
+  // unnoticed. An account a test already deleted answers 404. The connections close either way, or
+  // Jest waits on them.
   afterAll(async () => {
-    const failed: string[] = [];
-    const queue = [...created];
-    const deleteNext = async () => {
-      for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
-        const { error } = await admin.auth.admin.deleteUser(id);
-        if (error && error.status !== 404) {
-          failed.push(`${id}: ${error.message}`);
+    try {
+      const failed: string[] = [];
+      const queue = [...created];
+      const deleteNext = async () => {
+        for (let id = queue.pop(); id !== undefined; id = queue.pop()) {
+          const { error } = await admin.auth.admin.deleteUser(id);
+          if (error && error.status !== 404) {
+            failed.push(`${id}: ${error.message}`);
+          }
         }
+      };
+      await Promise.all(Array.from({ length: AUTH_CONCURRENCY }, deleteNext));
+      if (failed.length > 0) {
+        throw new Error(`Could not delete ${failed.length} test accounts:\n${failed.join('\n')}`);
       }
-    };
-    await Promise.all(Array.from({ length: AUTH_CONCURRENCY }, deleteNext));
-    if (failed.length > 0) {
-      throw new Error(`Could not delete ${failed.length} test accounts:\n${failed.join('\n')}`);
+    } finally {
+      await Promise.all([db.end(), owner.end()]);
     }
   }, 300_000);
 
@@ -222,8 +263,8 @@ if (project === null) {
     return { id: result.data.user.id, email: result.email, password: result.password };
   }
 
-  // A client that queries as this user, with the publishable key and their access token, as the
-  // app would if it skipped the API.
+  // A client that queries as this user, with the claims of the access token Auth signed for them,
+  // as the app would if it skipped the API.
   const signedInClient = async (user: { email: string; password: string }) => {
     const session = await createServerClient(
       project.url,
@@ -231,38 +272,36 @@ if (project === null) {
     ).auth.signInWithPassword({ email: user.email, password: user.password });
     expect(session.error).toBeNull();
     const accessToken = session.data.session?.access_token ?? '';
-    return createClient(project.url, project.publishableKey, {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    });
+    return sqlClient(owner, { role: 'authenticated', claims: claimsOf(accessToken) });
   };
 
   describe('health_check in the dev project', () => {
-    it('shows the seeded row to the secret key', async () => {
-      const secret = createServerClient(project.url, project.secretKey);
-      const result = await secret.from('health_check').select('id');
+    it("shows the seeded row to the API's login", async () => {
+      const result = await admin.from('health_check').select('id');
       expect(result.error).toBeNull();
       expect(result.data).toEqual([{ id: 1 }]);
     });
 
-    it('shows no rows, and no error, to the publishable key', async () => {
-      const publishable = createServerClient(project.url, project.publishableKey);
-      const result = await publishable.from('health_check').select('id');
+    it('shows no rows, and no error, to anon', async () => {
+      const result = await anon.from('health_check').select('id');
       expect(result.error).toBeNull();
       expect(result.data).toEqual([]);
     });
 
-    it('reports ok through the real database check with the secret key', async () => {
-      const check = createDatabaseCheck(createServerClient(project.url, project.secretKey), silent);
-      await expect(check()).resolves.toBe('ok');
+    it("reports ok through the real database check with the API's login", async () => {
+      await expect(createDatabaseCheck(db, silent)()).resolves.toBe('ok');
     });
 
-    it('reports error, not ok, when the check is handed the publishable key', async () => {
-      const check = createDatabaseCheck(
-        createServerClient(project.url, project.publishableKey),
-        silent,
-      );
-      await expect(check()).resolves.toBe('error');
+    // The check's own guard against a login that RLS hides the row from: it answers error, not ok.
+    it('reports error, not ok, when the check runs as anon', async () => {
+      const asAnon = postgres(project.ownerDatabaseUrl, { max: 1, connection: { role: 'anon' } });
+      try {
+        await expect(createDatabaseCheck(asAnon as unknown as Sql, silent)()).resolves.toBe(
+          'error',
+        );
+      } finally {
+        await asAnon.end();
+      }
     });
   });
 
@@ -389,7 +428,7 @@ if (project === null) {
 
     // Every write is checked by its effect, read back with the secret key, so the test does not
     // depend on whether the refusal arrives as an error or as zero rows.
-    async function expectNoAccess(client: ReturnType<typeof createServerClient>, ownId: string) {
+    async function expectNoAccess(client: SqlClient, ownId: string) {
       const other = await createNamedUser('Other Person');
       await admin.from('subject').insert({ user_id: other.id });
 
@@ -427,7 +466,7 @@ if (project === null) {
 
     it('shows the publishable key no rows and lets it write nothing', async () => {
       const own = await createNamedUser();
-      await expectNoAccess(createServerClient(project.url, project.publishableKey), own.id);
+      await expectNoAccess(anon, own.id);
     });
 
     it('shows a signed-in user no rows, their own included, and lets them write nothing', async () => {
@@ -437,7 +476,7 @@ if (project === null) {
 
     it("reads the caller's profile through the API's service", async () => {
       const user = await createNamedUser('Service Reader');
-      const find = createFindProfile(admin);
+      const find = createFindProfile(db);
       await expect(find(user.id)).resolves.toEqual({
         userId: user.id,
         fullName: 'Service Reader',
@@ -461,7 +500,7 @@ if (project === null) {
       expect(header.alg).toMatch(/^(ES|RS)256$/);
       expect(header.kid).toEqual(expect.any(String));
 
-      const verify = createTokenVerifier(createServerClient(project.url, project.secretKey));
+      const verify = createTokenVerifier(createServerClient(project.url, project.publishableKey));
       await expect(verify(accessToken)).resolves.toEqual({ id: user.id });
     });
   });
@@ -469,7 +508,7 @@ if (project === null) {
   // create_event, list_my_events and the four tables S-02 adds (D-110, arch:event, arch:venue,
   // arch:sub_event, arch:membership), through the store the API uses.
   describe('event, venue, sub_event and membership in the dev project', () => {
-    const store = createEventStore(admin);
+    const store = createEventStore(db);
     const events: string[] = [];
     const HOUR = 60 * 60 * 1000;
     const T0 = Date.parse('2026-12-10T14:00:00.000Z');
@@ -1112,7 +1151,7 @@ if (project === null) {
       expect(invite.error).toBeNull();
       const { token, shortcode } = invite.data as { token: string; shortcode: string };
       const clients = [
-        createServerClient(project.url, project.publishableKey),
+        anon,
         // The event's own Admin, who still reads nothing directly (root invariant 14).
         await signedInClient(a),
       ];
@@ -1228,7 +1267,7 @@ if (project === null) {
     });
 
     describe('invite, join_event and join requests', () => {
-      const invites = createInviteStore(admin);
+      const invites = createInviteStore(db);
 
       interface InviteRow {
         id: string;
@@ -1297,7 +1336,7 @@ if (project === null) {
       }
 
       describe('S-05 invite management', () => {
-        const management = createInviteManagementStore(admin);
+        const management = createInviteManagementStore(db);
 
         it('refuses another Admin, wrong roles and inactive or absent members without writes', async () => {
           const owner = await createNamedUser();
@@ -1343,10 +1382,7 @@ if (project === null) {
           const owner = await createNamedUser();
           const event = await createdEvent(owner.id);
           const before = await liveInvites(event.id);
-          for (const client of [
-            createServerClient(project.url, project.publishableKey),
-            await signedInClient(owner),
-          ]) {
+          for (const client of [anon, await signedInClient(owner)]) {
             for (const [name, params] of [
               ['list_event_invites', { p_event_id: event.id, p_actor_id: owner.id }],
               [
@@ -1993,7 +2029,7 @@ if (project === null) {
     });
 
     describe('the schedule and sub-event writes', () => {
-      const subEvents = createSubEventStore(admin);
+      const subEvents = createSubEventStore(db);
 
       // The schedule, failing the test when the event has none to read.
       async function scheduleOf(eventId: string): Promise<SubEvent[]> {
@@ -2449,7 +2485,7 @@ if (project === null) {
         const before = await scheduleOf(event.id);
         const mehndi = named(before, 'Mehndi');
         const clients = [
-          createServerClient(project.url, project.publishableKey),
+          anon,
           // The event's own Admin, who still writes nothing directly (root invariant 14).
           await signedInClient(a),
         ];
@@ -2491,8 +2527,8 @@ if (project === null) {
     });
 
     describe('media, start_upload and complete_upload', () => {
-      const media = createMediaStore(admin);
-      const subEvents = createSubEventStore(admin);
+      const media = createMediaStore(db);
+      const subEvents = createSubEventStore(db);
 
       // A SHA-256 as the phone sends it: 64 lowercase hex characters.
       const hash = () => (randomUUID() + randomUUID()).replaceAll('-', '');
@@ -2849,10 +2885,7 @@ if (project === null) {
           const row = { user_id: g.id, sub_event_id: mehndi, method: 'gps' };
           expect((await admin.from('venue_verification').insert(row)).error).toBeNull();
           const before = await checkIns(g.id);
-          const clients = [
-            createServerClient(project.url, project.publishableKey),
-            await signedInClient(g),
-          ];
+          const clients = [anon, await signedInClient(g)];
           for (const client of clients) {
             const read = await client.from('venue_verification').select('*');
             expect(read.error).toBeNull();
@@ -2894,7 +2927,7 @@ if (project === null) {
         });
 
         async function qrList(eventId: string, actorId: string) {
-          const result = await createVenueQrStore(admin).list(eventId, actorId);
+          const result = await createVenueQrStore(db).list(eventId, actorId);
           return z.object({ outcome: z.string(), venue_qrs: z.array(Credential).optional() }).parse(
             result.outcome === 'listed'
               ? {
@@ -2910,7 +2943,7 @@ if (project === null) {
         }
 
         async function rotate(eventId: string, actorId: string, venueId: string, secret: string) {
-          const result = await createVenueQrStore(admin).regenerate(eventId, actorId, venueId, {
+          const result = await createVenueQrStore(db).regenerate(eventId, actorId, venueId, {
             expectedSecret: secret,
           });
           return z.object({ outcome: z.string(), venue_qr: Credential.optional() }).parse(
@@ -3112,7 +3145,7 @@ if (project === null) {
 
         it('gives two concurrent API rotations of one displayed secret one winner', async () => {
           const f = await fixture();
-          const qrStore = createVenueQrStore(admin);
+          const qrStore = createVenueQrStore(db);
           const results = await Promise.all([
             qrStore.regenerate(f.event.id, f.a.id, f.qr.venue_id, { expectedSecret: f.qr.secret }),
             qrStore.regenerate(f.event.id, f.a.id, f.qr.venue_id, { expectedSecret: f.qr.secret }),
@@ -3359,10 +3392,7 @@ if (project === null) {
 
         it('gives the app keys no QR secrets, table writes or RPC execution', async () => {
           const f = await fixture();
-          const clients = [
-            createServerClient(project.url, project.publishableKey),
-            await signedInClient(f.a),
-          ];
+          const clients = [anon, await signedInClient(f.a)];
           for (const client of clients) {
             const read = await client.from('venue').select('qr_secret').eq('event_id', f.event.id);
             expect(read.error).toBeNull();
@@ -3835,7 +3865,7 @@ if (project === null) {
         started(await media.start(upload, UPLOAD_LIMITS));
         const before = await mediaRow(upload.mediaId);
         const clients = [
-          createServerClient(project.url, project.publishableKey),
+          anon,
           // The row's own uploader, who still reads and writes nothing directly (root invariant 14).
           await signedInClient(a),
         ];
@@ -3870,8 +3900,8 @@ if (project === null) {
     });
 
     describe('attendee management (D-143)', () => {
-      const attendees = createAttendeeStore(admin);
-      const invites = createInviteStore(admin);
+      const attendees = createAttendeeStore(db);
+      const invites = createInviteStore(db);
       const page = { search: '', role: null, subEventId: null, checkIn: null, after: null };
       async function row(eventId: string, userId: string) {
         const result = await admin
@@ -4205,10 +4235,7 @@ if (project === null) {
           .eq('id', event.id);
         expect(archived.error).toBeNull();
         const params = attendeeMutationParams(event.id, a.id, t.id, expected);
-        for (const client of [
-          createServerClient(project.url, project.publishableKey),
-          await signedInClient(a),
-        ]) {
+        for (const client of [anon, await signedInClient(a)]) {
           for (const [name, args] of [
             [
               'list_attendees',
@@ -4252,8 +4279,8 @@ if (project === null) {
     });
 
     describe('S-17 manual check-in and coverage (D-157)', () => {
-      const attendees = createAttendeeStore(admin);
-      const invites = createInviteStore(admin);
+      const attendees = createAttendeeStore(db);
+      const invites = createInviteStore(db);
       const page = { search: '', role: null, subEventId: null, checkIn: null, after: null };
 
       async function member(eventId: string, userId: string) {
@@ -4511,7 +4538,7 @@ if (project === null) {
 
       it('shares the upload lock and permits every sub-event after the grant without fabricating venue rows', async () => {
         const { a, t, event, subEvents, expected } = await fixture();
-        const media = createMediaStore(admin);
+        const media = createMediaStore(db);
         const offer = (subEventId: string): NewUpload => {
           const mediaId = randomUUID();
           const keys = uploadKeys(mediaId);
@@ -4727,10 +4754,7 @@ if (project === null) {
           ).error,
         ).toBeNull();
         const params = attendeeMutationParams(event.id, a.id, t.id, expected);
-        for (const client of [
-          createServerClient(project.url, project.publishableKey),
-          await signedInClient(a),
-        ]) {
+        for (const client of [anon, await signedInClient(a)]) {
           const base = {
             p_event_id: event.id,
             p_actor_id: a.id,
@@ -4772,7 +4796,7 @@ if (project === null) {
     });
 
     describe('event_settings and update_event_settings', () => {
-      const invites = createInviteStore(admin);
+      const invites = createInviteStore(db);
       // A small cap, as the join_event tests pass, so the last place costs a few accounts.
       const CAP = 3;
 
@@ -5108,7 +5132,7 @@ if (project === null) {
         const event = await createdEvent(a.id, request({ approvalMode: 'manual' }));
         await addRequest(event.id, x.id, 'guest', iso(T0));
         const clients = [
-          createServerClient(project.url, project.publishableKey),
+          anon,
           // The event's own Admin, who still reads and writes nothing directly (root invariant 14).
           await signedInClient(a),
         ];
@@ -5139,8 +5163,8 @@ if (project === null) {
     });
 
     describe('pending approvals (D-144)', () => {
-      const joinRequests = createJoinRequestStore(admin);
-      const invites = createInviteStore(admin);
+      const joinRequests = createJoinRequestStore(db);
+      const invites = createInviteStore(db);
       // A small cap, as the join_event tests pass, so the last place costs a few accounts.
       const CAP = 3;
 
@@ -5614,7 +5638,7 @@ if (project === null) {
         const targets = requestTargetsParam([one]);
         const actor = { p_event_id: event.id, p_actor_id: a.id };
         for (const client of [
-          createServerClient(project.url, project.publishableKey),
+          anon,
           // The event's own Admin, who still reads and writes nothing directly (root invariant 14).
           await signedInClient(a),
         ]) {
@@ -5652,8 +5676,8 @@ if (project === null) {
     });
 
     describe('media SELECT policy and list_album (S-13)', () => {
-      const albumStore = createAlbumStore(admin);
-      const subEvents = createSubEventStore(admin);
+      const albumStore = createAlbumStore(db);
+      const subEvents = createSubEventStore(db);
 
       async function eventWithSchedule(adminId: string) {
         const event = await createdEvent(adminId);
@@ -5848,10 +5872,7 @@ if (project === null) {
       it('protects list_album and list_uploaders from publishable key and authenticated clients', async () => {
         const a = await createNamedUser('Admin');
         const event = await createdEvent(a.id);
-        const clients = [
-          createServerClient(project.url, project.publishableKey),
-          await signedInClient(a),
-        ];
+        const clients = [anon, await signedInClient(a)];
 
         for (const client of clients) {
           const resAlbum = await client.rpc('list_album', { p_event_id: event.id });
@@ -6004,10 +6025,10 @@ if (project === null) {
     });
 
     describe('S-31: the event policy, Realtime on event, the album state and consent', () => {
-      const subEvents = createSubEventStore(admin);
-      const media = createMediaStore(admin);
-      const consent = createConsentStore(admin);
-      const findProfile = createFindProfile(admin);
+      const subEvents = createSubEventStore(db);
+      const media = createMediaStore(db);
+      const consent = createConsentStore(db);
+      const findProfile = createFindProfile(db);
       const hash = () => randomBytes(32).toString('hex');
 
       async function firstSubEvent(eventId: string): Promise<string> {
@@ -6056,7 +6077,7 @@ if (project === null) {
       }
 
       // The ids of the event rows this client can read.
-      async function visibleEvents(client: ReturnType<typeof createServerClient>) {
+      async function visibleEvents(client: SqlClient) {
         const read = await client.from('event').select('id');
         expect(read.error).toBeNull();
         return z
@@ -6149,9 +6170,7 @@ if (project === null) {
         }
         // Removed here and active in another event: that event's row and not this one.
         await expect(visibleEvents(crem)).resolves.toEqual([other.id]);
-        await expect(
-          visibleEvents(createServerClient(project.url, project.publishableKey)),
-        ).resolves.toEqual([]);
+        await expect(visibleEvents(anon)).resolves.toEqual([]);
 
         // The policy grants reads only. Not even the Admin writes the row; the album write goes
         // through the API (root invariant 14).
@@ -6408,11 +6427,7 @@ if (project === null) {
         });
 
         // RLS is on with no policy: a client reads nothing and writes nothing, A included.
-        for (const client of [
-          createServerClient(project.url, project.publishableKey),
-          await signedInClient(a),
-          await signedInClient(b),
-        ]) {
+        for (const client of [anon, await signedInClient(a), await signedInClient(b)]) {
           const read = await client.from('consent').select('*');
           expect(read.error).toBeNull();
           expect(read.data).toEqual([]);

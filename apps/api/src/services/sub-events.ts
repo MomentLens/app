@@ -8,7 +8,7 @@ import type {
   VenueChoice,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import { ApiError } from '../middleware/errors';
 import { requireAdmin, requireMember, toTimestamp } from './events';
 import type { EventStore } from './events';
@@ -152,63 +152,85 @@ export function updateSubEventParams(
   };
 }
 
-// Calls a write function and reads its one row. One rpc is one transaction, under the event's
-// lock (D-95, D-121).
+// Runs a write function that returns its outcome and schedule as one row. One call is one
+// transaction, under the event's lock (D-95, D-121).
 async function callWrite<T extends z.ZodType>(
-  supabase: Supabase,
   name: string,
-  params: Record<string, unknown>,
+  query: Promise<Record<string, unknown>[]>,
   row: T,
 ): Promise<z.output<T>> {
-  const result = await supabase.rpc(name, params);
-  if (result.error) {
-    throw result.error;
-  }
-  // Without generated database types, rpc types its data as any, so it is parsed as unknown.
-  const [first, ...rest] = z.array(row).parse(result.data as unknown);
+  const rows = await query;
+  const [first, ...rest] = z.array(row).parse(rows);
   if (first === undefined || rest.length > 0) {
     throw new Error(`${name} returned ${rest.length + (first ? 1 : 0)} rows, expected 1`);
   }
   return first;
 }
 
-export function createSubEventStore(supabase: Supabase): SubEventStore {
+export function createSubEventStore(sql: Sql): SubEventStore {
   return {
     async findEventId(subEventId) {
       // By primary key.
-      const { data, error } = await supabase
-        .from('sub_event')
-        .select('event_id')
-        .eq('id', subEventId)
-        .maybeSingle();
-      if (error) {
-        throw error;
-      }
-      return data === null ? null : z.object({ event_id: z.uuid() }).parse(data).event_id;
+      const [row] = await sql`select event_id from public.sub_event where id = ${subEventId}`;
+      return row === undefined ? null : z.object({ event_id: z.uuid() }).parse(row).event_id;
     },
 
     async schedule(eventId) {
-      // An rpc so that GET and the writes build the schedule in one place, in one order.
-      const result = await supabase.rpc('sub_event_schedule', { p_event_id: eventId });
-      if (result.error) {
-        throw result.error;
-      }
-      return Schedule.nullable().parse(result.data as unknown);
+      // A function so that GET and the writes build the schedule in one place, in one order.
+      const [row] = await sql`select public.sub_event_schedule(p_event_id => ${eventId}) as result`;
+      return Schedule.nullable().parse(row?.result ?? null);
     },
 
     async add(eventId, request) {
-      const params = addSubEventParams(eventId, request);
-      return callWrite(supabase, 'add_sub_event', params, AddRow);
+      const p = addSubEventParams(eventId, request);
+      return callWrite(
+        'add_sub_event',
+        sql`
+          select * from public.add_sub_event(
+            p_event_id => ${p.p_event_id},
+            p_request_id => ${p.p_request_id},
+            p_name => ${p.p_name},
+            p_description => ${p.p_description},
+            p_starts_at => ${p.p_starts_at},
+            p_ends_at => ${p.p_ends_at},
+            p_venue_id => ${p.p_venue_id},
+            p_venue_name => ${p.p_venue_name},
+            p_venue_lat => ${p.p_venue_lat},
+            p_venue_lng => ${p.p_venue_lng},
+            p_verification_radius_m => ${p.p_verification_radius_m}
+          )`,
+        AddRow,
+      );
     },
 
     async update(eventId, subEventId, request) {
-      const params = updateSubEventParams(eventId, subEventId, request);
-      return callWrite(supabase, 'update_sub_event', params, UpdateRow);
+      const p = updateSubEventParams(eventId, subEventId, request);
+      return callWrite(
+        'update_sub_event',
+        sql`
+          select * from public.update_sub_event(
+            p_event_id => ${p.p_event_id},
+            p_sub_event_id => ${p.p_sub_event_id},
+            p_name => ${p.p_name},
+            p_description => ${p.p_description},
+            p_starts_at => ${p.p_starts_at},
+            p_ends_at => ${p.p_ends_at},
+            p_venue_id => ${p.p_venue_id},
+            p_venue_name => ${p.p_venue_name},
+            p_venue_lat => ${p.p_venue_lat},
+            p_venue_lng => ${p.p_venue_lng},
+            p_verification_radius_m => ${p.p_verification_radius_m}
+          )`,
+        UpdateRow,
+      );
     },
 
     async remove(eventId, subEventId) {
-      const params = { p_event_id: eventId, p_sub_event_id: subEventId };
-      return callWrite(supabase, 'delete_sub_event', params, DeleteRow);
+      return callWrite(
+        'delete_sub_event',
+        sql`select * from public.delete_sub_event(p_event_id => ${eventId}, p_sub_event_id => ${subEventId})`,
+        DeleteRow,
+      );
     },
   };
 }

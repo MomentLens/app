@@ -130,11 +130,13 @@ jobs:
       # secret fails the run instead of skipping. Each SQL test makes its own pgmq queue inside a
       # transaction that rolls back, so it never reads `jobs`. The two run at once, and test:rls
       # runs the tests of each describe block side by side, since nearly all of the time is spent
-      # waiting on the dev project in Frankfurt.
+      # waiting on the dev project. Both now need Postgres itself, which listens on the server's
+      # loopback only, so where this job runs is Open (D-163, D-164).
       - name: Run the RLS and worker SQL tests that apply
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
           SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_DEV_PUBLISHABLE_KEY }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_DEV_SERVICE_ROLE_KEY }}
+          API_DATABASE_URL: ${{ secrets.SUPABASE_DEV_API_DATABASE_URL }}
           DATABASE_URL: ${{ secrets.SUPABASE_DEV_DATABASE_URL }}
         run: node scripts/verify.mjs --strict rls worker-sql --base "$BASE" $FORCE
