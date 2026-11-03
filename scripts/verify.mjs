@@ -190,7 +190,14 @@ add('worker', 'worker pytest', () => py(), ['-m', 'pytest'], { cwd: 'worker', ne
 add('rls', 'rls', 'pnpm', ['--filter', 'api', 'test:rls'], {
   gate: () => gate(['supabase/', 'apps/api/']),
   need: () => {
-    const m = missingKeys(['SUPABASE_URL', 'SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_SECRET_KEY']);
+    // The five settings rls.test.ts reads (D-164).
+    const m = missingKeys([
+      'SUPABASE_URL',
+      'SUPABASE_PUBLISHABLE_KEY',
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'API_DATABASE_URL',
+      'DATABASE_URL',
+    ]);
     if (!has('pnpm')) m.unshift('pnpm');
     return m.length ? m.join(', ') : null;
   },

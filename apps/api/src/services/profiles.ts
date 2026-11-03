@@ -7,7 +7,8 @@ import type {
   ProfileResponse,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import { isForeignKeyViolation } from '../db/sql';
+import type { Sql } from '../db/sql';
 import type { PresignGet } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
 import { presignAvatar } from './avatar';
@@ -26,30 +27,26 @@ export type FindProfile = (userId: string) => Promise<ProfileRecord | null>;
 const ProfileRow = z.object({ full_name: z.string(), avatar_key: z.string().nullable() });
 const SubjectRow = z.object({ dnp_activated_at: z.string().nullable() });
 
-export function createFindProfile(supabase: Supabase): FindProfile {
+export function createFindProfile(sql: Sql): FindProfile {
   return async (userId) => {
     // Two indexed reads by primary key and unique key. profile and subject each reference
-    // auth.users, not each other (D-109), so PostgREST cannot embed one in the other.
+    // auth.users, not each other (D-109), so no foreign key joins them.
     const [profile, subject] = await Promise.all([
-      supabase.from('profile').select('full_name, avatar_key').eq('user_id', userId).maybeSingle(),
-      supabase.from('subject').select('dnp_activated_at').eq('user_id', userId).maybeSingle(),
+      sql`select full_name, avatar_key from public.profile where user_id = ${userId}`,
+      sql`select dnp_activated_at from public.subject where user_id = ${userId}`,
     ]);
-    if (profile.error) {
-      throw profile.error;
-    }
-    if (subject.error) {
-      throw subject.error;
-    }
-    if (profile.data === null) {
+    const [profileRow] = profile;
+    if (profileRow === undefined) {
       return null;
     }
-    const row = ProfileRow.parse(profile.data);
+    const row = ProfileRow.parse(profileRow);
+    const [subjectRow] = subject;
     return {
       userId,
       fullName: row.full_name,
       avatarKey: row.avatar_key,
       // Set once and never cleared (D-31). A user with no subject has never had Do Not Publish.
-      dnpActive: subject.data !== null && SubjectRow.parse(subject.data).dnp_activated_at !== null,
+      dnpActive: subjectRow !== undefined && SubjectRow.parse(subjectRow).dnp_activated_at !== null,
     };
   };
 }
@@ -66,48 +63,38 @@ export interface ConsentStore {
   accept(userId: string, version: number): Promise<AcceptConsentResult>;
 }
 
-// Postgres foreign_key_violation on consent.user_id: the caller's account no longer exists.
-function isMissingAccount(error: { code?: string; message?: string }): boolean {
-  return error.code === '23503' && (error.message ?? '').includes('consent_user_id_fkey');
-}
-
-export function createConsentStore(supabase: Supabase): ConsentStore {
+export function createConsentStore(sql: Sql): ConsentStore {
   return {
     async accepted(userId, version) {
       // One read by the primary key.
-      const { data, error } = await supabase
-        .from('consent')
-        .select('policy_version')
-        .eq('user_id', userId)
-        .eq('policy_version', version)
-        .maybeSingle();
-      if (error) {
-        throw error;
-      }
-      return data !== null;
+      const rows = await sql`
+        select policy_version from public.consent
+        where user_id = ${userId} and policy_version = ${version}`;
+      return rows.length > 0;
     },
 
     async accept(userId, version) {
       // The key makes a second acceptance a conflict, which this insert skips, so a repeat keeps
       // the first row and its accepted_at, and returns no row.
-      const { data, error } = await supabase
-        .from('consent')
-        .upsert(
-          { user_id: userId, policy_version: version },
-          { onConflict: 'user_id,policy_version', ignoreDuplicates: true },
-        )
-        .select('policy_version');
-      if (error) {
-        if (isMissingAccount(error)) {
-          return 'no_account';
+      const rows = await sql`
+        insert into public.consent (user_id, policy_version)
+        values (${userId}, ${version})
+        on conflict (user_id, policy_version) do nothing
+        returning policy_version`.catch((error: unknown) => {
+        // The caller's account no longer exists, deleted within its token's hour.
+        if (isForeignKeyViolation(error, 'consent_user_id_fkey')) {
+          return null;
         }
         throw error;
+      });
+      if (rows === null) {
+        return 'no_account';
       }
-      const rows = z.array(z.object({ policy_version: z.literal(version) })).parse(data);
-      if (rows.length > 1) {
-        throw new Error(`The consent insert returned ${rows.length} rows, expected at most 1`);
+      const parsed = z.array(z.object({ policy_version: z.literal(version) })).parse(rows);
+      if (parsed.length > 1) {
+        throw new Error(`The consent insert returned ${parsed.length} rows, expected at most 1`);
       }
-      return rows.length === 1 ? 'created' : 'repeated';
+      return parsed.length === 1 ? 'created' : 'repeated';
     },
   };
 }

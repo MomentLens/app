@@ -14,7 +14,7 @@ import type {
   ListAttendeesResponse,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import { ApiError } from '../middleware/errors';
 import { MAX_ACTIVE_GUESTS, requireAdmin, toTimestamp } from './events';
 import type { EventStore } from './events';
@@ -153,25 +153,25 @@ export function attendeeMutationParams(
   };
 }
 
-export function createAttendeeStore(supabase: Supabase): AttendeeStore {
+export function createAttendeeStore(sql: Sql): AttendeeStore {
   return {
     async list(eventId, actorId, page) {
-      const result = await supabase.rpc('list_attendees', {
-        p_event_id: eventId,
-        p_actor_id: actorId,
-        p_search: page.search,
-        p_role: page.role,
-        p_after_name: page.after?.name ?? null,
-        p_after_user_id: page.after?.userId ?? null,
-        p_sub_event_id: page.subEventId,
-        p_check_in: page.checkIn,
-      });
-      if (result.error) throw result.error;
-      const row = ListRow.parse(result.data as unknown);
-      if (row.outcome !== 'listed') return row;
+      const [row] = await sql`
+        select public.list_attendees(
+          p_event_id => ${eventId},
+          p_actor_id => ${actorId},
+          p_search => ${page.search},
+          p_role => ${page.role},
+          p_after_name => ${page.after?.name ?? null},
+          p_after_user_id => ${page.after?.userId ?? null},
+          p_sub_event_id => ${page.subEventId},
+          p_check_in => ${page.checkIn}
+        ) as result`;
+      const parsed = ListRow.parse(row?.result);
+      if (parsed.outcome !== 'listed') return parsed;
       return {
         outcome: 'listed',
-        rows: row.attendees.map((member) => ({
+        rows: parsed.attendees.map((member) => ({
           id: member.id,
           userId: member.user_id,
           fullName: member.full_name,
@@ -186,15 +186,41 @@ export function createAttendeeStore(supabase: Supabase): AttendeeStore {
       };
     },
     async mutate(eventId, actorId, userId, action, expected, role, maxGuests) {
-      const params = attendeeMutationParams(eventId, actorId, userId, expected);
-      const result = await supabase.rpc(
-        action === 'role' ? 'change_attendee_role' : `${action}_attendee`,
-        action === 'role' ? { ...params, p_role: role, p_max_guests: maxGuests } : params,
-      );
-      if (result.error) throw result.error;
-      const row = MutationRow.parse(result.data as unknown);
-      if (row.outcome !== 'updated') return row;
-      const member = row.membership;
+      const p = attendeeMutationParams(eventId, actorId, userId, expected);
+      let rows: Record<string, unknown>[];
+      if (action === 'role') {
+        rows = await sql`
+          select public.change_attendee_role(
+            p_event_id => ${p.p_event_id},
+            p_actor_id => ${p.p_actor_id},
+            p_user_id => ${p.p_user_id},
+            p_expected_id => ${p.p_expected_id},
+            p_expected_version => ${p.p_expected_version},
+            p_role => ${role},
+            p_max_guests => ${maxGuests}
+          ) as result`;
+      } else if (action === 'block') {
+        rows = await sql`
+          select public.block_attendee(
+            p_event_id => ${p.p_event_id},
+            p_actor_id => ${p.p_actor_id},
+            p_user_id => ${p.p_user_id},
+            p_expected_id => ${p.p_expected_id},
+            p_expected_version => ${p.p_expected_version}
+          ) as result`;
+      } else {
+        rows = await sql`
+          select public.remove_attendee(
+            p_event_id => ${p.p_event_id},
+            p_actor_id => ${p.p_actor_id},
+            p_user_id => ${p.p_user_id},
+            p_expected_id => ${p.p_expected_id},
+            p_expected_version => ${p.p_expected_version}
+          ) as result`;
+      }
+      const parsed = MutationRow.parse(rows[0]?.result);
+      if (parsed.outcome !== 'updated') return parsed;
+      const member = parsed.membership;
       return {
         outcome: 'updated',
         membership: {
@@ -206,22 +232,26 @@ export function createAttendeeStore(supabase: Supabase): AttendeeStore {
       };
     },
     async forceVerify(eventId, actorId, userId, expected) {
-      const result = await supabase.rpc(
-        'force_verify_attendee',
-        attendeeMutationParams(eventId, actorId, userId, expected),
-      );
-      if (result.error) throw result.error;
-      const row = ForceVerifyRow.parse(result.data as unknown);
-      if (row.outcome !== 'verified') return row;
+      const p = attendeeMutationParams(eventId, actorId, userId, expected);
+      const [row] = await sql`
+        select public.force_verify_attendee(
+          p_event_id => ${p.p_event_id},
+          p_actor_id => ${p.p_actor_id},
+          p_user_id => ${p.p_user_id},
+          p_expected_id => ${p.p_expected_id},
+          p_expected_version => ${p.p_expected_version}
+        ) as result`;
+      const parsed = ForceVerifyRow.parse(row?.result);
+      if (parsed.outcome !== 'verified') return parsed;
       return {
         outcome: 'verified',
         membership: {
-          userId: row.membership.user_id,
-          role: row.membership.role,
-          status: row.membership.status,
-          accessVersion: accessVersion(row.membership.id, row.membership.access_version),
+          userId: parsed.membership.user_id,
+          role: parsed.membership.role,
+          status: parsed.membership.status,
+          accessVersion: accessVersion(parsed.membership.id, parsed.membership.access_version),
         },
-        adminVerifiedAt: row.admin_verified_at,
+        adminVerifiedAt: parsed.admin_verified_at,
       };
     },
   };

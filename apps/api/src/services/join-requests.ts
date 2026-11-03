@@ -8,7 +8,7 @@ import type {
   PendingRequestTarget,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import { ApiError } from '../middleware/errors';
 import { accessVersion, decode, encode, Version } from './attendees';
 import { MAX_ACTIVE_GUESTS, requireAdmin, toTimestamp } from './events';
@@ -112,22 +112,22 @@ export function requestTargetsParam(targets: RequestTarget[]) {
   }));
 }
 
-export function createJoinRequestStore(supabase: Supabase): JoinRequestStore {
+export function createJoinRequestStore(sql: Sql): JoinRequestStore {
   return {
     async list(eventId, actorId, after) {
-      const result = await supabase.rpc('list_pending_requests', {
-        p_event_id: eventId,
-        p_actor_id: actorId,
-        p_after_requested_at: after?.requestedAt ?? null,
-        p_after_user_id: after?.userId ?? null,
-      });
-      if (result.error) throw result.error;
-      const row = ListRow.parse(result.data as unknown);
-      if (row.outcome !== 'listed') return row;
+      const [row] = await sql`
+        select public.list_pending_requests(
+          p_event_id => ${eventId},
+          p_actor_id => ${actorId},
+          p_after_requested_at => ${after?.requestedAt ?? null},
+          p_after_user_id => ${after?.userId ?? null}
+        ) as result`;
+      const parsed = ListRow.parse(row?.result);
+      if (parsed.outcome !== 'listed') return parsed;
       return {
         outcome: 'listed',
-        activeGuests: row.active_guests,
-        rows: row.requests.map((request) => ({
+        activeGuests: parsed.active_guests,
+        rows: parsed.requests.map((request) => ({
           id: request.id,
           userId: request.user_id,
           fullName: request.full_name,
@@ -138,33 +138,40 @@ export function createJoinRequestStore(supabase: Supabase): JoinRequestStore {
       };
     },
     async act(eventId, actorId, action, targets, maxGuests) {
-      const actor = { p_event_id: eventId, p_actor_id: actorId };
-      let result;
+      let result: unknown;
       if (action === 'block') {
         const [target, ...rest] = targets;
         if (target === undefined || rest.length > 0) {
           throw new Error(`block_request takes one target, got ${targets.length}`);
         }
-        result = await supabase.rpc('block_request', {
-          ...actor,
-          p_user_id: target.userId,
-          p_expected_id: target.expected.id,
-          p_expected_version: target.expected.version,
-        });
+        const [row] = await sql`
+          select public.block_request(
+            p_event_id => ${eventId},
+            p_actor_id => ${actorId},
+            p_user_id => ${target.userId},
+            p_expected_id => ${target.expected.id},
+            p_expected_version => ${target.expected.version}
+          ) as result`;
+        result = row?.result;
       } else if (action === 'approve') {
-        result = await supabase.rpc('approve_requests', {
-          ...actor,
-          p_targets: requestTargetsParam(targets),
-          p_max_guests: maxGuests,
-        });
+        const [row] = await sql`
+          select public.approve_requests(
+            p_event_id => ${eventId},
+            p_actor_id => ${actorId},
+            p_targets => ${sql.json(requestTargetsParam(targets))},
+            p_max_guests => ${maxGuests}
+          ) as result`;
+        result = row?.result;
       } else {
-        result = await supabase.rpc('reject_requests', {
-          ...actor,
-          p_targets: requestTargetsParam(targets),
-        });
+        const [row] = await sql`
+          select public.reject_requests(
+            p_event_id => ${eventId},
+            p_actor_id => ${actorId},
+            p_targets => ${sql.json(requestTargetsParam(targets))}
+          ) as result`;
+        result = row?.result;
       }
-      if (result.error) throw result.error;
-      const row = ActionRow.parse(result.data as unknown);
+      const row = ActionRow.parse(result);
       if (row.outcome !== 'updated') return row;
       return {
         outcome: 'updated',

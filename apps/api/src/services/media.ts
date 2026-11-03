@@ -14,7 +14,7 @@ import type {
   SubEvent,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import { uploadKeys } from '../lib/keys';
 import type { DeleteObject, ObjectSize, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
@@ -222,44 +222,36 @@ export function startUploadParams(upload: NewUpload, limits: UploadLimits) {
   };
 }
 
-// Calls a function that returns one row, and parses it. One rpc is one transaction (D-95).
+// Runs a function that returns its one row as rows, and parses that row. One call is one
+// transaction (D-95).
 async function callOne<T extends z.ZodType>(
-  supabase: Supabase,
   name: string,
-  params: Record<string, unknown>,
+  query: Promise<Record<string, unknown>[]>,
   row: T,
 ): Promise<z.output<T>> {
-  const result = await supabase.rpc(name, params);
-  if (result.error) {
-    throw result.error;
-  }
-  // Without generated database types, rpc types its data as any, so it is parsed as unknown.
-  const [first, ...rest] = z.array(row).parse(result.data as unknown);
+  const rows = await query;
+  const [first, ...rest] = z.array(row).parse(rows);
   if (first === undefined || rest.length > 0) {
     throw new Error(`${name} returned ${rest.length + (first ? 1 : 0)} rows, expected 1`);
   }
   return first;
 }
 
-export function createMediaStore(supabase: Supabase): MediaStore {
-  const subEvents = createSubEventStore(supabase);
+export function createMediaStore(sql: Sql): MediaStore {
+  const subEvents = createSubEventStore(sql);
   return {
     verificationSchedule: (eventId) => subEvents.schedule(eventId),
     async statuses(eventId, userId, mediaIds) {
-      const { data, error } = await supabase
-        .from('media')
-        .select('id, processed_at, deleted_at')
-        .eq('event_id', eventId)
-        .eq('uploader_user_id', userId)
-        .in('id', mediaIds)
-        .not('uploaded_at', 'is', null);
-      if (error) {
-        throw error;
-      }
+      const rows = await sql`
+        select id, processed_at, deleted_at from public.media
+        where event_id = ${eventId}
+          and uploader_user_id = ${userId}
+          and id = any(${mediaIds}::uuid[])
+          and uploaded_at is not null`;
       return {
         statuses: z
           .array(StatusRow)
-          .parse(data)
+          .parse(rows)
           .map((row) => ({
             mediaId: row.id,
             status:
@@ -273,26 +265,49 @@ export function createMediaStore(supabase: Supabase): MediaStore {
     },
 
     async start(upload, limits) {
-      return callOne(supabase, 'start_upload', startUploadParams(upload, limits), StartRow);
+      const p = startUploadParams(upload, limits);
+      return callOne(
+        'start_upload',
+        sql`
+          select * from public.start_upload(
+            p_media_id => ${p.p_media_id},
+            p_event_id => ${p.p_event_id},
+            p_sub_event_id => ${p.p_sub_event_id},
+            p_user_id => ${p.p_user_id},
+            p_role => ${p.p_role},
+            p_content_hash => ${p.p_content_hash},
+            p_captured_at => ${p.p_captured_at},
+            p_upload_key => ${p.p_upload_key},
+            p_upload_thumb_key => ${p.p_upload_thumb_key},
+            p_max_media => ${p.p_max_media},
+            p_max_unfinished => ${p.p_max_unfinished},
+            p_verified_sub_event_ids => ${p.p_verified_sub_event_ids}::uuid[],
+            p_qr_scans => ${sql.json(p.p_qr_scans)}
+          )`,
+        StartRow,
+      );
     },
 
     async findUpload(mediaId) {
       // By primary key. A soft-deleted row reads as none, as complete_upload treats it.
-      const { data, error } = await supabase
-        .from('media')
-        .select('id, event_id, uploader_user_id, upload_key, upload_thumb_key, uploaded_at')
-        .eq('id', mediaId)
-        .is('deleted_at', null)
-        .maybeSingle();
-      if (error) {
-        throw error;
-      }
-      return data === null ? null : UploadRow.parse(data);
+      const [row] = await sql`
+        select id, event_id, uploader_user_id, upload_key, upload_thumb_key, uploaded_at
+        from public.media
+        where id = ${mediaId} and deleted_at is null`;
+      return row === undefined ? null : UploadRow.parse(row);
     },
 
     async complete(mediaId, userId, sizeBytes) {
-      const params = { p_media_id: mediaId, p_user_id: userId, p_size_bytes: sizeBytes };
-      return callOne(supabase, 'complete_upload', params, CompleteRow);
+      return callOne(
+        'complete_upload',
+        sql`
+          select * from public.complete_upload(
+            p_media_id => ${mediaId},
+            p_user_id => ${userId},
+            p_size_bytes => ${sizeBytes}
+          )`,
+        CompleteRow,
+      );
     },
   };
 }
