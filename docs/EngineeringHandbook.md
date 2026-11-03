@@ -207,7 +207,7 @@ There is no `dedup.py` and no `variant.py`. Deduplication is a SHA-256 lookup in
 
 ### 5.1 Authorization and RLS
 
-**Authorization lives in the service layer (D-73).** The API queries Supabase with the secret key, so RLS never applies to it, and every rule below is a service-layer check with a negative authorization test: another user, another event, the wrong role. A missing check throws nothing and returns someone else's data, and that test is the only thing that catches it. `docs/ARCHITECTURE.md` §1 is the full table.
+**Authorization lives in the service layer (D-73).** The API queries Postgres as `momentlens_api`, a login that runs as `service_role` (D-164), so RLS never applies to it, and every rule below is a service-layer check with a negative authorization test: another user, another event, the wrong role. A missing check throws nothing and returns someone else's data, and that test is the only thing that catches it. `docs/ARCHITECTURE.md` §1 is the full table.
 
 **RLS is a backstop against the app, not against the API.** It is on for every table, and the only policies are `SELECT` on `media` and `event`, which Realtime needs. Those two check membership through a `security definer` function, because `membership` has no policy and a plain subquery inside a policy sees no rows. They exist for Realtime only: the app reads `media` and `event` through the API like everything else, because the API applies soft deletes, pagination and the viewer-scoped face rules that a policy cannot. Adding a policy to make a client query work is the mistake root `AGENTS.md` names; add an endpoint.
 
@@ -498,7 +498,7 @@ The force push drops the PR's approval, so wait for its checks and get it approv
 
 #### 13.3.1 Why Docker for Supabase Lite only
 
-**Why Docker for Supabase Lite** (D-39, D-78). Docker is used strictly as the deployment harness for the upstream Supabase Lite stack (`infra/supabase`), running Postgres (with `pgvector` and `pgmq`), GoTrue (Auth), PostgREST, Realtime, and Envoy on loopback (`127.0.0.1:54321`). On Linux, containers are namespaces and cgroups, so runtime overhead is near zero. Manually compiling or configuring five distinct upstream services (in Go, Haskell, Elixir, and C++) would be fragile and unmaintainable. The API and the Python worker run as native `systemd` units on the host, keeping application debugging and logging direct. Repeatability comes from pinned dependencies, `infra/supabase/setup.sh`, and `scripts/provision.sh`.
+**Why Docker for Supabase Lite** (D-39, D-78). Docker is used strictly as the deployment harness for the upstream Supabase Lite stack (`infra/supabase`), running Postgres (with `pgvector` and `pgmq`), GoTrue (Auth) and Realtime, each on a loopback port. nginx routes Auth and Realtime on `127.0.0.1:54321`, and the stack runs no PostgREST and no Envoy (D-164). On Linux, containers are namespaces and cgroups, so runtime overhead is near zero. Compiling and configuring three upstream services written in C, Go and Elixir by hand would break on every upgrade. The API and the Python worker run as native `systemd` units on the host, keeping application debugging and logging direct. Repeatability comes from pinned dependencies, `infra/supabase/setup.sh`, and `scripts/provision.sh`.
 
 #### 13.3.2 Sizing, schedule and provisioning
 
@@ -511,7 +511,7 @@ scp scripts/provision.sh root@SERVER_IP:/root/
 ssh root@SERVER_IP 'bash /root/provision.sh --domain api.yourdomain.com --email you@example.com'
 ```
 
-Leave out `--email` to skip TLS until DNS points at the server; the script prints the `certbot` command to run then. Passing `--email` accepts Let's Encrypt's terms. The script never writes secrets, so fill in `/srv/momentlens/.env` yourself afterwards. The API refuses to start until `SUPABASE_URL` and `SUPABASE_SECRET_KEY` hold real values, and `journalctl -u momentlens-api` names the one that is wrong.
+Leave out `--email` to skip TLS until DNS points at the server; the script prints the `certbot` command to run then. Passing `--email` accepts Let's Encrypt's terms. With `--mail-from`, `infra/supabase/setup.sh` writes the Supabase variables into `/srv/momentlens/.env`: `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY` (the anon JWT), `API_DATABASE_URL` and `DATABASE_URL`. Fill in the R2 and Sentry variables yourself afterwards. The API refuses to start until every variable it needs holds a real value, and `journalctl -u momentlens-api` names the one that is wrong. `API_DATABASE_URL` logs in as `momentlens_api`, which can do nothing until `supabase/migrations/20261103140000_api_database_role.sql` has reached the database, so push the migrations (§13.4) before the API's first start (D-164).
 
 **Three choices in the script worth knowing.**
 - **The install is filtered to `api...`**, the API and the workspace packages it depends on, so the server never installs Expo or React Native. `apps/mobile` is built by EAS, not here. Add a workspace package the API depends on and the filter picks it up on its own.
@@ -530,7 +530,7 @@ The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. F
 
 #### 13.3.4 nginx and TLS
 
-**nginx as reverse proxy**, in `/etc/nginx/sites-available/momentlens`, written by `provision.sh`. It proxies to the API on `127.0.0.1` at the `PORT` in `.env`, 3000 by default, with `client_max_body_size 1m`. Media goes to R2, so the small limit is on purpose: it is a guardrail against anyone adding a route that proxies files (root invariant 5).
+**nginx as reverse proxy**, in `/etc/nginx/sites-available/momentlens`, written by `provision.sh`. It proxies to the API on `127.0.0.1` at the `PORT` in `.env`, 3000 by default, with `client_max_body_size 1m`. Media goes to R2, so the small limit is on purpose: it is a guardrail against anyone adding a route that proxies files (root invariant 5). The same site forwards `/auth/v1/` and `/realtime/v1/` to a second server, `/etc/nginx/sites-available/momentlens-supabase`, which listens on `127.0.0.1:54321` and routes to Auth and to Realtime's WebSocket, and answers 404 to anything else. `provision.sh` rewrites that one on every run; certbot never edits it (D-164).
 
 **TLS**: `sudo certbot --nginx -d api.yourdomain.com`. Certbot installs its own renewal timer; verify it with `systemctl list-timers | grep certbot`. The domain is `api.momentlens.me` (`docs/ARCHITECTURE.md` §7). HTTPS is not optional, because iOS App Transport Security refuses plaintext.
 
@@ -617,6 +617,8 @@ ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'
 ssh momentlens 'sudo systemctl stop momentlens-worker'
 ssh momentlens 'sudo systemctl start momentlens-worker'
 ```
+
+**Running the API or `test:rls` on your machine against the dev project.** Both reach Postgres through the same tunnel, so keep it open while they run (D-164). Ask Ukasha for the `momentlens_api` password and the two JWTs, `ANON_KEY_ASYMMETRIC` and `SERVICE_ROLE_KEY_ASYMMETRIC` from the server's `/opt/supabase/docker/.env`, over a private channel. Your root `.env` then needs `SUPABASE_URL=https://api.momentlens.me`, `SUPABASE_PUBLISHABLE_KEY` set to the anon JWT, and `API_DATABASE_URL=postgresql://momentlens_api:<password>@127.0.0.1:15432/postgres`. `pnpm --filter api test:rls` also needs `SUPABASE_SERVICE_ROLE_KEY` set to the service-role JWT and `DATABASE_URL` as the worker has it above. The service-role JWT passes every check Auth makes, so it stays in your root `.env` and nowhere else.
 
 **Reading the server.**
 
@@ -791,7 +793,8 @@ Mobile (apps/mobile)
 
 API (apps/api)
   express, typescript
-  @supabase/supabase-js
+  postgres                     # postgres.js, every query (D-164)
+  @supabase/supabase-js        # getClaims only
   @aws-sdk/client-s3           # presigned R2 upload URLs
   zod, @asteasolutions/zod-to-openapi
   pino, helmet
