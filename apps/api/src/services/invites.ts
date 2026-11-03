@@ -18,10 +18,11 @@ import type {
   ResolveInviteResponse,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import { isForeignKeyViolation } from '../db/sql';
+import type { Sql } from '../db/sql';
 import type { PresignGet } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
-import { isMissingAccount, MAX_ACTIVE_GUESTS, presignCover, toTimestamp } from './events';
+import { MAX_ACTIVE_GUESTS, presignCover, toTimestamp } from './events';
 
 // A live invite's preview before its cover is presigned (D-115). Timestamps are already in
 // toISOString form.
@@ -101,17 +102,18 @@ const JoinRow = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.enum(['dead', 'blocked', 'full']) }),
 ]);
 
-export function createInviteStore(supabase: Supabase): InviteStore {
+export function createInviteStore(sql: Sql): InviteStore {
   return {
     async resolve(lookup, userId) {
-      // An rpc because the span and the venue order are aggregates over sub_event, which
-      // PostgREST does not compute. Without generated database types, rpc types its data as any,
-      // so it is parsed as unknown.
-      const result = await supabase.rpc('resolve_invite', resolveInviteParams(lookup, userId));
-      if (result.error) {
-        throw result.error;
-      }
-      const [row, ...rest] = z.array(PreviewRow).parse(result.data as unknown);
+      // A function because the span and the venue order are aggregates over sub_event.
+      const params = resolveInviteParams(lookup, userId);
+      const rows = await sql`
+        select * from public.resolve_invite(
+          p_token => ${params.p_token},
+          p_shortcode => ${params.p_shortcode},
+          p_user_id => ${params.p_user_id}
+        )`;
+      const [row, ...rest] = z.array(PreviewRow).parse(rows);
       if (rest.length > 0) {
         throw new Error(`resolve_invite returned ${rest.length + 1} rows, expected at most 1`);
       }
@@ -136,16 +138,26 @@ export function createInviteStore(supabase: Supabase): InviteStore {
     },
 
     async join(userId, lookup, maxGuests) {
-      // One rpc, one transaction under the event's lock, so two joins never both take the last
+      // One call, one transaction under the event's lock, so two joins never both take the last
       // place (D-95, D-115).
-      const result = await supabase.rpc('join_event', joinEventParams(userId, lookup, maxGuests));
-      if (result.error) {
-        if (isMissingAccount(result.error)) {
-          return { outcome: 'no_account' };
+      const params = joinEventParams(userId, lookup, maxGuests);
+      const rows = await sql`
+        select * from public.join_event(
+          p_user_id => ${params.p_user_id},
+          p_token => ${params.p_token},
+          p_shortcode => ${params.p_shortcode},
+          p_max_guests => ${params.p_max_guests}
+        )`.catch((error: unknown) => {
+        // The caller's account no longer exists, deleted within its token's hour.
+        if (isForeignKeyViolation(error, 'membership_user_id_fkey')) {
+          return null;
         }
-        throw result.error;
+        throw error;
+      });
+      if (rows === null) {
+        return { outcome: 'no_account' };
       }
-      const [row, ...rest] = z.array(JoinRow).parse(result.data as unknown);
+      const [row, ...rest] = z.array(JoinRow).parse(rows);
       if (row === undefined || rest.length > 0) {
         throw new Error(`join_event returned ${rest.length + (row ? 1 : 0)} rows, expected 1`);
       }
@@ -165,25 +177,12 @@ export function createInviteStore(supabase: Supabase): InviteStore {
       // The status filter is the race guard. A delete that meets a row an approve is updating
       // waits for it, then checks the filter again against the approved row and deletes nothing
       // (arch:membership). The read after it reports whatever the caller holds now.
-      const deleted = await supabase
-        .from('membership')
-        .delete()
-        .eq('event_id', eventId)
-        .eq('user_id', userId)
-        .eq('status', 'pending');
-      if (deleted.error) {
-        throw deleted.error;
-      }
-      const left = await supabase
-        .from('membership')
-        .select('role, status')
-        .eq('event_id', eventId)
-        .eq('user_id', userId)
-        .maybeSingle();
-      if (left.error) {
-        throw left.error;
-      }
-      return left.data === null ? null : Membership.parse(left.data);
+      await sql`
+        delete from public.membership
+        where event_id = ${eventId} and user_id = ${userId} and status = 'pending'`;
+      const [left] = await sql`
+        select role, status from public.membership where event_id = ${eventId} and user_id = ${userId}`;
+      return left === undefined ? null : Membership.parse(left);
     },
   };
 }
@@ -276,7 +275,7 @@ export type ManagedListResult =
   | { outcome: z.infer<typeof ManagementRefusal> | 'internal_error' };
 export type RegeneratedInviteResult = z.infer<typeof RegeneratedRow>;
 
-// Each RPC checks the event and authenticated actor itself. The read uses one snapshot;
+// Each SQL function checks the event and authenticated actor itself. The read uses one snapshot;
 // replacement checks the displayed invite under joining's event lock (D-152).
 export interface InviteManagementStore {
   list(eventId: string, actorId: string): Promise<ManagedListResult>;
@@ -287,32 +286,29 @@ export interface InviteManagementStore {
   ): Promise<RegeneratedInviteResult>;
 }
 
-export function createInviteManagementStore(supabase: Supabase): InviteManagementStore {
+export function createInviteManagementStore(sql: Sql): InviteManagementStore {
   return {
     async list(eventId, actorId) {
-      const result = await supabase.rpc('list_event_invites', {
-        p_event_id: eventId,
-        p_actor_id: actorId,
-      });
-      if (result.error) throw result.error;
-      const row = ManagedListRow.parse(result.data as unknown);
-      if (row.outcome !== 'listed') return row;
+      const [row] = await sql`
+        select public.list_event_invites(p_event_id => ${eventId}, p_actor_id => ${actorId}) as result`;
+      const parsed = ManagedListRow.parse(row?.result);
+      if (parsed.outcome !== 'listed') return parsed;
       // Validate both roles before any credentials leave the service. A GET never repairs data.
-      return { outcome: 'listed', invites: ListInvitesResponse.parse(row).invites };
+      return { outcome: 'listed', invites: ListInvitesResponse.parse(parsed).invites };
     },
     async regenerate(eventId, actorId, request) {
-      const result = await supabase.rpc('regenerate_event_invite', {
-        p_event_id: eventId,
-        p_actor_id: actorId,
-        p_role: request.role,
-        p_expected_invite_id: request.expectedInviteId,
-      });
-      if (result.error) throw result.error;
-      const row = RegeneratedRow.parse(result.data as unknown);
-      if (row.outcome === 'regenerated' && row.invite.role !== request.role) {
+      const [row] = await sql`
+        select public.regenerate_event_invite(
+          p_event_id => ${eventId},
+          p_actor_id => ${actorId},
+          p_role => ${request.role},
+          p_expected_invite_id => ${request.expectedInviteId}
+        ) as result`;
+      const parsed = RegeneratedRow.parse(row?.result);
+      if (parsed.outcome === 'regenerated' && parsed.invite.role !== request.role) {
         throw new Error('regenerate_event_invite returned the wrong role');
       }
-      return row;
+      return parsed;
     },
   };
 }
