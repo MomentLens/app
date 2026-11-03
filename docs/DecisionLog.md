@@ -490,6 +490,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Why.** D-71 ran API queries as the caller so RLS would cover them. That holds for reads only. Writing as the caller needs RLS write policies, and the app can use those same policies directly with its own login, skipping pre-flight, for example by inserting a media row with `processed_at` already set. Face and subject data also needs per-viewer column filtering, which RLS cannot express. Fixing both meant server-only writes plus Postgres functions for every sensitive read. That costs clearly more than this option, and the risk it covers belongs to a public deployment.
 **Rejected.** D-71 corrected as described above: more policies, SQL functions and two test paths. Per-table write policies with column revokes: more work than either, and a modified app could still make those writes.
 **Cost.** ⚠ Handbook §5's reason for RLS no longer covers the API. A service function with a missing check returns another user's data and the database does not stop it. Every endpoint ships with a negative authorization test (another user, another event, the wrong role), and the image-serving check stays on the human-read list (D-68).
+**Amended (see D-164).** The API logs in to Postgres as `momentlens_api`, which runs as `service_role`, the role the secret key stood for. RLS still never applies to the API, and the rest of this entry holds. PostgREST is gone, so no HTTP path reaches a table at all.
 
 ### D-74: The worker does all face matching and stores the results
 **Decision.** Embeddings are stored in pgvector `vector(512)` columns. The worker runs every comparison: when a photo is processed, when a subject's references change, and on a tap-to-blur. It writes the result onto the `face` row (matched subject, similarity, Unknown cluster). The API never compares vectors; Find My Photos and the face filters are indexed lookups.
@@ -671,6 +672,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Updating the row and enqueueing in two calls looks right, throws nothing, and loses the job on a crash between them. An unlocked count lets two pre-flights at 1,999 both insert. A completion with nothing behind it in R2 leaves a row the worker can never process, which never gets `processed_at` and fails in silence.
 **Rejected.** Two supabase-js calls. The HEAD in pre-flight, which D-82 rejected for cost; completion runs once per photo.
 **Cost.** Two migrations in S-12, two R2 requests per completion, and a row lock on every new-row pre-flight.
+**Amended (see D-164).** The API calls both functions with one SQL statement on its own Postgres connection, since there is no `rpc` and no Data API. They stay SQL functions, because each holds its lock and its queue send in one transaction whoever calls it.
 **Amended (see D-122).** Both functions lock the event row `FOR NO KEY UPDATE` and decide the hash outcome under the lock. Completion looks up the row and checks the uploader, the membership and the event before the HEAD, and a row that no longer exists answers `duplicate`.
 
 ### D-96: A duplicate is a finished photo with the same bytes, deleted or not
@@ -759,6 +761,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** The only RLS negative test had run on no machine. `pnpm test` skips it without the keys, and CI had none. An RLS mistake fails silently (root invariant 14).
 **Rejected.** A Definition-of-done line saying someone ran it by hand, which was the rule before and never happened.
 **Cost.** GitHub holds a key that bypasses RLS on the dev project's data. A pull request from a fork gets no secrets, so the job skips there.
+**Amended (see D-164).** `test:rls` reads five settings in place of the secret key: Auth's URL, the anon JWT, the service-role JWT, `API_DATABASE_URL` and `DATABASE_URL`. GitHub's runners cannot reach Postgres on the server, so where the job runs is Open (D-163).
 **Amended (see D-149).** The test runs in one CI job on every pull request. The job runs `test:rls` when `supabase/`, `apps/api/`, CI's workflow or `scripts/verify.mjs` changed and passes at once otherwise, and it is a required check on `main`, so a failing RLS negative test blocks the merge. A fork's pull request still gets no secrets, and the job skips there.
 
 ### D-107: Process rulings from the pre-feature audit
@@ -1678,6 +1681,27 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Keeping the keep-alive as a manual check, which repeats `test:rls` and runs only when someone remembers. Leaving the workflow as it was, failing on most days or keeping unused hosted projects awake. Rewriting the migration steps later, which leaves a teammate able to push to the wrong database until then. Raising Realtime's message limit now, with a number chosen before any measurement.
 **Cost.** Everyone who pushes a migration holds the dev database's `postgres` password, and a push needs the server running. Nobody has run the tunnel commands against the server yet. Two things D-78 changed are still Open: how the standby carries the database, and where CI's RLS and worker SQL job runs, since GitHub's runners cannot reach Postgres on the server's loopback and reach the API only while the server runs.
 **Reopen if.** A push through the tunnel fails on the server, or the tunnel will not stay open from a Windows machine.
+**Amended (see D-164).** `setup.sh` runs Postgres, Auth and Realtime only, and nginx answers on `127.0.0.1:54321`, where Envoy did.
+
+### D-164: The API queries Postgres directly, and nginx replaces PostgREST and Envoy
+**Decision.** Amends D-73, D-95, D-106 and D-163. Ukasha decided this on 2026-11-03. The self-hosted stack runs Postgres, Auth and Realtime, and nothing else of Supabase's.
+- `infra/supabase/setup.sh` starts `db`, `auth` and `realtime` only, and stops and removes PostgREST (`rest`) and the Envoy gateway (`api-gw`) where an earlier run started them.
+- The API reads and writes Postgres with postgres.js 3.4.9 (`apps/api/src/db/sql.ts`), logged in as `momentlens_api`. That login switches to `service_role` as it connects (`supabase/migrations/20261103140000_api_database_role.sql`), the role PostgREST gave the secret key, so the API's access is unchanged. `setup.sh` generates its password and writes `API_DATABASE_URL` into `/srv/momentlens/.env`. The API holds no Supabase secret key. A statement still running after 3 seconds is cancelled, the deadline supabase-js had.
+- Where an entry says the API calls a SQL function with `rpc`, the API now runs one statement, `select public.fn(p_name => value, ...)`, on its own connection. Every function keeps its lock and its transaction.
+- supabase-js stays in the API for `getClaims` only (D-109), which reads Auth's public keys through `SUPABASE_URL`.
+- nginx takes Envoy's port, `127.0.0.1:54321`. It sends `/auth/v1/` to Auth on `127.0.0.1:9999` with the prefix removed, sends `/realtime/v1/websocket` to Realtime on `127.0.0.1:4000` with the tenant's name in `Host`, and answers 404 to anything else. No HTTP path reaches a table any more, and Realtime's tenant API stays closed. `scripts/provision.sh` writes this server on every run, and the public site forwards to it.
+- The app and the API send the anon JWT, `ANON_KEY_ASYMMETRIC` in the stack's `.env`, as their Supabase key. Auth ignores the key and Realtime verifies it. The `sb_publishable_` and `sb_secret_` keys worked only through Envoy, which swapped them for JWTs. `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY` keeps its name and takes the anon JWT in every `apps/mobile/.env` and EAS environment, and so does the API's `SUPABASE_PUBLISHABLE_KEY`.
+- `apps/api/tests/integration/rls.test.ts` keeps every test. The stores run on `API_DATABASE_URL`, as in the API. A client that skips the API runs on `DATABASE_URL` as `anon`, or as `authenticated` with the claims of a token Auth signed, which is how PostgREST ran it (`apps/api/tests/support/sql-client.ts`). Accounts come from Auth's admin API with the service-role JWT, `SUPABASE_SERVICE_ROLE_KEY`, which only the test reads. `apps/api/tests/integration/database.test.ts` runs the stores against any Postgres with Supabase's roles.
+**Why.** Ukasha asked that each part of the stack be necessary. Auth holds the accounts, the passwords, recovery email and token signing, and Realtime carries the album's live status (S-31), so both stay. PostgREST had one client, the API, on the same machine as Postgres, and its public `/rest/v1/` left RLS as the only thing between the internet and every table. Envoy existed to check keys and swap them for JWTs, which nothing needs once the app sends the JWT itself. A store written in SQL can also hold a transaction, which supabase-js could not (D-95).
+**Rejected.** Keeping PostgREST on loopback only: a container and a key whose one client could reach Postgres directly. Logging the API in as `postgres`, which can create roles and owns every table the migrations create, where the secret key could do neither. postgres.js 4.0.0, a new major version published on 2026-10-29, five days before this decision. Dropping Realtime as well, which leaves the album's live status with nothing to carry it.
+**Cost.**
+- `test:rls` now needs Postgres, which listens on the server's loopback only. Before this, GitHub's runners reached the dev project's PostgREST whenever the server ran. Now they cannot reach the test at all, so where CI runs it stays Open (D-163), and until then a developer runs it through the SSH tunnel in hb §13.4.
+- The anon JWT expires 5 years after the stack's first run, as `utils/add-new-auth-keys.sh` signs it. New keys change it in every build of the app.
+- The API's database password is one more secret, on the server and on any laptop that runs the API through the tunnel.
+- The migration has to reach a database before an API with `API_DATABASE_URL` restarts against it. Until then `momentlens_api` logs in with no role to switch to, and every query is refused.
+- A public nginx site written before this still has a `/rest/v1/` block, which now gets the loopback server's 404.
+- B and C write a store as SQL with postgres.js from now on. A unit test fakes the SQL with `apps/api/tests/support/fake-sql.ts`.
+**Reopen if.** A Windows machine cannot hold the tunnel open, which leaves B and C no way to run the API or `test:rls` on their own machines.
 
 ## Open items that are not decisions yet
 
@@ -1689,7 +1713,7 @@ These are not settled and should not be treated as though they are.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
 - **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
-- **Where CI's RLS and worker SQL job runs.** Its secrets name the dev project, and GitHub's runners cannot reach Postgres on the server's loopback (D-163). The job is a required check on `main` (D-149).
+- **Where CI's RLS and worker SQL job runs.** Its secrets name the dev project, and GitHub's runners cannot reach Postgres on the server's loopback (D-163). Since D-164 the RLS test needs Postgres too. The job is a required check on `main` (D-149).
 - **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
 - **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.

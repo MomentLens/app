@@ -76,7 +76,7 @@ These fail **silently**. Wrong code here looks correct, throws nothing, and pass
 11. **N Do Not Publish subjects means N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. (D-57)
 12. **Each family of R2 keys has exactly one builder.** The API builds upload keys (the original and the client thumbnail) in one function and writes them onto the media row at pre-flight. The worker builds every derived key and writes those. Neither builds the other's, and whatever serves a file reads the column. (D-70)
 13. **The client thumbnail is unblurred.** It is served only for a photo with no Do Not Publish face and no blur region. When the worker matches a subject it writes blurred thumbnails at new versioned keys, and `reprocess` regenerates thumbnails along with the full files. Nothing is overwritten in place. (D-69)
-14. **RLS denies everything except `SELECT` on `media` and `event`, which Realtime needs.** The API uses the secret key and enforces every rule in its service layer, with a negative test per endpoint. Never add a policy to make a client query work; add an endpoint. A direct table query from the app returns empty rows, not an error. (D-73)
+14. **RLS denies everything except `SELECT` on `media` and `event`, which Realtime needs.** The API logs in to Postgres as `momentlens_api`, which runs as `service_role`, and enforces every rule in its service layer, with a negative test per endpoint. Never add a policy to make a client query work; add an endpoint. The app has no other path to a table: the stack runs no PostgREST, and Realtime sends a phone only the rows those two policies allow. (D-73, D-164)
 
 ---
 
@@ -96,7 +96,7 @@ Not a comprehension exercise. These four fail silently when they are wrong, so a
 Pinned. Do not upgrade to fix a problem; fix the problem. **Never add a dependency without naming it in the plan and getting a yes**, native or not, in any package: a native one costs every machine a rebuild, and any one is a version three people now share.
 
 - **Mobile**: Expo SDK 57, RN 0.86, TypeScript, Expo Router, Zustand, TanStack Query, NativeWind v4, FlashList v2, Reanimated v4, `expo-sqlite`
-- **API**: Express 5, TypeScript, zod, `@supabase/supabase-js`, `@aws-sdk/client-s3`
+- **API**: Express 5, TypeScript, zod, `postgres` (postgres.js) for every query, `@supabase/supabase-js` for `getClaims` only, `@aws-sdk/client-s3`
 - **Worker**: Python 3.12, FastAPI (`/health` only; it is a pgmq consumer, not a web server), InsightFace via ONNX Runtime, OpenCV
 - **Services**: Supabase (Postgres, Auth, Realtime, pgmq), Cloudflare R2
 - **Tooling**: pnpm workspaces, ESLint + Prettier, Ruff, Jest (`jest-expo` preset in mobile only), pytest, Maestro
