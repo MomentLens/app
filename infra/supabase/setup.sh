@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Runs the self-hosted Supabase stack (Postgres with pgmq, Auth, PostgREST, Realtime, and the
-# Envoy gateway) on the server, from Supabase's own docker/ folder at a pinned commit plus
-# docker-compose.override.yml from this folder. provision.sh calls it; running it again is safe
-# and is how a setting below reaches the server.
+# Runs the self-hosted Supabase stack (Postgres with pgmq, Auth and Realtime) on the server, from
+# Supabase's own docker/ folder at a pinned commit plus docker-compose.override.yml from this
+# folder. PostgREST and the Envoy gateway are not run: the API talks to Postgres directly, and
+# nginx routes Auth and Realtime (D-164). provision.sh calls it; running it again is safe and is
+# how a setting below reaches the server.
 #
 # First run: generates every Supabase secret into /opt/supabase/docker/.env (chmod 600, never in
-# git), then writes SUPABASE_URL, SUPABASE_SECRET_KEY, SUPABASE_PUBLISHABLE_KEY and DATABASE_URL
-# into the app's /srv/momentlens/.env. Later runs keep the secrets and re-apply the settings.
+# git), then writes SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY (the anon JWT), API_DATABASE_URL and
+# DATABASE_URL into the app's /srv/momentlens/.env. Later runs keep the secrets and re-apply the
+# settings.
 #
 # The Resend API key is asked for when stdin is a terminal (ssh -t) and SMTP is not set yet.
 # Without it, Auth runs but no recovery email is sent.
@@ -23,9 +25,14 @@ STACK_DIR="$SUPABASE_DIR/docker"
 STACK_ENV="$STACK_DIR/.env"
 APP_ENV="/srv/momentlens/.env"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SERVICES=(db auth rest realtime api-gw)
-# The gateway's port on the host, set in docker-compose.override.yml. The worker holds 8000.
-GATEWAY="http://127.0.0.1:54321"
+SERVICES=(db auth realtime)
+# Run by earlier versions of this script, and stopped by this one (D-164).
+RETIRED=(rest api-gw)
+# Auth's and Realtime's ports on the host, set in docker-compose.override.yml.
+AUTH="http://127.0.0.1:9999"
+REALTIME_CONTAINER="realtime-dev.supabase-realtime"
+# Where the API reaches Auth: nginx on loopback, which provision.sh sets up in Envoy's old place.
+LOOPBACK_URL="http://127.0.0.1:54321"
 
 DOMAIN=""
 MAIL_FROM=""
@@ -69,6 +76,14 @@ set_env() {
   rm -f "$tmp"
 }
 get_env() { sed -n "s/^$2=//p" "$1" | tail -n 1; }
+# Removes KEY's line from FILE, keeping the file's owner and mode as set_env does.
+unset_env() {
+  local file="$1" key="$2" tmp
+  tmp="$(mktemp)"
+  awk -v k="$key" 'index($0, k "=") != 1' "$file" >"$tmp"
+  cat "$tmp" >"$file"
+  rm -f "$tmp"
+}
 
 log "Fetching Supabase's docker/ folder at $SUPABASE_COMMIT"
 install -d -m 755 "$SUPABASE_DIR"
@@ -93,7 +108,7 @@ if [ ! -f "$STACK_ENV" ]; then
   rm -f "$STACK_ENV.old"
   note "Generated new secrets."
 fi
-for key in JWT_SECRET POSTGRES_PASSWORD SUPABASE_PUBLISHABLE_KEY SUPABASE_SECRET_KEY JWT_KEYS JWT_JWKS; do
+for key in JWT_SECRET POSTGRES_PASSWORD ANON_KEY_ASYMMETRIC JWT_KEYS JWT_JWKS; do
   [ -n "$(get_env "$STACK_ENV" "$key")" ] || die "$key is empty in $STACK_ENV. Move the file aside and run again."
 done
 
@@ -132,33 +147,67 @@ if [[ "$(get_env "$STACK_ENV" SMTP_PASS)" != re_* ]]; then
 fi
 
 log "Starting ${SERVICES[*]}"
+# Stops and removes PostgREST and Envoy where an earlier run started them. nginx takes Envoy's
+# loopback port 54321 after this.
+(cd "$STACK_DIR" && docker compose rm --stop --force "${RETIRED[@]}" >/dev/null)
 (cd "$STACK_DIR" && docker compose pull --quiet "${SERVICES[@]}" && docker compose up -d --remove-orphans "${SERVICES[@]}")
 
 log "Checking the stack"
-publishable="$(get_env "$STACK_ENV" SUPABASE_PUBLISHABLE_KEY)"
 ok=0
 for _ in $(seq 1 60); do
-  if curl -fsS -o /dev/null -H "apikey: $publishable" $GATEWAY/auth/v1/health; then
+  if curl -fsS -o /dev/null $AUTH/health; then
     ok=1
     break
   fi
   sleep 2
 done
-[ "$ok" -eq 1 ] || die "Auth is not answering through the gateway. Read: cd $STACK_DIR && docker compose logs auth api-gw"
-curl -fsS $GATEWAY/auth/v1/.well-known/jwks.json | grep -q '"ES256"' ||
+[ "$ok" -eq 1 ] || die "Auth is not answering on $AUTH. Read: cd $STACK_DIR && docker compose logs auth"
+curl -fsS $AUTH/.well-known/jwks.json | grep -q '"ES256"' ||
   die "The JWKS has no ES256 key, so apps/api cannot verify tokens. Check JWT_KEYS in $STACK_ENV."
 note "Auth answers and publishes an ES256 key."
+ok=0
+for _ in $(seq 1 60); do
+  if [ "$(docker inspect -f '{{.State.Health.Status}}' "$REALTIME_CONTAINER" 2>/dev/null)" = healthy ]; then
+    ok=1
+    break
+  fi
+  sleep 2
+done
+[ "$ok" -eq 1 ] || die "Realtime is not healthy. Read: cd $STACK_DIR && docker compose logs realtime"
+note "Realtime is healthy."
 docker exec supabase-db psql -U postgres -tAc "select 1 from pg_available_extensions where name = 'pgmq'" | grep -q 1 ||
   die "This Postgres image has no pgmq extension, which the migrations need."
 note "pgmq is available."
-curl -fsS -o /dev/null -H "apikey: $publishable" $GATEWAY/rest/v1/ ||
-  note "PostgREST did not answer yet. Read: cd $STACK_DIR && docker compose logs rest"
+
+log "Setting the API's database login"
+# The migration ..._api_database_role.sql creates momentlens_api and switches it to service_role.
+# A fresh database may not have that migration yet, so this creates the role too, as postgres,
+# which then holds ADMIN OPTION on it, as the migration needs. The password goes in on stdin, never
+# on a command line. Hex, so it needs no quoting in SQL or in a URL.
+api_password="$(get_env "$STACK_ENV" API_DB_PASSWORD)"
+if [ -z "$api_password" ]; then
+  api_password="$(openssl rand -hex 32)"
+  set_env "$STACK_ENV" API_DB_PASSWORD "$api_password"
+fi
+printf '%s\n' \
+  "do \$\$ begin if not exists (select from pg_catalog.pg_roles where rolname = 'momentlens_api') then create role momentlens_api login noinherit; end if; end \$\$;" \
+  "alter role momentlens_api password '$api_password';" |
+  docker exec -i supabase-db psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres ||
+  die "Could not set the momentlens_api password. Read: docker logs supabase-db"
+note "momentlens_api can log in."
 
 log "Writing the Supabase variables into $APP_ENV"
+# The anon JWT, signed by Auth's ES256 key. The app and the API send it as their Supabase key:
+# Auth ignores it and Realtime verifies it. The sb_publishable_ key needed Envoy to swap it for
+# this JWT, so it is not used any more (D-164).
+anon="$(get_env "$STACK_ENV" ANON_KEY_ASYMMETRIC)"
 if [ -f "$APP_ENV" ]; then
-  set_env "$APP_ENV" SUPABASE_URL "$GATEWAY"
-  set_env "$APP_ENV" SUPABASE_PUBLISHABLE_KEY "$publishable"
-  set_env "$APP_ENV" SUPABASE_SECRET_KEY "$(get_env "$STACK_ENV" SUPABASE_SECRET_KEY)"
+  set_env "$APP_ENV" SUPABASE_URL "$LOOPBACK_URL"
+  set_env "$APP_ENV" SUPABASE_PUBLISHABLE_KEY "$anon"
+  # The API holds no secret key since D-164. Clears the line an earlier run wrote.
+  unset_env "$APP_ENV" SUPABASE_SECRET_KEY
+  # The API's own login, which runs as service_role (D-164).
+  set_env "$APP_ENV" API_DATABASE_URL "postgresql://momentlens_api:$api_password@127.0.0.1:5432/postgres"
   # Straight to Postgres on loopback: a session connection, which the worker's queue lock needs (D-123).
   set_env "$APP_ENV" DATABASE_URL "postgresql://postgres:$(get_env "$STACK_ENV" POSTGRES_PASSWORD)@127.0.0.1:5432/postgres"
   note "Done. Restart the API and the worker to pick them up."
@@ -169,5 +218,6 @@ fi
 log "Done"
 note "For apps/mobile/.env and the EAS environments:"
 note "  EXPO_PUBLIC_SUPABASE_URL=https://$DOMAIN"
-note "  EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$publishable"
-note "The publishable key is public by design. The secret key and database password stay on this server."
+note "  EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$anon"
+note "The anon JWT is public by design. It expires 5 years after this stack's first run."
+note "The service-role JWT and the database passwords stay on this server."
