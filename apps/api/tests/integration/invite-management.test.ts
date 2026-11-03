@@ -9,7 +9,8 @@ import {
 } from '@momentlens/shared-types';
 import type { InviteRole, Membership } from '@momentlens/shared-types';
 
-import type { Supabase } from '../../src/db/supabase';
+import { fakeSql } from '../support/fake-sql';
+import type { FakeRpc } from '../support/fake-sql';
 import { createInviteManagementStore } from '../../src/services/invites';
 import { startApp, testDeps } from '../support/app';
 import type { RunningApp } from '../support/app';
@@ -39,7 +40,7 @@ function credential(role: InviteRole) {
 
 // These outcomes model the RPC's boundary. rls.test.ts checks its access rules and writes
 // against PostgreSQL; these requests check auth, parsing and the HTTP mapping.
-const rpc = jest.fn<(name: string, params: Record<string, unknown>) => Promise<unknown>>();
+const rpc = jest.fn<FakeRpc>();
 let credentials: ReturnType<typeof credential>[];
 let reply: unknown;
 let deleted: boolean;
@@ -49,7 +50,7 @@ beforeAll(async () => {
   app = await startApp(
     testDeps({
       verifyToken: (token) => Promise.resolve(users.has(token) ? { id: token } : null),
-      inviteManagement: createInviteManagementStore({ rpc } as unknown as Supabase),
+      inviteManagement: createInviteManagementStore(fakeSql(rpc)),
     }),
   );
 });
