@@ -2,7 +2,8 @@ import { pino } from 'pino';
 
 import { createApp } from './app';
 import { loadEnv, r2Settings } from './config';
-import { createSupabase } from './db/supabase';
+import { createDatabase } from './db/sql';
+import { createServerClient, SUPABASE_TIMEOUT_MS } from './db/supabase';
 import { createR2 } from './lib/r2';
 import { createTokenVerifier } from './middleware/auth';
 import { createAlbumStore } from './services/album';
@@ -46,29 +47,33 @@ try {
   process.exit(1);
 }
 
-const supabase = createSupabase(config.env);
-// A second client, used only to check tokens. The client that queries must never hold a user
-// session, because supabase-js would then send the user's token in place of the secret key and
-// RLS would hide every row. Keeping token checks on their own client rules that out.
-const authClient = createSupabase(config.env);
+// Every read and write of data goes through this pool, as the API's own database login (D-164).
+const sql = createDatabase(config.env.API_DATABASE_URL);
+// Checks access tokens with Supabase Auth, and nothing else. A token check holds no session and
+// reads no data, so the pool and this client never share a user (D-109).
+const authClient = createServerClient(
+  config.env.SUPABASE_URL,
+  config.env.SUPABASE_PUBLISHABLE_KEY,
+  { timeoutMs: SUPABASE_TIMEOUT_MS },
+);
 const r2 = createR2(r2Settings(config.env));
 
 createApp({
   logger,
-  checkDatabase: createDatabaseCheck(supabase, logger),
+  checkDatabase: createDatabaseCheck(sql, logger),
   verifyToken: createTokenVerifier(authClient),
-  findProfile: createFindProfile(supabase),
-  consent: createConsentStore(supabase),
-  events: createEventStore(supabase),
-  attendees: createAttendeeStore(supabase),
-  joinRequests: createJoinRequestStore(supabase),
-  invites: createInviteStore(supabase),
-  inviteManagement: createInviteManagementStore(supabase),
-  venueQrs: createVenueQrStore(supabase),
-  subEvents: createSubEventStore(supabase),
-  media: createMediaStore(supabase),
-  album: createAlbumStore(supabase),
-  mediaImages: createMediaImagesStore(supabase),
+  findProfile: createFindProfile(sql),
+  consent: createConsentStore(sql),
+  events: createEventStore(sql),
+  attendees: createAttendeeStore(sql),
+  joinRequests: createJoinRequestStore(sql),
+  invites: createInviteStore(sql),
+  inviteManagement: createInviteManagementStore(sql),
+  venueQrs: createVenueQrStore(sql),
+  subEvents: createSubEventStore(sql),
+  media: createMediaStore(sql),
+  album: createAlbumStore(sql),
+  mediaImages: createMediaImagesStore(sql),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,

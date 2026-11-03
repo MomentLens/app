@@ -8,7 +8,7 @@ import type {
   SectionCount,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import { ApiError } from '../middleware/errors';
 import { requireMember, toTimestamp } from './events';
 import type { EventStore } from './events';
@@ -123,21 +123,21 @@ const ListUploadersRpcResult = z.object({
   ),
 });
 
-export function createAlbumStore(supabase: Supabase): AlbumStore {
+export function createAlbumStore(sql: Sql): AlbumStore {
   return {
     async query(eventId, options) {
-      const result = await supabase.rpc('list_album', {
-        p_event_id: eventId,
-        p_sub_event_id: options.subEventId ?? null,
-        p_uploader_id: options.uploaderId ?? null,
-        p_after_starts_at: options.cursor?.startsAt ?? null,
-        p_after_sub_event_id: options.cursor?.subEventIdRow ?? null,
-        p_after_captured_at: options.cursor?.capturedAt ?? null,
-        p_after_media_id: options.cursor?.mediaId ?? null,
-        p_limit: options.limit,
-      });
-      if (result.error) throw result.error;
-      const parsed = ListAlbumRpcResult.parse(result.data as unknown);
+      const [row] = await sql`
+        select public.list_album(
+          p_event_id => ${eventId},
+          p_sub_event_id => ${options.subEventId ?? null},
+          p_uploader_id => ${options.uploaderId ?? null},
+          p_after_starts_at => ${options.cursor?.startsAt ?? null},
+          p_after_sub_event_id => ${options.cursor?.subEventIdRow ?? null},
+          p_after_captured_at => ${options.cursor?.capturedAt ?? null},
+          p_after_media_id => ${options.cursor?.mediaId ?? null},
+          p_limit => ${options.limit}
+        ) as result`;
+      const parsed = ListAlbumRpcResult.parse(row?.result);
       return {
         media: parsed.media.map((m) => ({
           id: m.id,
@@ -159,11 +159,8 @@ export function createAlbumStore(supabase: Supabase): AlbumStore {
     },
 
     async uploaders(eventId) {
-      const result = await supabase.rpc('list_uploaders', {
-        p_event_id: eventId,
-      });
-      if (result.error) throw result.error;
-      const parsed = ListUploadersRpcResult.parse(result.data as unknown);
+      const [row] = await sql`select public.list_uploaders(p_event_id => ${eventId}) as result`;
+      const parsed = ListUploadersRpcResult.parse(row?.result);
       return parsed.uploaders.map((u) => ({
         userId: u.user_id,
         fullName: u.full_name,

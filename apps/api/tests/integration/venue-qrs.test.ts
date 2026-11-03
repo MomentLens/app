@@ -10,7 +10,8 @@ import {
 } from '@momentlens/shared-types';
 import type { Membership } from '@momentlens/shared-types';
 
-import type { Supabase } from '../../src/db/supabase';
+import { fakeSql } from '../support/fake-sql';
+import type { FakeRpc } from '../support/fake-sql';
 import { createVenueQrStore } from '../../src/services/venue-qrs';
 import { startApp, testDeps } from '../support/app';
 import type { RunningApp } from '../support/app';
@@ -44,7 +45,7 @@ function managed(row: ReturnType<typeof credential>) {
 
 // SQL authorization and locking run in rls.test.ts. This fake checks the HTTP boundary and RPC
 // arguments, including the actor supplied by authentication and conditional rotation.
-const rpc = jest.fn<(name: string, params: Record<string, unknown>) => Promise<unknown>>();
+const rpc = jest.fn<FakeRpc>();
 const logs: unknown[] = [];
 let credentials: ReturnType<typeof credential>[];
 let reply: unknown;
@@ -56,7 +57,7 @@ beforeAll(async () => {
     testDeps({
       logger: pino({ level: 'info' }, { write: (line: string) => logs.push(JSON.parse(line)) }),
       verifyToken: (token) => Promise.resolve(users.has(token) ? { id: token } : null),
-      venueQrs: createVenueQrStore({ rpc } as unknown as Supabase),
+      venueQrs: createVenueQrStore(fakeSql(rpc)),
     }),
   );
 });
