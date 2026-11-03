@@ -28,7 +28,8 @@ import type {
   UpdateEventSettingsResponse,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import { isForeignKeyViolation } from '../db/sql';
+import type { Sql } from '../db/sql';
 import { coverKey } from '../lib/keys';
 import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
@@ -167,12 +168,12 @@ const CreateEventRow = z.discriminatedUnion('outcome', [
   z.object({ outcome: z.enum(['taken', 'gone']) }),
 ]);
 
-// A pending membership with its event, from the embedded select in listJoinRequests. The event's
-// deleted_at is read back to prove the inner join's filter held.
+// A pending membership with its event's id and name, from listJoinRequests' join.
 const JoinRequestRow = z.object({
   role: InviteRole,
   requested_at: z.string().transform(toTimestamp),
-  event: z.object({ id: z.uuid(), name: z.string(), deleted_at: z.null() }),
+  event_id: z.uuid(),
+  event_name: z.string(),
 });
 
 // The access half of a get_my_event row. role and status are null together, when the caller has
@@ -284,25 +285,33 @@ export function updateEventSettingsParams(
   };
 }
 
-// Postgres foreign_key_violation on membership.user_id: the caller's account no longer exists.
-export function isMissingAccount(error: { code?: string; message?: string }): boolean {
-  return error.code === '23503' && (error.message ?? '').includes('membership_user_id_fkey');
-}
-
-export function createEventStore(supabase: Supabase): EventStore {
+export function createEventStore(sql: Sql): EventStore {
   return {
     async create(userId, request) {
-      // One rpc, one transaction: the event, its venues, its sub-events and the Admin's row
+      // One call, one transaction: the event, its venues, its sub-events and the Admin's row
       // commit together or not at all (D-95, D-110).
-      // Without generated database types, rpc types its data as any, so it is parsed as unknown.
-      const result = await supabase.rpc('create_event', createEventParams(userId, request));
-      if (result.error) {
-        if (isMissingAccount(result.error)) {
-          return { outcome: 'no_account' };
+      const p = createEventParams(userId, request);
+      const rows = await sql`
+        select * from public.create_event(
+          p_user_id => ${p.p_user_id},
+          p_request_id => ${p.p_request_id},
+          p_name => ${p.p_name},
+          p_type => ${p.p_type},
+          p_description => ${p.p_description},
+          p_approval_mode => ${p.p_approval_mode},
+          p_venues => ${sql.json(p.p_venues)}::jsonb,
+          p_sub_events => ${sql.json(p.p_sub_events)}::jsonb
+        )`.catch((error: unknown) => {
+        // The caller's account no longer exists, deleted within its token's hour.
+        if (isForeignKeyViolation(error, 'membership_user_id_fkey')) {
+          return null;
         }
-        throw result.error;
+        throw error;
+      });
+      if (rows === null) {
+        return { outcome: 'no_account' };
       }
-      const [row, ...rest] = z.array(CreateEventRow).parse(result.data as unknown);
+      const [row, ...rest] = z.array(CreateEventRow).parse(rows);
       if (row === undefined || rest.length > 0) {
         throw new Error(`create_event returned ${rest.length + (row ? 1 : 0)} rows, expected 1`);
       }
@@ -317,28 +326,16 @@ export function createEventStore(supabase: Supabase): EventStore {
     },
 
     async listForMember(userId) {
-      // An rpc because the span is an aggregate over sub_event, which PostgREST does not compute.
-      const result = await supabase.rpc('list_my_events', { p_user_id: userId });
-      if (result.error) {
-        throw result.error;
-      }
-      return z
-        .array(EventRow)
-        .parse(result.data as unknown)
-        .map(toRecord);
+      // A function because the span is an aggregate over sub_event.
+      const rows = await sql`select * from public.list_my_events(p_user_id => ${userId})`;
+      return z.array(EventRow).parse(rows).map(toRecord);
     },
 
     async findForCaller(eventId, userId) {
-      // An rpc for the span, as in listForMember, and so the access and the event come from one
+      // A function for the span, as in listForMember, and so the access and the event come from one
       // snapshot: a membership changed between two reads cannot pair one answer with the other.
-      const result = await supabase.rpc('get_my_event', {
-        p_event_id: eventId,
-        p_user_id: userId,
-      });
-      if (result.error) {
-        throw result.error;
-      }
-      const rows = z.array(z.unknown()).parse(result.data as unknown);
+      const rows = await sql`
+        select * from public.get_my_event(p_event_id => ${eventId}, p_user_id => ${userId})`;
       if (rows.length > 1) {
         throw new Error(`get_my_event returned ${rows.length} rows, expected at most 1`);
       }
@@ -364,22 +361,18 @@ export function createEventStore(supabase: Supabase): EventStore {
 
     async listJoinRequests(userId) {
       // The (user_id, status) index finds the rows. The inner join drops a row whose event is
-      // soft-deleted, where a plain embed would return it with a null event.
-      const result = await supabase
-        .from('membership')
-        .select('role, requested_at, event!inner(id, name, deleted_at)')
-        .eq('user_id', userId)
-        .eq('status', 'pending')
-        .is('event.deleted_at', null);
-      if (result.error) {
-        throw result.error;
-      }
+      // soft-deleted.
+      const rows = await sql`
+        select m.role, m.requested_at, e.id as event_id, e.name as event_name
+        from public.membership m
+        join public.event e on e.id = m.event_id
+        where m.user_id = ${userId} and m.status = 'pending' and e.deleted_at is null`;
       return z
         .array(JoinRequestRow)
-        .parse(result.data as unknown)
+        .parse(rows)
         .map((row) => ({
-          eventId: row.event.id,
-          eventName: row.event.name,
+          eventId: row.event_id,
+          eventName: row.event_name,
           role: row.role,
           requestedAt: row.requested_at,
         }));
@@ -388,94 +381,71 @@ export function createEventStore(supabase: Supabase): EventStore {
     async findAccess(eventId, userId) {
       // Two indexed reads, by primary key and by the (event_id, user_id) unique key.
       const [event, membership] = await Promise.all([
-        supabase.from('event').select('deleted_at, album_open').eq('id', eventId).maybeSingle(),
-        supabase
-          .from('membership')
-          .select('role, status')
-          .eq('event_id', eventId)
-          .eq('user_id', userId)
-          .maybeSingle(),
+        sql`select deleted_at, album_open from public.event where id = ${eventId}`,
+        sql`select role, status from public.membership where event_id = ${eventId} and user_id = ${userId}`,
       ]);
-      if (event.error) {
-        throw event.error;
-      }
-      if (membership.error) {
-        throw membership.error;
-      }
-      if (event.data === null) {
+      const [eventRow] = event;
+      if (eventRow === undefined) {
         return null;
       }
-      const row = AccessRows.event.parse(event.data);
+      const row = AccessRows.event.parse(eventRow);
+      const [membershipRow] = membership;
       return {
         deleted: row.deleted_at !== null,
         albumOpen: row.album_open,
-        membership: membership.data === null ? null : AccessRows.membership.parse(membership.data),
+        membership: membershipRow === undefined ? null : AccessRows.membership.parse(membershipRow),
       };
     },
 
     async setCover(eventId, key) {
       // The deleted_at filter makes the write refuse an event deleted since findAccess read it.
-      const { data, error } = await supabase
-        .from('event')
-        .update({ cover_key: key })
-        .eq('id', eventId)
-        .is('deleted_at', null)
-        .select('id');
-      if (error) {
-        throw error;
-      }
-      return z.array(z.object({ id: z.uuid() })).parse(data).length === 1;
+      const rows = await sql`
+        update public.event set cover_key = ${key}
+        where id = ${eventId} and deleted_at is null
+        returning id`;
+      return z.array(z.object({ id: z.uuid() })).parse(rows).length === 1;
     },
 
     async settings(eventId) {
-      // An rpc so the pending count and the names come from one snapshot, and so GET and the
+      // A function so the pending count and the names come from one snapshot, and so GET and the
       // write read the settings in one place.
-      const result = await supabase.rpc('event_settings', { p_event_id: eventId });
-      if (result.error) {
-        throw result.error;
-      }
-      return SettingsRow.nullable().parse(result.data as unknown);
+      const [row] = await sql`select public.event_settings(p_event_id => ${eventId}) as settings`;
+      return SettingsRow.nullable().parse(row?.settings ?? null);
     },
 
     async albumStatus(eventId) {
-      // An rpc so the state, the count and the names come from one snapshot (D-161).
-      const result = await supabase.rpc('album_status', { p_event_id: eventId });
-      if (result.error) {
-        throw result.error;
-      }
-      return AlbumStatusRow.nullable().parse(result.data as unknown);
+      // A function so the state, the count and the names come from one snapshot (D-161).
+      const [row] = await sql`select public.album_status(p_event_id => ${eventId}) as status`;
+      return AlbumStatusRow.nullable().parse(row?.status ?? null);
     },
 
     async setAlbum(eventId, open) {
       // One update by primary key. The deleted_at filter makes it refuse an event deleted since
       // findAccess read it, as setCover's does. Two writes resolve as last write wins (D-142).
-      const { data, error } = await supabase
-        .from('event')
-        .update({ album_open: open })
-        .eq('id', eventId)
-        .is('deleted_at', null)
-        .select('album_open');
-      if (error) {
-        throw error;
+      const rows = await sql`
+        update public.event set album_open = ${open}
+        where id = ${eventId} and deleted_at is null
+        returning album_open`;
+      const parsed = z.array(z.object({ album_open: z.boolean() })).parse(rows);
+      if (parsed.length > 1) {
+        throw new Error(`The album write changed ${parsed.length} events, expected at most 1`);
       }
-      const rows = z.array(z.object({ album_open: z.boolean() })).parse(data);
-      if (rows.length > 1) {
-        throw new Error(`The album write changed ${rows.length} events, expected at most 1`);
-      }
-      return rows[0]?.album_open ?? null;
+      return parsed[0]?.album_open ?? null;
     },
 
     async updateSettings(eventId, request, maxGuests) {
-      // One rpc, one transaction, under the event's lock: the fields, the switch and every
+      // One call, one transaction, under the event's lock: the fields, the switch and every
       // request it admits commit together or not at all (D-95, D-142).
-      const result = await supabase.rpc(
-        'update_event_settings',
-        updateEventSettingsParams(eventId, request, maxGuests),
-      );
-      if (result.error) {
-        throw result.error;
-      }
-      const [row, ...rest] = z.array(UpdateSettingsRow).parse(result.data as unknown);
+      const p = updateEventSettingsParams(eventId, request, maxGuests);
+      const rows = await sql`
+        select * from public.update_event_settings(
+          p_event_id => ${p.p_event_id},
+          p_name => ${p.p_name},
+          p_description => ${p.p_description},
+          p_approval_mode => ${p.p_approval_mode},
+          p_max_guests => ${p.p_max_guests}
+        )`;
+      const [row, ...rest] = z.array(UpdateSettingsRow).parse(rows);
       if (row === undefined || rest.length > 0) {
         throw new Error(
           `update_event_settings returned ${rest.length + (row ? 1 : 0)} rows, expected 1`,

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { ListVenueQrsResponse, ManagedVenueQr, VenueQrPayload } from '@momentlens/shared-types';
 import type { RegenerateVenueQrRequest, RegenerateVenueQrResponse } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import { ApiError } from '../middleware/errors';
 
 const Refusal = z.enum(['not_found', 'not_member', 'wrong_role']);
@@ -53,36 +53,38 @@ export interface VenueQrStore {
 // Database errors and invalid results can contain credential values. Drop those details before
 // errors reach the logger or Sentry (D-156). Refusals remain typed outcomes.
 async function call<T extends z.ZodType>(
-  supabase: Supabase,
   name: string,
-  params: Record<string, unknown>,
+  query: Promise<Record<string, unknown>[]>,
   schema: T,
 ): Promise<z.output<T>> {
   try {
-    const result = await supabase.rpc(name, params);
-    if (result.error) throw new Error('RPC refused');
-    return schema.parse(result.data as unknown);
+    const [row] = await query;
+    return schema.parse(row?.result);
   } catch {
     throw new Error(`${name} failed`);
   }
 }
 
 // SQL checks the authenticated actor in the same snapshot as the list, or under the event lock
-// for rotation. These RPCs execute only with the service key (D-73, D-95, D-156).
-export function createVenueQrStore(supabase: Supabase): VenueQrStore {
+// for rotation. Only the API's database role runs these functions (D-73, D-95, D-156).
+export function createVenueQrStore(sql: Sql): VenueQrStore {
   return {
     list: (eventId, actorId) =>
-      call(supabase, 'list_venue_qrs', { p_event_id: eventId, p_actor_id: actorId }, ListResult),
+      call(
+        'list_venue_qrs',
+        sql`select public.list_venue_qrs(p_event_id => ${eventId}, p_actor_id => ${actorId}) as result`,
+        ListResult,
+      ),
     async regenerate(eventId, actorId, venueId, request) {
       const row = await call(
-        supabase,
         'regenerate_venue_qr',
-        {
-          p_event_id: eventId,
-          p_actor_id: actorId,
-          p_venue_id: venueId,
-          p_expected_secret: request.expectedSecret,
-        },
+        sql`
+          select public.regenerate_venue_qr(
+            p_event_id => ${eventId},
+            p_actor_id => ${actorId},
+            p_venue_id => ${venueId},
+            p_expected_secret => ${request.expectedSecret}
+          ) as result`,
         RegenerateResult,
       );
       if (

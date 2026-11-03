@@ -6,7 +6,7 @@ import type {
   PresignedImage,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../db/supabase';
+import type { Sql } from '../db/sql';
 import type { PresignGet } from '../lib/r2';
 import { requireMember } from './events';
 import type { EventStore } from './events';
@@ -41,22 +41,19 @@ const MediaImageDbRow = z.object({
   deleted_at: z.string().nullable(),
 });
 
-export function createMediaImagesStore(supabase: Supabase): MediaImagesStore {
+export function createMediaImagesStore(sql: Sql): MediaImagesStore {
   return {
     async findForServing(eventId, mediaIds) {
       if (mediaIds.length === 0) return [];
-      const { data, error } = await supabase
-        .from('media')
-        .select(
-          'id, event_id, uploader_user_id, upload_key, upload_thumb_key, public_key, public_thumb_key, variant_version, processed_at, deleted_at',
-        )
-        .eq('event_id', eventId)
-        .in('id', mediaIds)
-        .not('processed_at', 'is', null)
-        .is('deleted_at', null);
-
-      if (error) throw error;
-      const parsed = z.array(MediaImageDbRow).parse(data);
+      const rows = await sql`
+        select id, event_id, uploader_user_id, upload_key, upload_thumb_key, public_key,
+          public_thumb_key, variant_version, processed_at, deleted_at
+        from public.media
+        where event_id = ${eventId}
+          and id = any(${mediaIds}::uuid[])
+          and processed_at is not null
+          and deleted_at is null`;
+      const parsed = z.array(MediaImageDbRow).parse(rows);
       return parsed.map((r) => ({
         id: r.id,
         eventId: r.event_id,

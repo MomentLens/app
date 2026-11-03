@@ -9,7 +9,8 @@ import {
   ListAttendeesResponse,
 } from '@momentlens/shared-types';
 
-import type { Supabase } from '../../src/db/supabase';
+import { fakeSql } from '../support/fake-sql';
+import type { FakeRpc } from '../support/fake-sql';
 import { accessVersion, createAttendeeStore } from '../../src/services/attendees';
 
 const eventId = randomUUID();
@@ -19,10 +20,8 @@ const id = randomUUID();
 const subEventId = randomUUID();
 const counter = '9007199254740993';
 const member = { id, user_id: userId, role: 'guest', status: 'active', access_version: counter };
-const rpc = () =>
-  jest.fn<(name: string, params: object) => Promise<{ data: unknown; error: unknown }>>();
-const store = (call: ReturnType<typeof rpc>) =>
-  createAttendeeStore({ rpc: call } as unknown as Supabase);
+const rpc = () => jest.fn<FakeRpc>();
+const store = (call: ReturnType<typeof rpc>) => createAttendeeStore(fakeSql(call));
 
 describe('S-17 manual check-in contract', () => {
   it('accepts only an expected access version and rejects client grant fields', () => {

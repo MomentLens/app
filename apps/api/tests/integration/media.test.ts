@@ -6,7 +6,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { createClient } from '@supabase/supabase-js';
 import { pino } from 'pino';
 
 import {
@@ -22,6 +21,7 @@ import type {
   VerificationRecord,
 } from '@momentlens/shared-types';
 
+import type { Sql } from '../../src/db/sql';
 import { uploadKeys } from '../../src/lib/keys';
 import type { VerifyToken } from '../../src/middleware/auth';
 import type { EventStore, MemberAccess } from '../../src/services/events';
@@ -42,6 +42,7 @@ import type {
 } from '../../src/services/media';
 import { startApp, testDeps } from '../support/app';
 import type { RunningApp } from '../support/app';
+import { fakeSql } from '../support/fake-sql';
 
 const ADMIN = randomUUID();
 const OTHER_ADMIN = randomUUID();
@@ -1524,64 +1525,47 @@ describe('POST /events/{eventId}/media/status', () => {
   });
 });
 
-it('decodes the completion RPC membership refusal without treating it as a database failure', async () => {
-  const client = createClient('https://database.test', 'test-key', {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    global: {
-      fetch: () => Promise.resolve(Response.json([{ outcome: 'not_member', message_id: null }])),
-    },
-  });
-  await expect(createMediaStore(client).complete(randomUUID(), GUEST, 123)).resolves.toEqual({
+it('decodes the completion function membership refusal without treating it as a database failure', async () => {
+  const sql = fakeSql(() =>
+    Promise.resolve({ data: [{ outcome: 'not_member', message_id: null }], error: null }),
+  );
+  await expect(createMediaStore(sql).complete(randomUUID(), GUEST, 123)).resolves.toEqual({
     outcome: 'not_member',
   });
 });
 
-// Exercise the real Supabase query builder so an unscoped query cannot hide behind FakeMedia.
+// Read the statement itself, so an unscoped query cannot hide behind FakeMedia. database.test.ts
+// runs the same read against Postgres.
 describe('media status database read', () => {
   it('scopes the query to the event, uploader, requested ids and uploaded rows, keeping deleted rows', async () => {
     const ids = [randomUUID(), randomUUID(), randomUUID()];
-    const request = jest.fn<typeof fetch>(() =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify([
-            { id: ids[0], processed_at: null, deleted_at: null },
-            { id: ids[1], processed_at: '2026-10-05T08:00:00Z', deleted_at: null },
-            {
-              id: ids[2],
-              processed_at: '2026-10-05T08:00:00Z',
-              deleted_at: '2026-10-05T09:00:00Z',
-            },
-          ]),
-          { headers: { 'Content-Type': 'application/json' } },
-        ),
-      ),
-    );
-    const client = createClient('https://database.test', 'test-key', {
-      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-      global: { fetch: request },
-    });
-    await expect(createMediaStore(client).statuses(eventId, GUEST, ids)).resolves.toEqual({
+    const calls: { text: string; values: unknown[] }[] = [];
+    const sql = ((strings: TemplateStringsArray, ...values: unknown[]) => {
+      calls.push({ text: strings.join('$').replace(/\s+/g, ' ').trim(), values });
+      return Promise.resolve([
+        { id: ids[0], processed_at: null, deleted_at: null },
+        { id: ids[1], processed_at: '2026-10-05T08:00:00+00:00', deleted_at: null },
+        {
+          id: ids[2],
+          processed_at: '2026-10-05T08:00:00+00:00',
+          deleted_at: '2026-10-05T09:00:00+00:00',
+        },
+      ]);
+    }) as unknown as Sql;
+    await expect(createMediaStore(sql).statuses(eventId, GUEST, ids)).resolves.toEqual({
       statuses: [
         { mediaId: ids[0], status: 'processing' },
         { mediaId: ids[1], status: 'published' },
         { mediaId: ids[2], status: 'deleted' },
       ],
     });
-    expect(request).toHaveBeenCalledTimes(1);
-    const input = request.mock.calls[0]![0];
-    const url = new URL(input instanceof Request ? input.url : String(input));
-    expect(url.pathname).toBe('/rest/v1/media');
-    expect(url.searchParams.get('event_id')).toBe(`eq.${eventId}`);
-    expect(url.searchParams.get('uploader_user_id')).toBe(`eq.${GUEST}`);
-    expect(url.searchParams.get('id')).toBe(`in.(${ids.join(',')})`);
-    expect(url.searchParams.get('uploaded_at')).toBe('not.is.null');
-    expect(url.searchParams.has('deleted_at')).toBe(false);
-    expect(
-      url.searchParams
-        .get('select')
-        ?.split(',')
-        .map((column) => column.trim())
-        .sort(),
-    ).toEqual(['deleted_at', 'id', 'processed_at']);
+    expect(calls).toEqual([
+      {
+        text:
+          'select id, processed_at, deleted_at from public.media where event_id = $ and' +
+          ' uploader_user_id = $ and id = any($::uuid[]) and uploaded_at is not null',
+        values: [eventId, GUEST, ids],
+      },
+    ]);
   });
 });
