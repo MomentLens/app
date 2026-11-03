@@ -228,6 +228,7 @@ Entries marked ⚠ are ones where the team knowingly accepted a risk. Know these
 **Why.** The old numbers were chosen without reference to any free tier. Supabase's free plan allows 200 peak concurrent Realtime connections and 2 million Realtime messages per month; a 500-guest event broadcasting every upload exceeds both from a single wedding.
 **Cost.** None practically. Both numbers are far above anything a demo will produce.
 **Amended (see D-102).** The 150 counts active Guests. The Admin and Photographers do not count.
+**Amended (see D-163).** Supabase runs self-hosted on the server now, so the free plan's numbers no longer apply. The pinned Realtime image defaults to 200 concurrent connections and 100 messages a second, and every message delivered to a phone counts toward the second. A full event's 150 Guests stay under the first. One photo published to all of them is 150 messages, over the second, and what happens then is Open.
 
 ---
 
@@ -426,9 +427,9 @@ Two constraints settled a third of these before any of them were argued individu
 **Decision.** The reprocess job compares stored embeddings against the newly-active reference set, then regenerates variants for matched photos only.
 **Why.** Every face in every photo already has an embedding from its original processing pass. Re-running the model is the expensive version of a job that is milliseconds of cosine comparison. The naive reading of "asynchronous reprocessing" is the expensive one, which is why it is stated as a rule.
 
-### D-67 — The Supabase keep-alive runs from GitHub Actions
+### D-67 — The Supabase keep-alive runs from GitHub Actions ~~(SUPERSEDED by D-163)~~
 **Decision.** A scheduled workflow, not a cron on the compute box.
-**Why.** D-38 put the keep-alive on the instance it was meant to protect against, chaining two failures together. Under D-50 it is worse, because the laptop will not be running at 3am on a Tuesday. One YAML file, independent failure domain.
+**Removed.** The rest of this entry is in git history: `git show 4a3f737:docs/DecisionLog.md`.
 
 ### D-68 — Code comprehension is not a merge gate, and simplicity is not an instruction to the agent
 **Decision.** Supersedes D-45.
@@ -509,7 +510,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Why.** Handbook §13 put the tunnel in Phase 0 for everyday remote testing, and the Oracle instance already gives the team a public HTTPS backend from Phase 0. The M1's advantage, faster inference (D-50), matters on demo day.
 **Rejected.** The tunnel in Phase 0 as the everyday remote-testing setup.
 **Cost.** The demo stack runs for the first time a month out. The M1 and Oracle share an architecture, so the remaining risk is configuration, which the Phase 7 rehearsal covers. If the M1 fails in demo week, Oracle only works as the fallback after its `.env` switches to the stable project, because the demo build logs in against stable.
-**Amended (see D-78).** From 2026-10-15 development runs on a Netcup server instead of the Oracle instance, and the demo stack goes up on that same server rather than on the M1. The one-month timing stands.
+**Amended (see D-78).** From 2026-10-15 development runs on an Azure Dubai VM instead of the Oracle instance, and the demo stack goes up on that same server rather than on the M1. The one-month timing stands.
 
 ### D-77: Pinch-zoom is core, as a named exception to D-44
 **Decision.** Amends D-59 and D-44. The single photo viewer ships with pinch-zoom and pan (spec §2.5) in S-22, although no demo beat shows it. It is the one named exception to D-44's rule that scope is what the demo script shows.
@@ -521,20 +522,20 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 
 # M. Decided after benchmarking the worker (2026-09-16)
 
-### D-78: One Netcup server runs development and the demo from 2026-10-15 ⚠
-**Decision.** Supersedes D-50 and D-51 and amends D-38 and D-76. From 15 October 2026 the API and worker run on one rented Netcup RS 1000 G12 root server (4 dedicated AMD EPYC 9645 cores, 8 GB DDR5 ECC, 256 GB NVMe, x86-64), set up by `scripts/provision.sh`. The team develops against it and the demo runs on it. The M1 is a development machine only, and there is no tunnel.
-**Why.** What the team develops and tunes against is what the panel sees, so an optimization measured during development holds on demo day. Demo morning stops depending on one laptop booting and a tunnel connecting. Netcup states 99.9% minimum availability. The free tier promises nothing, and Oracle halved the Always Free A1 allowance on 15 June 2026 without announcing it.
+### D-78: One Azure VM in Dubai runs development and the demo from 2026-10-15 ⚠
+**Decision.** Supersedes D-50 and D-51 and amends D-38 and D-76. From 15 October 2026 the API, worker, and self-hosted Supabase Lite stack run on an Azure VM in UAE North (Dubai) (`Standard_D4als_v7` or `Standard_F4als_v7`: 4 vCPUs, 8 GB RAM, x86-64), set up by `scripts/provision.sh` and `infra/supabase/setup.sh`. The team develops against it and the demo runs on it. The M1 is a development machine only, and there is no tunnel.
+**Why.** UAE North (Dubai) yields the lowest measured round-trip latency to the team. Running the server ~2 hours/day during development with a static public IP and standard storage keeps costs within Azure for Students credits ($100 per member), rotated across team members' accounts when depleted. What the team develops and tunes against is what the panel sees, so an optimization measured during development holds on demo day. Demo morning stops depending on one laptop booting and a tunnel connecting. The free tier promises nothing, and Oracle halved the Always Free A1 allowance on 15 June 2026 without announcing it.
 **Measured, 2026-09-15 and 2026-09-16.** InsightFace `buffalo_l` with detection and recognition only, on 23 openly licensed wedding and group photos resized to at most 4096px.
 - Time is a cost per photo plus a cost per face, because every face gets its own recognition pass. At two threads a 2-OCPU Oracle A1 instance took 0.40s per photo plus 201ms per face.
 - With default threads over the whole set, that instance took 3.5 times as long as the M1.
 - On one ONNX Runtime thread the M1 took 71.9s and the A1 took 170.7s, so an M1 core is 2.38 times an A1 core. Geekbench 6 single-core predicted 1.98 times, underselling the M1 by 20%.
 - Threads scale on A1. Two threads ran 1.84 times as fast as one, and four ran 3.11 times as fast.
 - Batching recognition gave identical embeddings and a 1 to 2% gain, so batching is not worth adding.
-- Netcup is estimated, not measured. Its cores score 1.5 to 1.9 times an A1 core on Geekbench, which at four threads puts it anywhere from somewhat faster than the M1 to about 1.6 times slower on large group photos once the 20% error is allowed for.
-**Rejected.** Staying on Oracle Always Free, which from 15 October is 2 OCPUs, where a median photo took 1.8s and a 40-face photo 8.4s, with no uptime guarantee. The M1 demo (D-50), which measured fastest but is a single laptop, a tunnel, and a different environment from the one the team develops against. Hetzner CPX32, at €35.49 a month after Hetzner's June 2026 price rise.
-**Cost.** ⚠ About €15 a month. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
-**Reopen if.** The benchmark on the server, run inside Netcup's 30-day refund window at four threads, is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
-**Open.** How the stable stack sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location was settled on 2026-09-16, Nuremberg, and the demo-week fallback by D-79.
+- The Azure v7 AMD cores are estimated to score comparably to or higher than an A1 core at four threads, providing headroom for InsightFace, Express, and local Supabase Lite.
+**Rejected.** Staying on Oracle Always Free, which from 15 October is 2 OCPUs, where a median photo took 1.8s and a 40-face photo 8.4s, with no uptime guarantee. The M1 demo (D-50), which measured fastest but is a single laptop, a tunnel, and a different environment from the one the team develops against. Hetzner CPX32, at €35.49 a month after Hetzner's June 2026 price rise. A Netcup RS 1000 G12 root server was considered for its dedicated cores, but was ruled out because Azure in UAE North (Dubai) provides significantly lower measured network latency, can be funded across the team's Azure for Students subscriptions, and avoids international ID verification delays.
+**Cost.** ⚠ Managed via student credit rotation. The server is x86-64 and the M1 is ARM64, so local and production no longer share the architecture D-38 and D-76 relied on, although InsightFace 2.0 installs as pure Python and its dependencies ship wheels for both. The network dependency on Supabase, R2 and the room's WiFi is unchanged (D-62).
+**Reopen if.** The benchmark on the Azure Dubai server at four threads is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
+**Open.** How the stable database sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location is UAE North (Dubai), and the demo-week fallback by D-79.
 **Amended (see D-107).** This entry supersedes D-38, as D-38's heading says. "Amends D-38" above understates it.
 
 ### D-79: The standby is a rotation across three student credits, and it runs only twice ⚠
@@ -543,6 +544,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Rejected.** A warm standby running continuously, which spends a credit to guard against something that has not happened. One provider with no successor, which is D-38's plan and ends the day that credit expires.
 **Cost.** ⚠ The rehearsal proves one provider. Switching later makes it stale, and a different image or firewall model is exactly where `scripts/provision.sh` would break. Ubuntu 24.04 everywhere keeps that small, and the script refuses anything else.
 **What makes it real.** Handbook §13's three criteria. The script exists. The DNS record is written down in `docs/ARCHITECTURE.md` §7, with the registrar, the A record and its 300s TTL. The rehearsal is still owed, half a day in Phase 7.
+**Amended (see D-163).** The database now lives on the server's disk, so a swap to the standby has to carry it, which R2 never needed. How it moves is Open, and the rehearsal has to move it too. D-67, which the Why line cites, is superseded, and no keep-alive runs anywhere now.
 
 ---
 
@@ -646,7 +648,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** Blur and Find My Photos both rest on recognition accuracy, and a missed match is the costly failure (spec §4.11.4.5). `buffalo_l` is the more accurate pack, and D-78's timings were measured on it, so the latency the team knows is the latency of the model it ships.
 **Rejected.** `buffalo_s`, faster with lower accuracy, which trades away the one property a missed blur costs.
 **Cost.** A larger model and slower recognition on large group photos: D-78 measured about 200ms per face at two threads on the free-tier instance.
-**Reopen if.** The benchmark on the Netcup server misses D-78's bar.
+**Reopen if.** The benchmark on the Azure Dubai server misses D-78's bar.
 
 ### D-93: The image-serving endpoint is built in two steps, S-13 then S-21
 **Decision.** Changes the slice plan, not D-57. S-13 builds the one image-serving endpoint: a batch of media ids, the check that the requester may see each one (`docs/ARCHITECTURE.md` §1), the public file and public thumbnail only, and the cache key (D-86), with its negative test written first. S-21 adds the subject's own file and the own-variant flag to that same endpoint. There is still one endpoint and one check.
@@ -806,6 +808,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** A mistyped email can never reset its password. An access token stays valid until it expires, up to an hour after sign-out, because Supabase cannot revoke one. The session tokens sit unencrypted in the app's sandbox. Until S-20 lands nothing sets `avatar_key`, so only unit tests exercise the avatar function.
 **Amended (see D-129).** The avatar is hidden from everyone but the user only where an event in which their membership has Do Not Publish on shows them.
 **Amended (see D-141).** The profile photo is never a reference, so S-20 sets one with no `profile` reference and no `reference_process` message. A reference photo belongs to one event, its key carries that event, and only its owner gets it presigned.
+**Amended (see D-163).** Auth runs self-hosted on the server. `infra/supabase/setup.sh` sets the settings above in place of the two dashboards. Recovery mail goes through Resend over SMTP once its key is set, and Auth sends at most 2 emails an hour. Neither `setup.sh` nor either compose file sets a session time-box or an inactivity timeout, so a session still ends at sign-out, a password change or a rejected refresh token.
 
 ### D-110: Event rulings from S-02's read-back
 **Decision.** Amends D-105. Ukasha ruled on each of these on 2026-09-25.
@@ -1069,6 +1072,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Reopen if.** The worker needs to run jobs in parallel, which the lock and the order both forbid.
 **Amended (see D-130).** The worker no longer processes a soft-deleted photo. A message naming one is deleted as done, and `media_delete` removes its files.
 **Amended (see D-149).** The SQL test runs in one CI job on every pull request, which runs it when `worker/`, `supabase/`, CI's workflow or `scripts/verify.mjs` changed and passes at once otherwise. That job is a required check on `main`, so a pgmq call or a media update the real database refuses blocks the merge.
+**Amended (see D-163).** `DATABASE_URL` is Postgres on the server's loopback, `127.0.0.1:5432`, which `infra/supabase/setup.sh` writes. It is still a session connection, as the lock needs. A laptop's worker reaches it through the SSH tunnel in hb §13.4. GitHub's runners cannot reach it, so where the SQL test's CI job runs is Open.
 
 ### D-124: Each platform draws the controls, and the brand stays in the content
 **Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
@@ -1663,6 +1667,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** The Windows check is manual, so a worker PR merged without it can break B's and C's machines while CI is green. Windows and the server no longer share an operating system, so a pass on Windows says nothing about Linux. InsightFace is not in `requirements.txt` yet; the PR that adds it (P0-5) has to show it installs on Windows without a C compiler.
 **Reopen if.** A Windows-only failure reaches `main` twice, or InsightFace needs a C compiler to install on Windows.
 
+### D-163: Procedures for the self-hosted Supabase stack
+**Decision.** Supersedes D-67 and amends D-33, D-79, D-109 and D-123. Ukasha decided this on 2026-11-03, after D-78 moved Supabase onto the server. In the docs, "the dev project" now means the dev database in that stack.
+- The keep-alive is retired and `.github/workflows/keepalive.yml` is deleted. A self-hosted stack never pauses, and the server is deallocated about 22 hours a day, so a daily run would fail on most days. `pnpm --filter api test:rls` checks the same RLS rule on `health_check`.
+- Migrations reach the dev database through an SSH tunnel to the server's loopback, where Postgres listens and nowhere else (`infra/supabase/docker-compose.override.yml`), and `supabase db push --db-url` sends them (hb §13.4). A checkout linked to a hosted project with `supabase link` would push there and miss the server with no error, so `pnpm check:machine` warns on any link.
+- The worker's `DATABASE_URL` is Postgres on the server's loopback, which `infra/supabase/setup.sh` writes. A laptop's worker reaches it through the same tunnel.
+- Auth's settings come from `infra/supabase/setup.sh`, not from a dashboard.
+- Realtime runs with the pinned image's defaults: 200 concurrent connections and 100 messages a second, where every message delivered to a phone counts. One photo published to a full 150-Guest event is 150 messages. What Realtime does then is Open until a load test measures it, and no limit changes before that.
+**Why.** D-78 moved Supabase onto the server and left the procedures written for hosted projects. A migration pushed with the old steps goes to the hosted project and never reaches the server, and nothing reports it.
+**Rejected.** Keeping the keep-alive as a manual check, which repeats `test:rls` and runs only when someone remembers. Leaving the workflow as it was, failing on most days or keeping unused hosted projects awake. Rewriting the migration steps later, which leaves a teammate able to push to the wrong database until then. Raising Realtime's message limit now, with a number chosen before any measurement.
+**Cost.** Everyone who pushes a migration holds the dev database's `postgres` password, and a push needs the server running. Nobody has run the tunnel commands against the server yet. Two things D-78 changed are still Open: how the standby carries the database, and where CI's RLS and worker SQL job runs, since GitHub's runners cannot reach Postgres on the server's loopback and reach the API only while the server runs.
+**Reopen if.** A push through the tunnel fails on the server, or the tunnel will not stay open from a Windows machine.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -1672,5 +1688,8 @@ These are not settled and should not be treated as though they are.
 - **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
+- **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
+- **Where CI's RLS and worker SQL job runs.** Its secrets name the dev project, and GitHub's runners cannot reach Postgres on the server's loopback (D-163). The job is a required check on `main` (D-149).
+- **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
 - **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.

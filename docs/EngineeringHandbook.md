@@ -29,12 +29,12 @@ One framing before anything else. Everything here assumes v11's scope. If buildi
 | Backend API | Express 5, TypeScript, Node LTS | The team knows it. |
 | Backend validation | `zod` | Same mental model as the frontend. |
 | Object storage client | `@aws-sdk/client-s3` against R2 | Presigned upload URLs. |
-| Auth / DB / Realtime / Queue | Supabase (Postgres, Auth, Realtime, `pgmq`) | One managed service instead of stitching four together. |
+| Auth / DB / Realtime / Queue | Self-hosted Supabase Lite (Postgres with pgvector & pgmq, Auth, Realtime, REST) | Bundled via Docker Compose (`infra/supabase`) on VM loopback, with zero external service costs. See §13. |
 | Object storage | Cloudflare R2 | Zero egress fees, 10 GB permanently free. |
 | AI worker | Python 3.12+, FastAPI (thin), `pgmq` consumer | Face detection, embedding, and generation of the public and per-subject blur variants. There is no display-variant job; nobody resizes (D-58). |
 | Face detection & embeddings | InsightFace via ONNX Runtime, not PyTorch | ONNX runs meaningfully faster on CPU-only hosting and has a much smaller dependency footprint. |
-| Compute hosting | One Netcup RS 1000 G12 root server (4 dedicated AMD EPYC cores) for development and the demo | What the team develops against is what the panel sees, and nothing on demo day depends on a laptop. See §13 and D-78. |
-| Process management | `systemd` + `nginx` + `certbot` | No Docker. See §13 for why. |
+| Compute hosting | One Azure VM in UAE North (Dubai) (`Standard_D4als_v7` or `Standard_F4als_v7`, 4 vCPUs, 8 GB RAM) for development and the demo | Lowest measured latency to the team, running ~2 hrs/day on rotated student credits. See §13 and D-78. |
+| Process management | `systemd` (API and worker) + `docker compose` (Supabase Lite) + `nginx` + `certbot` | Docker runs the Supabase vendor stack; app processes run under systemd. See §13. |
 | CI | GitHub Actions | Free, you already have GitHub. |
 | E2E testing | Maestro | Local runs are free; cloud runs are metered. |
 | Package manager | `pnpm` | Fast, disk-efficient, first-class workspaces for the monorepo. |
@@ -138,8 +138,7 @@ momentlens/
 │
 ├── e2e/                       # Maestro flows (§11)
 ├── .github/workflows/
-│   ├── ci.yml                 # lint, typecheck, unit + integration tests
-│   └── keepalive.yml          # D-67. Deliberately not a cron on the compute box.
+│   └── ci.yml                 # lint, typecheck, unit + integration tests
 ├── scripts/
 │   ├── deploy.sh              # the §13 update sequence, written down once
 │   └── provision.sh           # the §13 setup sequence, run once on any new server
@@ -487,25 +486,25 @@ The force push drops the PR's approval, so wait for its checks and get it approv
 
 ### 13.2 Backend: one server for development and the demo
 
-**Development and the demo run on one Netcup RS 1000 G12 root server from 15 October 2026.** D-78 explains why. In short, what the team develops and tunes against is what the panel sees, and demo morning no longer depends on a laptop booting and a tunnel connecting. Until the switch, development runs on an interim server that `docs/ARCHITECTURE.md` §7 names.
+**Development and the demo run on an Azure VM in UAE North (Dubai) from 15 October 2026.** D-78 explains why. In short, what the team develops and tunes against is what the panel sees, demo morning no longer depends on a laptop booting and a tunnel connecting, and Dubai provides the lowest measured network latency to the team. Until the switch, development ran on an interim server that `docs/ARCHITECTURE.md` §7 names.
 
-**Two environments, one server.** Development uses the dev Supabase project and the dev bucket. The demo stack uses the stable project and bucket and goes up one month before the demo (D-76). How the two sit side by side on one server is open until Phase 7 (`docs/ARCHITECTURE.md` §7).
+**Two environments, one server.** Development uses the dev database and the dev bucket. The demo stack uses the stable database and bucket and goes up one month before the demo (D-76). How the two sit side by side on one server is open until Phase 7 (`docs/ARCHITECTURE.md` §7).
 
 **What the server does not buy you.** It removes the laptop, not the network dependency. Supabase, R2, and the phones are all still on the network. If campus WiFi dies, the demo dies with it, which is why the fallback in §14's Phase 7 is a recorded walkthrough on local storage rather than a seeded dataset that lives in Supabase (D-62).
 
 **Bus factor.** All three developers reach the same server over HTTPS, so nobody tunnels into anybody's laptop, and demo morning has no single machine in the room that has to boot.
 
-### 13.3 The server: one Netcup root server, no containers
+### 13.3 The server: Azure VM in Dubai with self-hosted Supabase Lite
 
-#### 13.3.1 Why no Docker
+#### 13.3.1 Why Docker for Supabase Lite only
 
-**Why no Docker** (D-39). Not because it is slow: on Linux, containers are namespaces and cgroups, the runtime overhead is near zero, and saying otherwise in a viva gets you corrected. Docker buys portability between environments and there is exactly one. For a team that has never deployed, it is one more layer between a failure and its stack trace. Repeatability comes from pinned dependencies and `scripts/provision.sh` instead.
+**Why Docker for Supabase Lite** (D-39, D-78). Docker is used strictly as the deployment harness for the upstream Supabase Lite stack (`infra/supabase`), running Postgres (with `pgvector` and `pgmq`), GoTrue (Auth), PostgREST, Realtime, and Envoy on loopback (`127.0.0.1:54321`). On Linux, containers are namespaces and cgroups, so runtime overhead is near zero. Manually compiling or configuring five distinct upstream services (in Go, Haskell, Elixir, and C++) would be fragile and unmaintainable. The API and the Python worker run as native `systemd` units on the host, keeping application debugging and logging direct. Repeatability comes from pinned dependencies, `infra/supabase/setup.sh`, and `scripts/provision.sh`.
 
-#### 13.3.2 Ordering and provisioning
+#### 13.3.2 Sizing, schedule and provisioning
 
-**Order it with room to test.** Pick Ubuntu 24.04 LTS as the operating system. First orders come with a 30-day refund, so run the InsightFace benchmark on the server inside that window, because D-78's reopen condition depends on it. Netcup can hold orders from outside the EU for an ID check, so order a few days before you need the server.
+**Shape and schedule.** Sized on Azure's `Standard_D4als_v7` or `Standard_F4als_v7` (4 vCPUs, 8 GB RAM, AMD) in `uae-north` (Dubai) running Ubuntu 24.04 LTS. Sizing and latency are justified in D-78. To fit comfortably within Azure for Students credits ($100 per member), the server runs ~2 hours/day during active development with a static public IP and standard storage, deallocated when idle. As credits deplete, the subscription rotates to the next team member's account.
 
-**Set it up with `scripts/provision.sh`.** The script is this section in runnable form: system packages, the Node, pnpm and Python versions the repo pins, the `momentlens` user, the repo checkout and API build, both systemd units, nginx, the firewall and TLS. Every step checks before it acts, so running it again is safe. Copy it to the new server and run it as root:
+**Set it up with `scripts/provision.sh`.** The script is this section in runnable form: system packages, the Node, pnpm and Python versions the repo pins, the `momentlens` user, Docker installation, the `infra/supabase/setup.sh` execution, the repo checkout and API build, both systemd units, nginx, the firewall and TLS. Every step checks before it acts, so running it again is safe. Copy it to the new server and run it as root:
 
 ```bash
 scp scripts/provision.sh root@SERVER_IP:/root/
@@ -543,9 +542,7 @@ The worker answers `/health` on `127.0.0.1:8000`, and nginx does not proxy it. F
 
 **Secrets**: EAS environment variables, which replaced EAS Secrets, one set per build profile. Only `EXPO_PUBLIC_` values reach the app and anyone holding the APK can read them, so no secret belongs in a mobile build at all. A `.env` on the server, owned by the `momentlens` user with `chmod 600`, referenced by both systemd units via `EnvironmentFile`. Never commit either.
 
-**Supabase environments**: exactly two projects, which is the free-tier limit. A **dev** project (your daily database, fine to break) and a **stable** project (what the demo points at, treated carefully). Do not develop against the project you will demo from.
-
-**Keep-alive**: free Supabase projects pause after 7 days of inactivity, so `.github/workflows/keepalive.yml` reads `health_check` in both projects daily from GitHub Actions, not from the server it protects (D-67). `docs/ARCHITECTURE.md` §7 has what it checks and the one trap: GitHub disables scheduled workflows after 60 days with no repository activity.
+**Supabase environments**: two databases, both self-hosted on the server (§13.3.1). A **dev** database, your daily one and fine to break, and a **stable** database, what the demo points at, treated carefully. How stable sits beside dev on one server is open until Phase 7 (`docs/ARCHITECTURE.md` §7). Do not develop against the database you will demo from. The stack never pauses, so nothing keeps it awake (D-163).
 
 **Fallback.** The team's Azure for Students, AWS and GCP credits, used in that order, with a standby VM created only for the Phase 7 rehearsal and for demo week (D-79).
 
@@ -554,7 +551,7 @@ A credit sitting unused is not a standby. To make it one, three things must exis
 2. A written record of the DNS change: which registrar, which A record, and the TTL (set it low, 300s, at least a week before your defense so a swap propagates in minutes rather than hours). That record is in `docs/ARCHITECTURE.md` §7.
 3. **One rehearsal.** Spin the standby VM up once on whichever credit is current, run `provision.sh`, point a staging subdomain at it, confirm the app works, then tear it down. An untested fallback is a story you tell yourself. Budget half a day in Phase 7.
 
-Both R2 and Supabase are external, so a compute swap moves no data. That is the whole reason this fallback is cheap, and it is worth saying out loud in a viva.
+R2 is external, so a compute swap moves no photos. The database is not: it lives on the server's disk with the self-hosted stack, so the standby has to carry it. How it moves is open (D-163), and the rehearsal has to move it too.
 
 ### 13.4 Migrations, deploys and server logs
 
@@ -562,7 +559,7 @@ All three developers share the dev Supabase project and the dev server, so every
 
 **Once per machine.**
 
-1. **Supabase.** Ask Ukasha to add you to the Supabase organization, and for the dev project's database password over a private channel. Then run `pnpm exec supabase login` and `pnpm exec supabase link --project-ref <ref>`, where `<ref>` is the part of the root `.env`'s `SUPABASE_URL` before `.supabase.co`. The link lives in `supabase/.temp/`, which git ignores, so each clone links once, and a worktree has no link until you run it there too. `pnpm check:machine` warns when a checkout is linked to anything but `momentlens-dev`.
+1. **Supabase.** Ask Ukasha for the dev database's `postgres` password over a private channel. Postgres listens on the server's loopback only, so a migration reaches it through an SSH tunnel over the alias in step 2 (D-163). If a checkout was linked to a hosted project with `supabase link`, run `pnpm exec supabase unlink` in it, because a linked checkout's `db push` goes to the hosted project and never reaches the server. `pnpm check:machine` warns while a checkout is linked.
 2. **SSH.** Make a key if you have none, `ssh-keygen -t ed25519`, and send Ukasha the public half, `cat ~/.ssh/id_ed25519.pub`. He adds it with `echo '<key>' | ssh momentlens 'cat >> ~/.ssh/authorized_keys'` and tells you the server's login user. Then add this to `~/.ssh/config`:
 
    ```text
@@ -572,7 +569,7 @@ All three developers share the dev Supabase project and the dev server, so every
      IdentityFile ~/.ssh/id_ed25519
    ```
 
-   `ssh momentlens 'echo ok'` confirms it, and `pnpm check:machine` warns while the alias is missing. The server moves from Oracle to Netcup on 2026-10-15 (arch §7). The alias follows `api.momentlens.me`, but Ukasha has to add every key again on the new server, and SSH refuses the new host key until you run `ssh-keygen -R api.momentlens.me`.
+   `ssh momentlens 'echo ok'` confirms it, and `pnpm check:machine` warns while the alias is missing. The server moves from Oracle to Azure Dubai (arch §7). The alias follows `api.momentlens.me`, but Ukasha has to add every key again on the new server, and SSH refuses the new host key until you run `ssh-keygen -R api.momentlens.me`.
 
 **A new migration.** The slice that first writes to a table owns its migration (docs/WorkSlices.md), and its api build writes it:
 
@@ -582,13 +579,20 @@ pnpm exec supabase migration new invite_regenerate   # creates supabase/migratio
 
 **Pushing a migration to the dev project.** The slice owner pushes during the api build, once tests or the phone need the new schema, and tells the team. **A migration that has reached the dev project is frozen.** Never edit or rename it, and never edit one another slice wrote. A change is a new migration (D-116).
 
+The server has to be running. Open the tunnel in a second terminal and leave it open while you push. It forwards port 15432 on your machine to Postgres on the server, a port that stays clear of a Postgres of your own on 5432 and a local Supabase stack on 54322:
+
 ```bash
-cat supabase/.temp/linked-project.json    # must say momentlens-dev
-pnpm exec supabase migration list          # the Local and Remote columns show what is about to go up
-pnpm exec supabase db push                 # asks for the database password
+ssh -N -L 15432:127.0.0.1:5432 momentlens
 ```
 
-`db push` sends every migration in your checkout that the dev project lacks, so push from the slice's own branch. If `migration list` shows a Remote migration with no Local file, someone pushed from a branch you do not have; the CLI refuses to push until you have it, so `git fetch` and ask the team which branch it came from. Nobody links a checkout to the stable project before Phase 7 (D-76).
+Then, in the first terminal, with the password percent-encoded if it holds anything but letters and digits:
+
+```bash
+pnpm exec supabase migration list --db-url "postgresql://postgres:<password>@127.0.0.1:15432/postgres"   # the Local and Remote columns show what is about to go up
+pnpm exec supabase db push --db-url "postgresql://postgres:<password>@127.0.0.1:15432/postgres"
+```
+
+`db push` sends every migration in your checkout that the dev project lacks, so push from the slice's own branch. If `migration list` shows a Remote migration with no Local file, someone pushed from a branch you do not have; the CLI refuses to push until you have it, so `git fetch` and ask the team which branch it came from. The password sits in your shell history after this, so keep that history on your own machine. Nobody pushes to the stable database before Phase 7 (D-76).
 
 **Deploying the dev server.** After a stack that touched `apps/api/`, `worker/` or `supabase/migrations/` merges, whoever merged it deploys `main`:
 
@@ -607,7 +611,7 @@ ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'
 
 `deploy.sh` fast-forwards the server's copy of a branch, so a branch that was force-pushed since its last deploy stops with "Not possible to fast-forward". Put the server on `main`, delete its copy with `ssh momentlens 'sudo -u momentlens git -C /srv/momentlens branch -D feat/s-05-api'`, and deploy the branch again.
 
-**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads. Your root `.env` needs `DATABASE_URL` and the four `R2_*` variables for the `momentlens-dev` bucket, or the worker refuses to start and names what is missing.
+**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads. Your root `.env` needs the four `R2_*` variables for the `momentlens-dev` bucket and `DATABASE_URL` set to the tunnel above, `postgresql://postgres:<password>@127.0.0.1:15432/postgres`, or the worker refuses to start and names what is missing. Keep the tunnel open while the worker runs; when it closes, the worker loses its connection and waits.
 
 ```bash
 ssh momentlens 'sudo systemctl stop momentlens-worker'
@@ -624,7 +628,7 @@ ssh momentlens 'sudo -u momentlens git -C /srv/momentlens log -1 --oneline --dec
 
 **Development builds.** `pnpm --filter mobile android` builds and installs one on a phone over USB (§10 says when to rebuild). EAS builds one in the cloud: from `apps/mobile`, `eas build --profile development --platform android`, then install the APK from the link it prints. EAS needs `eas login` with an account Ukasha has added to the `momentlens` organization on expo.dev. Which of the two works on Windows is still open (§9).
 
-**Two more that touch shared services.** `pnpm --filter api test:rls` runs the RLS negative tests against the dev project with the root `.env`'s keys. `gh workflow enable keepalive.yml` turns the Supabase keep-alive back on after GitHub disables it for 60 days without repository activity (arch §7).
+**One more that touches shared services.** `pnpm --filter api test:rls` runs the RLS negative tests against the dev project with the root `.env`'s keys, so the server has to be running.
 
 ---
 
@@ -635,7 +639,7 @@ The single most important idea here: **build one thin slice through the entire s
 ### 14.0 Phase 0 — plumbing (days, not weeks)
 Environment on all three machines (§8/§9). Repo scaffolded (§3). Server provisioned with `scripts/provision.sh`, nginx and TLS up, both systemd units running something trivial. Supabase projects created, keep-alive cron running. Express has one route, `GET /health`, that queries one table. The Expo app has one screen that calls it and displays the result, from a phone, over the internet, against the real deployed API. Nothing here is a feature. The entire goal is proving the wiring.
 
-Also in Phase 0: **Sentry** and the **GitHub Actions keep-alive** for both Supabase projects (D-67). There is no tunnel, because the server has a public hostname with TLS (D-78). `docs/ARCHITECTURE.md` exists and Ukasha owns it (D-75); updating it is part of the PR that changes what it describes.
+Also in Phase 0: **Sentry** and the **GitHub Actions keep-alive** for both Supabase projects (D-67), which D-163 retired on 2026-11-03 once Supabase ran self-hosted. There is no tunnel, because the server has a public hostname with TLS (D-78). `docs/ARCHITECTURE.md` exists and Ukasha owns it (D-75); updating it is part of the PR that changes what it describes.
 
 Also in Phase 0, and it is not optional: **spike InsightFace on the server.** Prove that InsightFace, `onnxruntime` and OpenCV import and run one detection on one photo. If this fails, it changes your worker plan, and you want to know in week one rather than month seven. The spike passed on an ARM64 server and on the M1 on 2026-09-15; run it again on the x86-64 server the day it is provisioned.
 

@@ -21,7 +21,7 @@
 
 ## 0. What changed in v11
 
-v11 applies the resolution log. Two constraints drove most of it. No real event is ever covered: development and the demo run on about 100 seeded photos, under 500MB against a 10GB R2 budget, so storage shapes nothing in this document (D-49). The second, running the demo backend on an M1 for its inference speed, was superseded by D-78: development and the demo run on one Netcup server (§4.20).
+v11 applies the resolution log. Two constraints drove most of it. No real event is ever covered: development and the demo run on about 100 seeded photos, under 500MB against a 10GB R2 budget, so storage shapes nothing in this document (D-49). The second, running the demo backend on an M1 for its inference speed, was superseded by D-78: development and the demo run on one Azure VM in Dubai with self-hosted Supabase Lite (§4.20).
 
 **Architecture changes**
 
@@ -482,7 +482,7 @@ It repeats no account-wide setting, because a switch on an event's screen reads 
 - Short invite code entry (6-character alphanumeric) as a manual alternative. Guest and Photographer codes are distinct values.
 - "Join with Invite Link" flow: a user with a code but no account is guided through registration and then to Join Confirmation for that event (§2.3.1).
 - Login: email and password. Password reset via a recovery link, handled natively by Supabase Auth.
-- Session management by Supabase Auth. The access token lasts an hour and refreshes itself. The free plan has no session time-box, so a session ends at sign-out, a password change or a rejected refresh token (D-109).
+- Session management by Supabase Auth. The access token lasts an hour and refreshes itself. The self-hosted Auth sets no session time-box, so a session ends at sign-out, a password change or a rejected refresh token (D-109, D-163).
 - Forced Logout when the Supabase session ends, and Access Removed when the user is removed or blocked from an event, which the app learns from the API's 403 for that event (§2.5.8). Neither is a silent bounce to Login. There is no account suspension in v1.
 - Multi-device login (the same account active on a tablet and phone simultaneously). The upload queue is stored in device-local SQLite and is therefore per-device: photos queued on a phone do not appear on a tablet. Each queued item, and each Local Only file, belongs to the account that created it, and a queued item uploads only under that account's session, so a shared phone never uploads one person's photos as another's.
 
@@ -786,7 +786,7 @@ There is no `PlanTier` concept in v1. Subscriptions are entirely Future Work (§
 - Maximum sub-events per event: **15** (§4.3)
 - Maximum reference photos per person in one event: **5** (§4.2, D-141)
 
-These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under the Supabase free tier's 200 concurrent Realtime connections (D-33). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests on admission and on an active Photographer's conversion to Guest, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded. Every operation that admits an active Guest or converts a Photographer to Guest takes the same event-row lock before counting and writes in one SQL function called with `rpc`. A conversion at capacity answers 422 `event_full` and leaves the role unchanged (arch:membership, D-143).
+These are safety rails against a runaway event, not a monetization mechanism. 150 guests leaves headroom under self-hosted Realtime's default of 200 concurrent connections (D-33). Its default of 100 messages a second counts each delivery to each phone, so one photo published to a full event is 150 messages. What Realtime does then is open until a load test measures it (D-163). The API enforces each one where it can be crossed: duration whenever a sub-event is added, edited or delayed, guests on admission and on an active Photographer's conversion to Guest, uploads at pre-flight (§4.8.2), sub-events when one is added, references when one is uploaded. Every operation that admits an active Guest or converts a Photographer to Guest takes the same event-row lock before counting and writes in one SQL function called with `rpc`. A conversion at capacity answers 422 `event_full` and leaves the role unchanged (arch:membership, D-143).
 
 ---
 
@@ -820,10 +820,10 @@ These are safety rails against a runaway event, not a monetization mechanism. 15
 
 The current layout is `docs/ARCHITECTURE.md` §7 and the walkthrough is Handbook §13. What the spec commits to, and what the viva will ask about:
 
-- **One Netcup server runs development and the demo** from 15 October 2026, so the latency the panel sees is the latency the team measured (D-78). Development uses the dev Supabase project. The demo stack, against the stable project, goes up on the same server one month before the demo (D-76). The M1 is a development machine only.
+- **One Azure VM in Dubai runs development and the demo** on `Standard_D4als_v7` or `Standard_F4als_v7` (4 vCPUs, 8 GB RAM), so the latency the panel sees is the lowest measured network latency (D-78). It runs ~2 hours/day on rotated Azure for Students credits with static IP and standard storage. The demo stack against the stable database goes up on the same server one month before the demo (D-76). The M1 is a development machine only.
 - **The server removes the laptop, not the network.** Supabase, R2 and the judges' phones still need campus WiFi, which is why §9's fallback is a recording rather than a seeded remote dataset (D-62).
-- **No Docker and no tunnel.** Express and the worker run as systemd units behind nginx, with a certbot certificate on a stable hostname, set up on Ubuntu 24.04 by `scripts/provision.sh` (D-39). Dependencies are pinned in `pnpm-lock.yaml` and an exactly pinned `requirements.txt`.
-- **Supabase** runs two projects, dev and stable, which is the free tier's limit. **Cloudflare R2** holds under 500MB against 10GB free, so storage is not a design constraint (D-49). The keep-alive runs from GitHub Actions, not from the server it protects (D-67).
+- **Docker for Supabase Lite; systemd for app; no tunnel.** Express and the worker run as systemd units behind nginx, with a certbot certificate on a stable hostname, set up on Ubuntu 24.04 by `scripts/provision.sh` (D-39). The database and auth stack run on loopback 54321 via Docker Compose (`infra/supabase`). Dependencies are pinned in `pnpm-lock.yaml` and an exactly pinned `requirements.txt`.
+- **Supabase** is self-hosted on the instance, avoiding free-tier project pauses and limits. **Cloudflare R2** holds under 500MB against 10GB free, so storage is not a design constraint (D-49).
 - **Standby:** the team's Azure for Students, AWS and GCP credits, in that order, with a VM created only for the Phase 7 rehearsal and for demo week (D-79).
 - **The worker** is a pgmq consumer with the InsightFace model resident from startup (D-40). The Phase 0 spike passed on ARM64 and on the M1 on 2026-09-15. Rerun it on the x86-64 server the day it is provisioned.
 
@@ -922,7 +922,7 @@ One table per area, so a slice cites the part it needs.
 | Scenario | System behavior |
 |---|---|
 | Admin deletes event mid-event | Attendees notified, 14-day soft delete, download still available. |
-| Supabase free-tier project auto-pauses after inactivity | Mitigated via a scheduled keep-alive ping. Surfaces a clear "temporarily unavailable" state with a retry action if it happens anyway. The app learns of it from `GET /health`, which it asks after an API 500 or a Supabase Auth 5xx (§2.5.8, D-161). |
+| Supabase's containers on the server are down while the API runs | Self-hosted Supabase never pauses (D-163), so this is a crash or a stopped stack. Surfaces a clear "temporarily unavailable" state with a retry action. The app learns of it from `GET /health`, which it asks after an API 500 or a Supabase Auth 5xx (§2.5.8, D-161). |
 
 ---
 
@@ -998,7 +998,7 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 
 **Devices.** The app is not on any store and there is no deferred deep link (§4.1), so it cannot arrive on a stranger's phone during the demo. Judges use **team-owned Android devices handed around**, with the build installed and the accounts signed in at least a week ahead. If a judge wants the app on their own phone, that is an Android APK sideload arranged in advance, never on the day. iOS is not a demo path: TestFlight needs an Apple review pass and invited testers, and ad-hoc provisioning needs UDIDs collected beforehand.
 
-**Backend.** The API and worker run on the Netcup server the team developed against, on its stable hostname (§4.20). The demo stack against the stable project has been up for a month (D-76).
+**Backend.** The API and worker run on the Azure Dubai server the team developed against, on its stable hostname (§4.20). The demo stack against the stable database has been up for a month (D-76).
 
 **Pre-configured accounts.** Do Not Publish is enabled beforehand in the demo event on one team account, used in beats 5 and 6. Never ask a judge to enable it; within an event the action is permanently irreversible for anyone (D-129).
 
@@ -1020,6 +1020,6 @@ Reverse-engineer scope from this list. **If a feature does not appear here, it i
 
 ### Two answers to have ready, because they will be asked
 
-**"Why a paid server, and not the free tier or a laptop?"** One server ran development and runs the demo, so what the panel sees is what the team built and tested against. On 23 wedding and group photos, a 2-core free-tier ARM server took 3.5 times as long as an M1 laptop, and a laptop in the room is a single point of failure that still needs the network. Four dedicated cores cost about €15 a month. Quote the numbers in D-78, including the benchmark run on the server itself, and be ready to SSH in and show the systemd units.
+**"Why this server, and not the free tier or a laptop?"** One server ran development and runs the demo, so what the panel sees is what the team built and tested against. On 23 wedding and group photos, a 2-core free-tier ARM server took 3.5 times as long as an M1 laptop, and a laptop in the room is a single point of failure that still needs the network. An Azure 4-core AMD VM in UAE North (Dubai) delivers the lowest measured network latency to the team, and running it ~2 hours/day with static IP and standard storage costs nothing out of pocket on rotated Azure for Students credits. Quote the numbers in D-78, including the benchmark run on the server itself, and be ready to SSH in and show the systemd units.
 
 **"What are your thresholds?"** Give the measured number and the date it was measured, or describe the mechanism without a number. Never quote the example values that appeared in earlier drafts of this document.
