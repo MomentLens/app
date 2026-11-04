@@ -468,7 +468,7 @@ describe('every arch §4 answer moves the photo to its state', () => {
     const hang = deferred<PutResult>();
     putScript.push(() => hang.promise);
     const running = createRunner().run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
     const mediaId = [...server.rows.keys()][0]!;
     expect(await only()).toMatchObject({ state: 'uploading', step: 'put_photo', mediaId });
     hang.resolve('ok');
@@ -495,7 +495,10 @@ describe('every arch §4 answer moves the photo to its state', () => {
       await fireNextTimer(runner);
       expect(server.count('preflight')).toBe(2);
       expect(server.rows.size).toBe(1);
-      expect(puts.slice(failing + 1).map((put) => put.contentType)).toEqual([
+      // Both files go together on each attempt, the failed one and the retry.
+      expect(puts.map((put) => put.contentType)).toEqual([
+        'image/jpeg',
+        'image/webp',
         'image/jpeg',
         'image/webp',
       ]);
@@ -580,7 +583,7 @@ describe('a kill or a lost answer', () => {
     // The app dies during the photo PUT. Nothing from the first process runs again.
     putScript.push(() => new Promise<PutResult>(() => undefined));
     void createRunner().run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
 
     store = createStore();
     await createRunner().run();
@@ -595,7 +598,7 @@ describe('a kill or a lost answer', () => {
     await store.enqueue('A', EVENT, SUB, photo);
     putScript.push(() => new Promise<PutResult>(() => undefined));
     void createRunner().run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
 
     store = createStore();
     gate = 'offline';
@@ -680,7 +683,7 @@ describe('the account that queued the photo', () => {
     );
     const runner = createRunner();
     const running = runner.run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
     const before = await only();
 
     user = 'B';
@@ -689,7 +692,7 @@ describe('the account that queued the photo', () => {
     expect(await only()).toEqual(before);
     expect(server.calls).toHaveLength(1);
     expect(server.calls.every((entry) => entry.userId === 'A')).toBe(true);
-    expect(puts).toHaveLength(1);
+    expect(puts).toHaveLength(2);
   });
 
   it('ignores a pre-flight answer that arrives after the account changed', async () => {
@@ -734,7 +737,7 @@ describe('the account that queued the photo', () => {
     );
     const runner = createRunner();
     const running = runner.run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
     user = 'B';
     void runner.accountChanged();
     await running;
@@ -787,7 +790,7 @@ describe('My Media Delete racing the runner', () => {
     const hang = deferred<PutResult>();
     putScript.push(() => hang.promise);
     const running = createRunner().run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
 
     expect(await store.remove('A', 'item-1')).toBe(false);
     hang.resolve('ok');
@@ -1070,7 +1073,7 @@ describe('found by the done stage review', () => {
     );
     const runner = createRunner();
     const running = runner.run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
     const before = await only();
 
     runner.shutdown();
@@ -1141,7 +1144,7 @@ describe('reversible suspension (D-158)', () => {
       putScript.push(untilAborted<PutResult>(() => 'failed'));
       const runner = createRunner();
       const running = runner.run();
-      await until(() => puts.length === index + 1);
+      await until(() => puts.length === 2);
       const before = await only();
 
       runner.suspend();
@@ -1356,7 +1359,7 @@ describe('activity reports', () => {
     );
     const { reports, runner } = recorded();
     const running = runner.run();
-    await until(() => puts.length === 1);
+    await until(() => puts.length === 2);
     runner.suspend();
     await running;
     expect(reports).toEqual([['A', 'uploading']]);
@@ -1483,7 +1486,7 @@ describe('transport changes during an attempt', () => {
           ? server.count('preflight') === 1
           : stage === 'complete'
             ? server.count('complete') === 1
-            : puts.length === (stage === 'photo' ? 1 : 2),
+            : puts.length === 2,
       );
       const before = await only();
       gate = 'cellular';
@@ -1528,20 +1531,97 @@ describe('transport changes during an attempt', () => {
     expect((await only()).state).toBe('uploaded');
     runner.shutdown();
   });
-  it('checks the gate between successful PUTs even if the transport event arrives late', async () => {
+  it('checks the gate before completion even if the transport event arrives late', async () => {
     await store.enqueue('A', EVENT, SUB, photo);
+    // Both PUTs start together, so the next send after them is completion.
     putScript.push(async () => {
       gate = 'cellular';
       return 'ok';
     });
     const runner = createRunner();
     await runner.run();
-    expect(puts).toHaveLength(1);
+    expect(puts).toHaveLength(2);
     expect(server.count('complete')).toBe(0);
-    expect((await only()).retryCount).toBe(0);
+    expect(await only()).toMatchObject({ state: 'uploading', step: 'complete', retryCount: 0 });
     gate = 'open';
     await runner.networkChanged();
     expect((await only()).state).toBe('uploaded');
+    // Completion went once the gate opened, and neither file was sent again.
+    expect(server.count('preflight')).toBe(1);
+    expect(puts).toHaveLength(2);
     runner.shutdown();
+  });
+});
+
+// A photo's two files go to R2 together, and photos still go one at a time (spec §4.8.3).
+describe('both files of one photo go together', () => {
+  // A PUT that answers only once its attempt is aborted, as an upload does.
+  const failsWhenAborted = (signal: AbortSignal) =>
+    new Promise<PutResult>((resolve) => {
+      signal.addEventListener('abort', () => resolve('failed'));
+    });
+  // Lets every promise chain the runner has started run as far as it can.
+  const settle = async () => {
+    for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+  };
+
+  it('starts the thumbnail before the photo answers and completes only after both', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    const photoPut = deferred<PutResult>();
+    const thumbnailPut = deferred<PutResult>();
+    putScript.push(
+      () => photoPut.promise,
+      () => thumbnailPut.promise,
+    );
+    const running = createRunner().run();
+    await until(() => puts.length === 2);
+    expect(puts.map((put) => put.contentType)).toEqual(['image/jpeg', 'image/webp']);
+
+    photoPut.resolve('ok');
+    await settle();
+    expect(await only()).toMatchObject({ state: 'uploading', step: 'put_photo' });
+    expect(server.count('complete')).toBe(0);
+
+    thumbnailPut.resolve('ok');
+    await running;
+    expect(server.count('complete')).toBe(1);
+    expect((await only()).state).toBe('uploaded');
+  });
+
+  it.each<[string, number]>([
+    ['photo', 0],
+    ['thumbnail', 1],
+  ])(
+    'a failed %s PUT cancels the other, and both go again after pre-flight',
+    async (_file, failing) => {
+      await store.enqueue('A', EVENT, SUB, photo);
+      const other: AbortSignal[] = [];
+      const waits = (signal: AbortSignal) => {
+        other.push(signal);
+        return failsWhenAborted(signal);
+      };
+      const fails = async (): Promise<PutResult> => 'failed';
+      putScript.push(...(failing === 0 ? [fails, waits] : [waits, fails]));
+      const runner = createRunner();
+      await runner.run();
+      expect(other).toHaveLength(1);
+      expect(other[0]!.aborted).toBe(true);
+      expect(await only()).toMatchObject({ state: 'queued', step: 'preflight', retryCount: 1 });
+
+      await fireNextTimer(runner);
+      expect(server.count('preflight')).toBe(2);
+      expect(server.rows.size).toBe(1);
+      expect(puts.slice(2).map((put) => put.contentType)).toEqual(['image/jpeg', 'image/webp']);
+      expect((await only()).state).toBe('uploaded');
+    },
+  );
+
+  it('stops the photo when a file is missing, even if the other PUT failed', async () => {
+    await store.enqueue('A', EVENT, SUB, photo);
+    disk.delete((await only()).thumbnailPath);
+    putScript.push(async () => 'failed');
+    await createRunner().run();
+    expect(await only()).toMatchObject({ state: 'stopped', stoppedReason: 'invalid_request' });
+    expect(server.count('complete')).toBe(0);
   });
 });
