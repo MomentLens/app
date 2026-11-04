@@ -15,3 +15,5 @@ engineStrict: true
 # test:rls's `REQUIRE_SUPABASE=1 node ...`. Its own cross-platform shell runs them the same on
 # all three machines (D-162).
 shellEmulator: true
+patchedDependencies:
+  expo-file-system@57.0.7: patches/expo-file-system@57.0.7.patch
