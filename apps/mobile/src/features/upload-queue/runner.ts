@@ -439,21 +439,10 @@ export class UploadRunner {
     };
 
     // Each file goes only to its own URL. The thumbnail is unblurred, so it goes to R2 and
-    // nowhere else (root invariant 13).
+    // nowhere else (root invariant 13). The photo stays at step put_photo until both are sent.
     if (!(await this.canSend(userId, signal))) return 'cancelled';
-    const photo = await this.deps.put(row.photoPath, upload.photoUploadUrl, PHOTO_TYPE, signal);
-    if (photo !== 'ok') return this.putFailed(store, uploading, photo, signal);
-    if (!this.live(userId, signal)) return 'cancelled';
-    if (!(await store.update(userId, id, { step: 'put_thumbnail' }, ['uploading']))) return 'next';
-
-    if (!(await this.canSend(userId, signal))) return 'cancelled';
-    const thumbnail = await this.deps.put(
-      row.thumbnailPath,
-      upload.thumbnailUploadUrl,
-      THUMBNAIL_TYPE,
-      signal,
-    );
-    if (thumbnail !== 'ok') return this.putFailed(store, uploading, thumbnail, signal);
+    const sent = await this.putBoth(row.photoPath, row.thumbnailPath, upload, signal);
+    if (sent !== 'ok') return this.putFailed(store, uploading, sent, signal);
     if (!this.live(userId, signal)) return 'cancelled';
     // Stored before completion is sent, so a lost answer or a kill retries completion and never
     // pre-flight, which would send both files again (D-122).
@@ -500,6 +489,49 @@ export class UploadRunner {
       return;
     if (answer?.open && answer.at >= sentAt)
       await store.release(row.userId, row.eventId, 'waiting_album');
+  }
+
+  // Sends the photo and its thumbnail together. R2 took about a second to accept even an 8 KB
+  // thumbnail from Lahore on 2026-11-04, so sending them one after the other added that second to
+  // every photo. Photos still go one at a time, so the rest of a session stays cancelable
+  // (spec §4.8.3). Either file failing cancels the other, and both settle before this returns, so
+  // no PUT from this attempt is still sending when the photo goes back through pre-flight. A
+  // missing file outranks a failure, because a retry cannot bring the file back.
+  private async putBoth(
+    photoPath: string,
+    thumbnailPath: string,
+    upload: PreflightUploadResponse,
+    signal: AbortSignal,
+  ): Promise<PutResult> {
+    const both = new AbortController();
+    const abort = () => both.abort();
+    if (signal.aborted) abort();
+    signal.addEventListener('abort', abort);
+    const send = async (path: string, url: string, contentType: string) => {
+      try {
+        const result = await this.deps.put(path, url, contentType, both.signal);
+        if (result !== 'ok') abort();
+        return result;
+      } catch (error) {
+        abort();
+        throw error;
+      }
+    };
+    try {
+      const results = await Promise.allSettled([
+        send(photoPath, upload.photoUploadUrl, PHOTO_TYPE),
+        send(thumbnailPath, upload.thumbnailUploadUrl, THUMBNAIL_TYPE),
+      ]);
+      const values: PutResult[] = [];
+      for (const result of results) {
+        if (result.status === 'rejected') throw result.reason;
+        values.push(result.value);
+      }
+      if (values.includes('missing')) return 'missing';
+      return values.includes('failed') ? 'failed' : 'ok';
+    } finally {
+      signal.removeEventListener('abort', abort);
+    }
   }
 
   // A failed or timed-out PUT sends the photo back through pre-flight, which resumes its row with

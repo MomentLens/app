@@ -1,0 +1,15 @@
+diff --git a/android/src/main/java/expo/modules/filesystem/FileSystemUploadTask.kt b/android/src/main/java/expo/modules/filesystem/FileSystemUploadTask.kt
+index 90e9a68228ad2fa4327134374b772055b05c9ffa..41c69f2d724986f88f8858e6e0ef43e9a54d11c8 100644
+--- a/android/src/main/java/expo/modules/filesystem/FileSystemUploadTask.kt
++++ b/android/src/main/java/expo/modules/filesystem/FileSystemUploadTask.kt
+@@ -69,7 +69,9 @@ class UploadTaskResult : Record {
+  */
+ class FileSystemUploadTask : SharedObject() {
+   companion object {
+-    private val client = OkHttpClientProvider.createClientBuilder()
++    // MomentLens patch: start from the app's client factory, which tries IPv4 before IPv6
++    // (apps/mobile/modules/ipv4-first). createClientBuilder() skips the factory.
++    private val client = OkHttpClientProvider.createClient().newBuilder()
+       .connectTimeout(60, TimeUnit.SECONDS)
+       .readTimeout(60, TimeUnit.SECONDS)
+       .writeTimeout(60, TimeUnit.SECONDS)

@@ -64,7 +64,11 @@ class Storage:
                 response_checksum_validation="when_required",
                 retries={"mode": "standard", "max_attempts": 3},
                 connect_timeout=5,
-                read_timeout=30,
+                # The longest R2 may go silent before boto gives up on the try and retries. From
+                # the Dubai server on 2026-11-04 the first byte took 0.3 to 1.5 s, and one read
+                # that stalled held a photo's job for 32 s at the old 30 s. The limit is between
+                # bytes, not for the whole download, so a large photo still has time to arrive.
+                read_timeout=10,
             ),
         )
         return cls(client, settings.r2_bucket)

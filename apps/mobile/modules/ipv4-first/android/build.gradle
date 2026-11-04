@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'me.momentlens'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.ipv4first"
+  defaultConfig {
+    versionCode 1
+    versionName '1.0.0'
+  }
+}
+
+dependencies {
+  // The app's own React Native, for OkHttpClientProvider and the OkHttp it already ships. It adds
+  // no artifact the app does not already include.
+  implementation 'com.facebook.react:react-android'
+}
