@@ -397,7 +397,7 @@ Plan (S-26): about 30 photos of the three team members in varied light, same-per
 
 | | Development | Demo |
 |---|---|---|
-| Compute | Azure VM (`Standard_D4als_v7` or `Standard_F4als_v7`, 4 vCPUs, 8 GB RAM) in UAE North (Dubai), running ~2 hrs/day with static IP and standard storage (D-78) | The same server (D-78) |
+| Compute | Azure VM (`Standard_B4ls_v2`, 4 burstable vCPUs, 8 GB RAM, 32 GiB Standard SSD) in UAE North (Dubai), running ~2 hrs/day with a static IP (D-78, D-165) | The same server (D-78) |
 | Goes up | Set up by `scripts/provision.sh` (Handbook §13) | One month before the demo (D-76) |
 | Processes | `momentlens-api.service` and `momentlens-worker.service` under systemd; Supabase Lite under Docker Compose (`infra/supabase`); nginx, certbot (Handbook §13) | The same units against the stable project. How they sit beside development on one server is **Open** until Phase 7 |
 | Supabase | Self-hosted Postgres, Auth and Realtime (`infra/supabase`). Postgres on `127.0.0.1:5432`, Auth on `127.0.0.1:9999`, Realtime on `127.0.0.1:4000`, and nginx routing to the last two on `127.0.0.1:54321` (D-164) | Self-hosted stable database on the same host |
