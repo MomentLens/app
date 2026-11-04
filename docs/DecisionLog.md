@@ -538,6 +538,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Reopen if.** The benchmark on the Azure Dubai server at four threads is slower than the pessimistic end of the estimate, meaning a median photo over 0.86s or a 40-face photo over 4.0s.
 **Open.** How the stable database sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location is UAE North (Dubai), and the demo-week fallback by D-79.
 **Amended (see D-107).** This entry supersedes D-38, as D-38's heading says. "Amends D-38" above understates it.
+**Amended (see D-165).** The VM is a `Standard_B4ls_v2`: 4 burstable vCPUs on 2 hyperthreaded Intel cores, and 8 GB. The Azure for Students subscription has no quota in UAE North for the two sizes named above. The estimate for v7 AMD cores no longer applies, and the benchmark runs with burst credits and again without.
 
 ### D-79: The standby is a rotation across three student credits, and it runs only twice ⚠
 **Decision.** Amends D-38. The demo-week standby is not one untouched Azure credit. It is the team's Azure for Students, AWS and GCP credits, held across the three members and used in that order, moving to the next when one runs out. The standby VM is created for the Phase 7 rehearsal, deleted, and created again for demo week. It never runs between those two windows.
@@ -1702,6 +1703,20 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 - A public nginx site written before this still has a `/rest/v1/` block, which now gets the loopback server's 404.
 - B and C write a store as SQL with postgres.js from now on. A unit test fakes the SQL with `apps/api/tests/support/fake-sql.ts`.
 **Reopen if.** A Windows machine cannot hold the tunnel open, which leaves B and C no way to run the API or `test:rls` on their own machines.
+
+### D-165: The Dubai VM is a Standard_B4ls_v2, because UAE North gives D-78's sizes no quota
+**Decision.** Amends D-78. Ukasha decided this on 2026-11-04. The server is a `Standard_B4ls_v2` in UAE North: 4 vCPUs, 8 GB RAM, x86-64 Intel, burstable, on a 32 GiB Standard SSD.
+- On 2026-11-04 the Azure for Students subscription had a quota of 0 vCPUs in UAE North for the families of `Standard_D4als_v7` and `Standard_F4als_v7`, and Azure rejected the self-service increase for both. Only two families there had quota, 10 vCPUs each: Bsv2 (Intel) and Bpsv2 (ARM64, Ampere Altra).
+- Bsv2 runs on Intel Xeon Platinum 8573C, 8473C or 8370C "in a hyper threaded configuration", Microsoft's Bsv2 page says, so the 4 vCPUs are 2 physical cores with 2 threads each. ONNX Runtime's default is one thread per physical core. The benchmark runs at 2 threads and at 4, and the worker sets the faster count when the face pipeline is built.
+- The credit rules, from the same page: base CPU performance is 30% of the VM, which is 1.2 vCPUs. The VM gets 120 credits when deployed, banks 72 credits in an idle hour and holds at most 1,728. One credit is one vCPU at 100% for one minute. With no credits left, Azure throttles the VM to its base.
+- Microsoft's pages do not say whether a stop (deallocate) keeps the banked credits or grants the 120 again. Check it once on the "CPU Credits Remaining" metric after a stop and a start.
+- For the demo, the VM starts at least 24 hours early and stays running, so it holds all 1,728 credits, about 7 hours of all 4 vCPUs at 100%.
+- The benchmark runs twice. With credits, against D-78's bar, because that is the speed the panel sees. With none, because that is the speed development gets after a long batch of uploads.
+- The server moves to `Standard_D4als_v7` only if the benchmark with credits misses D-78's bar and a support ticket gets that family a quota.
+**Why.** UAE North keeps the latency D-78 chose it for. Bsv2 is x86-64, as D-78 planned, and 8 GB is what D-78 sized. `Standard_B4s_v2` is in the same family, so a move to it is a stop, a resize and a start.
+**Rejected.** `Standard_B4pls_v2`: Ampere Altra has the Neoverse-N1 core of the Oracle A1 instance D-78 measured, which took 3.5 times as long as the M1. `Standard_B4s_v2` (16 GB, 40% base) at a third more per hour, US$0.193 against US$0.145 on 2026-11-04, for memory D-78's sizing does not need. AWS in `me-central-1` now: its new-account credits expire 6 months after the account opens, before the June 2027 demo, so AWS stays with the standby (D-79). DigitalOcean, which left the GitHub Student Pack in August 2026 and charges while a droplet is off. Hetzner, which is paid only and has no region in the UAE or India. GCP, which rejects the team's cards. A 64 GiB disk: the server holds about 10 GB, because media lives in R2.
+**Cost.** The worker's speed depends on credits, so a long batch of uploads slows it to 1.2 vCPUs until the VM idles again. Two physical cores do less than four. Nobody has measured InsightFace on these CPUs, and D-78's estimate for AMD v7 cores does not carry over.
+**Reopen if.** The benchmark with credits misses D-78's bar (a median photo over 0.86s or a 40-face photo over 4.0s), the credits run out during an ordinary development session, or 8 GB runs out.
 
 ## Open items that are not decisions yet
 

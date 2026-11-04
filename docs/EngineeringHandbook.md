@@ -33,7 +33,7 @@ One framing before anything else. Everything here assumes v11's scope. If buildi
 | Object storage | Cloudflare R2 | Zero egress fees, 10 GB permanently free. |
 | AI worker | Python 3.12+, FastAPI (thin), `pgmq` consumer | Face detection, embedding, and generation of the public and per-subject blur variants. There is no display-variant job; nobody resizes (D-58). |
 | Face detection & embeddings | InsightFace via ONNX Runtime, not PyTorch | ONNX runs meaningfully faster on CPU-only hosting and has a much smaller dependency footprint. |
-| Compute hosting | One Azure VM in UAE North (Dubai) (`Standard_D4als_v7` or `Standard_F4als_v7`, 4 vCPUs, 8 GB RAM) for development and the demo | Lowest measured latency to the team, running ~2 hrs/day on rotated student credits. See §13 and D-78. |
+| Compute hosting | One Azure VM in UAE North (Dubai) (`Standard_B4ls_v2`, 4 burstable vCPUs, 8 GB RAM) for development and the demo | Lowest measured latency to the team, running ~2 hrs/day on rotated student credits. See §13, D-78 and D-165. |
 | Process management | `systemd` (API and worker) + `docker compose` (Supabase Lite) + `nginx` + `certbot` | Docker runs the Supabase vendor stack; app processes run under systemd. See §13. |
 | CI | GitHub Actions | Free, you already have GitHub. |
 | E2E testing | Maestro | Local runs are free; cloud runs are metered. |
@@ -502,7 +502,7 @@ The force push drops the PR's approval, so wait for its checks and get it approv
 
 #### 13.3.2 Sizing, schedule and provisioning
 
-**Shape and schedule.** Sized on Azure's `Standard_D4als_v7` or `Standard_F4als_v7` (4 vCPUs, 8 GB RAM, AMD) in `uae-north` (Dubai) running Ubuntu 24.04 LTS. Sizing and latency are justified in D-78. To fit comfortably within Azure for Students credits ($100 per member), the server runs ~2 hours/day during active development with a static public IP and standard storage, deallocated when idle. As credits deplete, the subscription rotates to the next team member's account.
+**Shape and schedule.** Azure's `Standard_B4ls_v2` (4 vCPUs on 2 hyperthreaded Intel cores, 8 GB RAM) in `uae-north` (Dubai), running Ubuntu 24.04 LTS on a 32 GiB Standard SSD. D-78 explains the location, and D-165 the size: Azure for Students gives UAE North no quota for the sizes D-78 named. The VM is burstable. Once its CPU credits are spent it runs at 30%, 1.2 vCPUs, until it idles and banks more, so start it at least 24 hours before the demo and leave it running (D-165). To fit comfortably within Azure for Students credits ($100 per member), the server runs ~2 hours/day during active development with a static public IP and standard storage, deallocated when idle. As credits deplete, the subscription rotates to the next team member's account.
 
 **Set it up with `scripts/provision.sh`.** The script is this section in runnable form: system packages, the Node, pnpm and Python versions the repo pins, the `momentlens` user, Docker installation, the `infra/supabase/setup.sh` execution, the repo checkout and API build, both systemd units, nginx, the firewall and TLS. Every step checks before it acts, so running it again is safe. Copy it to the new server and run it as root:
 
