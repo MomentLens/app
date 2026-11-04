@@ -2,6 +2,15 @@
   "name": "mobile",
   "main": "index.ts",
   "version": "1.0.0",
+  "expo": {
+    "autolinking": {
+      "android": {
+        "buildFromSource": [
+          "expo-file-system"
+        ]
+      }
+    }
+  },
   "dependencies": {
     "@expo-google-fonts/fraunces": "0.4.1",
     "@expo/ui": "~57.0.18",
