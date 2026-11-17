@@ -65,7 +65,7 @@ Nobody works alone here. The point is that all three machines and the deployed s
 | P0-2 | Server provisioned by `scripts/provision.sh`, nginx, TLS, both systemd units running something trivial | HB §13.3.2, HB §13.3.3, HB §13.3.4, D-39 |
 | P0-3 | Supabase dev + stable projects, keep-alive for both as a GitHub Actions scheduled workflow, R2 buckets `momentlens-dev` and `momentlens-stable` | HB §13.3.5, D-67 |
 | P0-4 | `GET /health` through to one Expo screen, on a phone, against the deployed API | HB §14.0 Phase 0 |
-| P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it on the x86-64 server | HB §14.0 Phase 0 |
+| P0-5 | **InsightFace spike on the server.** Blocking. If this fails the worker plan changes. Passed on ARM64 on 2026-09-15; rerun it and D-78's benchmark on the x86-64 server, with burst credits and without, at two and four threads | HB §14.0 Phase 0, D-165, D-166 |
 | P0-6 | Figma tokens into `apps/mobile/tailwind.config.js` | HB §15 |
 | P0-7 | Moved out of Phase 0. The demo stack goes up on the server at the start of Phase 7 (D-76, D-78) | D-76, D-78 |
 | P0-8 | Sentry on the app and the API, on the Education plan | HB §11.5 |
