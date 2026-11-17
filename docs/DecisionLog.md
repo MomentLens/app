@@ -539,6 +539,7 @@ The rule the team set for these: MomentLens is built for a demo, not a public de
 **Open.** How the stable database sits beside development on one server by Phase 7 (`docs/ARCHITECTURE.md` §7). The location is UAE North (Dubai), and the demo-week fallback by D-79.
 **Amended (see D-107).** This entry supersedes D-38, as D-38's heading says. "Amends D-38" above understates it.
 **Amended (see D-165).** The VM is a `Standard_B4ls_v2`: 4 burstable vCPUs on 2 hyperthreaded Intel cores, and 8 GB. The Azure for Students subscription has no quota in UAE North for the two sizes named above. The estimate for v7 AMD cores no longer applies, and the benchmark runs with burst credits and again without.
+**Amended (see D-166).** The bar below applies to the run with burst credits, at the faster of two and four ONNX Runtime threads, not at four threads.
 
 ### D-79: The standby is a rotation across three student credits, and it runs only twice ⚠
 **Decision.** Amends D-38. The demo-week standby is not one untouched Azure credit. It is the team's Azure for Students, AWS and GCP credits, held across the three members and used in that order, moving to the next when one runs out. The standby VM is created for the Phase 7 rehearsal, deleted, and created again for demo week. It never runs between those two windows.
@@ -1717,6 +1718,17 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** `Standard_B4pls_v2`: Ampere Altra has the Neoverse-N1 core of the Oracle A1 instance D-78 measured, which took 3.5 times as long as the M1. `Standard_B4s_v2` (16 GB, 40% base) at a third more per hour, US$0.193 against US$0.145 on 2026-11-04, for memory D-78's sizing does not need. AWS in `me-central-1` now: its new-account credits expire 6 months after the account opens, before the June 2027 demo, so AWS stays with the standby (D-79). DigitalOcean, which left the GitHub Student Pack in August 2026 and charges while a droplet is off. Hetzner, which is paid only and has no region in the UAE or India. GCP, which rejects the team's cards. A 64 GiB disk: the server holds about 10 GB, because media lives in R2.
 **Cost.** The worker's speed depends on credits, so a long batch of uploads slows it to 1.2 vCPUs until the VM idles again. Two physical cores do less than four. Nobody has measured InsightFace on these CPUs, and D-78's estimate for AMD v7 cores does not carry over.
 **Reopen if.** The benchmark with credits misses D-78's bar (a median photo over 0.86s or a 40-face photo over 4.0s), the credits run out during an ordinary development session, or 8 GB runs out.
+**Amended (see D-166).** The run with credits is judged at the faster of two and four threads, and the run without starts once CPU Credits Remaining reads 0, reached with `stress-ng --cpu 4`.
+
+### D-166: D-78's bar is measured at the faster thread count, with burst credits
+**Decision.** Amends D-78 and D-165. Ukasha decided this on 2026-11-18, at P0-5's read-back. D-78's reopen bar (a median photo over 0.86s or a 40-face photo over 4.0s) is checked on the run with burst credits, at whichever of two and four ONNX Runtime threads is faster. That count is the one the worker uses (D-165), and `docs/ARCHITECTURE.md` §5 records it.
+- The run without credits starts once the VM's "CPU Credits Remaining" metric reads 0, reached by holding all four vCPUs busy (`stress-ng --cpu 4`). Credits are read before and after every run, and a run that crosses zero is discarded.
+- The benchmark runs in a throwaway venv on the server with the pins from `worker/requirements.txt`, with the API and Postgres up, nothing uploading, and `momentlens-worker` stopped so it does not hold a second copy of the model.
+- The scripts live in `worker/bench/`. The 23 photos stay off the repo, which is public, and `worker/bench/photos.sha256` holds their hashes, checked before any run is timed.
+**Why.** D-78 said four threads and D-165 said run both and use the faster, so the two entries named different bars. Measuring the count the worker will run is the measurement the panel sees.
+**Rejected.** Four threads only, which can judge the server on a count the worker will not use, because the four vCPUs are two hyperthreaded cores.
+**Cost.** Four runs instead of one, and about 45 minutes of `stress-ng` to spend the credits.
+**Reopen if.** The worker's thread count is ever set by something other than this benchmark.
 
 ## Open items that are not decisions yet
 
