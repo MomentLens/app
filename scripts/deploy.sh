@@ -126,7 +126,7 @@ API_PORT="${API_PORT:-3000}" # apps/api falls back to 3000 when PORT is empty
 log "Checking the API on port $API_PORT"
 code="000"
 for _ in $(seq 1 15); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$API_PORT/health" || true)"
+  code="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$API_PORT/health" || true)"
   [ "$code" = "200" ] && break
   sleep 1
 done
@@ -141,7 +141,7 @@ if [ "$WORKER_RESTARTED" -eq 1 ]; then
   log "Checking the worker on port 8000"
   code="000"
   for _ in $(seq 1 60); do
-    code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || true)"
+    code="$(curl -s --max-time 5 -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || true)"
     [ "$code" = "200" ] && break
     sleep 1
   done
