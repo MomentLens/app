@@ -1684,6 +1684,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** Everyone who pushes a migration holds the dev database's `postgres` password, and a push needs the server running. Nobody has run the tunnel commands against the server yet. Two things D-78 changed are still Open: how the standby carries the database, and where CI's RLS and worker SQL job runs, since GitHub's runners cannot reach Postgres on the server's loopback and reach the API only while the server runs.
 **Reopen if.** A push through the tunnel fails on the server, or the tunnel will not stay open from a Windows machine.
 **Amended (see D-164).** `setup.sh` runs Postgres, Auth and Realtime only, and nginx answers on `127.0.0.1:54321`, where Envoy did.
+**Amended (see D-167).** Where CI's RLS and worker SQL job runs is settled: the job only names the tests a PR needs, and the developer runs them through the tunnel.
 
 ### D-164: The API queries Postgres directly, and nginx replaces PostgREST and Envoy
 **Decision.** Amends D-73, D-95, D-106 and D-163. Ukasha decided this on 2026-11-03. The self-hosted stack runs Postgres, Auth and Realtime, and nothing else of Supabase's.
@@ -1704,6 +1705,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 - A public nginx site written before this still has a `/rest/v1/` block, which now gets the loopback server's 404.
 - B and C write a store as SQL with postgres.js from now on. A unit test fakes the SQL with `apps/api/tests/support/fake-sql.ts`.
 **Reopen if.** A Windows machine cannot hold the tunnel open, which leaves B and C no way to run the API or `test:rls` on their own machines.
+**Amended (see D-167).** CI no longer runs `test:rls`. The developer runs it through the tunnel before a stack that touches `apps/api/` or `supabase/` merges, and the readiness record names the run.
 
 ### D-165: The Dubai VM is a Standard_B4ls_v2, because UAE North gives D-78's sizes no quota
 **Decision.** Amends D-78. Ukasha decided this on 2026-11-04. The server is a `Standard_B4ls_v2` in UAE North: 4 vCPUs, 8 GB RAM, x86-64 Intel, burstable, on a 32 GiB Standard SSD.
@@ -1736,6 +1738,16 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** Four runs instead of one, and about 45 minutes of `stress-ng` to spend the credits.
 **Reopen if.** The worker's thread count is ever set by something other than this benchmark.
 
+### D-167: CI names the RLS and worker SQL tests, and the developer runs them through the tunnel
+**Decision.** Amends D-163 and D-164. Ukasha decided this on 2026-11-18, at P0-5's cleanup. The CI job `RLS and worker SQL, dev project` keeps its name, because the "main: CI" ruleset requires it (D-149), and stops running the tests.
+- It runs `scripts/verify.mjs --plan` against the PR's base and posts a notice naming the tests the PR needs: `pnpm --filter api test:rls` when `supabase/` or `apps/api/` changed, the worker SQL test when `worker/` or `supabase/` changed. It passes either way.
+- The developer runs those tests through the SSH tunnel to the server (hb §13.4), with the server running, before the stack merges. The readiness record's Verification row names the run and its result.
+- CI holds no secret for the dev database. The job's old secrets reached the hosted project, which the app stopped using on 2026-11-03 (D-163).
+**Why.** Postgres listens on the server's loopback only (D-163), and since D-164 the RLS test needs Postgres itself, so GitHub's runners cannot run either test. A required job that cannot pass blocks every PR that touches `apps/api/` or `supabase/`, and `--admin` cannot bypass the CI ruleset. The P0-5 stack hit this on 2026-11-18: run by hand through the tunnel that day, `test:rls` passed 169 of 169 and the worker SQL test passed.
+**Rejected.** A self-hosted GitHub runner on the VM, which runs only while the VM is up, about 2 hours a day, spends its burst credits on CI, and needs its own hardening. Adding the secrets and opening Postgres to GitHub's address ranges, which puts the database on the internet. Dropping the job, which needs the ruleset changed and leaves no reminder on the PR.
+**Cost.** CI no longer catches an RLS regression by itself. A PR whose developer skips the tunnel run merges untested, and only the readiness record shows it. A PR outside a slice has no readiness record, so its description carries the run.
+**Reopen if.** The server runs all day, which makes a self-hosted runner cheap, or an RLS regression reaches `main` because a run was skipped.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -1746,7 +1758,6 @@ These are not settled and should not be treated as though they are.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
 - **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
-- **Where CI's RLS and worker SQL job runs.** Its secrets name the dev project, and GitHub's runners cannot reach Postgres on the server's loopback (D-163). Since D-164 the RLS test needs Postgres too. The job is a required check on `main` (D-149).
 - **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
 - **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
