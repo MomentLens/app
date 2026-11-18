@@ -116,6 +116,10 @@ def main() -> int:
         log.error("cannot start: %s", error)
         return 1
 
+    # A SIGTERM that came while /health started skips the load, which takes seconds on the VM.
+    if stop.is_set():
+        log.info("worker stopped before its loop started")
+        return 0
     # /health answers 503 through the load, so deploy.sh's 200 means the model is warm (D-169).
     try:
         model.load()

@@ -108,6 +108,38 @@ def test_the_right_zip_with_a_missing_model_file_unpacks_again_without_a_fetch(s
     assert (root / "buffalo_l" / model.RECOGNITION_FILE).read_bytes() == b"recognizer"
 
 
+@pytest.mark.parametrize("damage", [b"recog", b"recognizeX"], ids=["truncated", "same size"])
+def test_a_corrupt_model_file_unpacks_again_without_a_fetch(source, root, damage):
+    path, digest = source
+    fetch_model.fetch(root, digest, Downloads(path))
+    (root / "buffalo_l" / model.RECOGNITION_FILE).write_bytes(damage)
+
+    download = Downloads(path)
+    assert fetch_model.fetch(root, digest, download) == "unpacked"
+    assert download.urls == []
+    assert (root / "buffalo_l" / model.RECOGNITION_FILE).read_bytes() == b"recognizer"
+    assert sorted(p.name for p in root.iterdir()) == ["buffalo_l", "buffalo_l.zip"]
+
+
+def test_a_download_slower_than_the_limit_fails(monkeypatch, tmp_path):
+    class Trickle:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, size):
+            return b"x"
+
+    monkeypatch.setattr(fetch_model.urllib.request, "urlopen", lambda url, timeout: Trickle())
+    clock = iter(range(0, 100_000, 100))
+    monkeypatch.setattr(fetch_model.time, "monotonic", lambda: next(clock))
+
+    with pytest.raises(fetch_model.FetchError, match="more than 600 s"):
+        fetch_model.download(fetch_model.URL, tmp_path / "buffalo_l.zip.part")
+
+
 def test_a_stale_zip_is_replaced(source, root):
     path, digest = source
     root.mkdir(parents=True)
