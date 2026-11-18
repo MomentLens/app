@@ -33,8 +33,8 @@ class Job:
     name: str
     message: type[JobMessage]
     run: Callable[[JobContext, Any], None]
-    # Runs once at startup, before the loop reads anything. S-18 loads the InsightFace model
-    # here, once, and keeps it resident (worker/AGENTS.md).
+    # Runs once at startup, after main.py has loaded the InsightFace model and before the loop
+    # reads anything. A job that needs the model calls app.ai.model.get_model() (D-169).
     setup: Callable[[], None] | None = None
 
 
