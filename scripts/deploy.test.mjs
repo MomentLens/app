@@ -21,7 +21,13 @@ runuser() {
   esac
 }
 systemctl() { printf '%s\\n' "$*" >> "$AUDIT_LOG"; }
-curl() { printf '200'; }
+curl() {
+  case "$*" in
+    *:8000/*) printf '%s' "\${WORKER_HEALTH:-200}" ;;
+    *) printf '200' ;;
+  esac
+}
+sleep() { :; }
 sed() { printf '3000\\n'; }
 audit_script="$1"
 shift
@@ -51,6 +57,30 @@ test('retries the worker at the same Git head after a failed deploy or --skip-wo
     assert.equal(readFileSync(log, 'utf8').match(/worker-install/g)?.length, before);
     assert.equal(run().status, 0);
     assert.equal(readFileSync(log, 'utf8').match(/worker-install/g)?.length, before + 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('fails when the restarted worker never answers /health', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'momentlens-deploy-'));
+  const run = (env) =>
+    spawnSync('bash', ['-c', harness, 'audit', script], {
+      encoding: 'utf8',
+      env: { ...process.env, AUDIT_LOG: join(dir, 'calls'), FAIL_WORKER: '0', ...env },
+    });
+  try {
+    const down = run({ WORKER_HEALTH: '000' });
+    assert.equal(down.status, 1);
+    assert.match(down.stderr, /worker's \/health did not answer/);
+    const up = run({ WORKER_HEALTH: '200' });
+    assert.equal(up.status, 0, up.stderr);
+    assert.match(up.stdout, /The worker's \/health answered HTTP 200/);
+    const skipped = spawnSync('bash', ['-c', harness, 'audit', script, '--skip-worker'], {
+      encoding: 'utf8',
+      env: { ...process.env, AUDIT_LOG: join(dir, 'calls'), WORKER_HEALTH: '000' },
+    });
+    assert.equal(skipped.status, 0, skipped.stderr);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
