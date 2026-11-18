@@ -569,7 +569,7 @@ All three developers share the dev Supabase project and the dev server, so every
      IdentityFile ~/.ssh/id_ed25519
    ```
 
-   `ssh momentlens 'echo ok'` confirms it, and `pnpm check:machine` warns while the alias is missing. The server moves from Oracle to Azure Dubai (arch §7). The alias follows `api.momentlens.me`, but Ukasha has to add every key again on the new server, and SSH refuses the new host key until you run `ssh-keygen -R api.momentlens.me`.
+   `ssh momentlens 'echo ok'` confirms it, and `pnpm check:machine` warns while the alias is missing. The server moved from Oracle to Azure Dubai (arch §7). The alias follows `api.momentlens.me`, with `User azureuser`, after Ukasha adds every key on the new server and you run `ssh-keygen -R api.momentlens.me`. The old Oracle server stays at `oracle.momentlens.me` (alias `momentlens-oracle`), frozen on `legacy/oracle`; never deploy `main` there.
 
 **A new migration.** The slice that first writes to a table owns its migration (docs/WorkSlices.md), and its api build writes it:
 
@@ -611,7 +611,7 @@ ssh momentlens 'sudo bash /srv/momentlens/scripts/deploy.sh --branch main'
 
 `deploy.sh` fast-forwards the server's copy of a branch, so a branch that was force-pushed since its last deploy stops with "Not possible to fast-forward". Put the server on `main`, delete its copy with `ssh momentlens 'sudo -u momentlens git -C /srv/momentlens branch -D feat/s-05-api'`, and deploy the branch again.
 
-**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads. Your root `.env` needs the four `R2_*` variables for the `momentlens-dev` bucket and `DATABASE_URL` set to the tunnel above, `postgresql://postgres:<password>@127.0.0.1:15432/postgres`, or the worker refuses to start and names what is missing. Keep the tunnel open while the worker runs; when it closes, the worker loses its connection and waits.
+**Running the worker on your machine against the dev project.** One worker reads the dev project's `jobs` queue at a time (D-123). A local worker started while the server's runs logs that the queue is taken and waits. To run yours, stop the server's and tell the team, then start it again when you are done. While yours runs, it processes every developer's uploads. Your root `.env` needs the four `R2_*` variables for the `momentlens-dev-apac` bucket and `DATABASE_URL` set to the tunnel above, `postgresql://postgres:<password>@127.0.0.1:15432/postgres`, or the worker refuses to start and names what is missing. Keep the tunnel open while the worker runs; when it closes, the worker loses its connection and waits.
 
 ```bash
 ssh momentlens 'sudo systemctl stop momentlens-worker'
