@@ -134,7 +134,7 @@ pnpm --filter api dev
 node scripts/verify.mjs api mobile # what CI runs, for those packages; also docs format packages worker rls worker-sql all
 pnpm docs:check                   # the docs gate, also run by the pre-commit hook and CI
 pnpm --filter api test:rls        # RLS negative tests against the dev project
-cd worker && uv venv --python 3.12 && uv pip install -r requirements-dev.txt   # once, and after either requirements file changes
+cd worker && uv venv --python 3.12 && uv pip install --no-deps -r requirements-dev.txt   # once, and after either requirements file changes
 node scripts/verify.mjs worker     # Ruff and pytest through worker/.venv, on every platform
 cd worker && .venv/bin/python -m app.main   # waits while the dev server's worker holds the queue (hb §13.4)
 ```
