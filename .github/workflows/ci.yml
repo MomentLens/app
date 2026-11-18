@@ -81,18 +81,17 @@ jobs:
       - run: node scripts/verify.mjs --strict worker
 
   dev-project:
-    # The "main: CI" ruleset requires this one too (D-149), so it has to report on every PR: it
-    # passes at once when nothing it tests changed. A fork gets no secrets, so the job skips there,
-    # which GitHub counts as a pass, as it did for rls.yml. The stable project's secret key is
-    # never stored in GitHub.
+    # The "main: CI" ruleset requires this job by name (D-149), so it still reports on every PR.
+    # It runs no tests: test:rls and the worker's SQL test need Postgres, which listens on the
+    # server's loopback only, and GitHub's runners cannot reach it (D-167). It names the ones this
+    # PR needs, and the developer runs them through the SSH tunnel (hb §13.4) and records the
+    # result in the readiness record's Verification row.
     name: RLS and worker SQL, dev project
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       HUSKY: 0
       BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'origin/main' }}
-      FORCE: ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
     steps:
       # The whole history, so the script can compare the PR with the branch it targets.
       - uses: actions/checkout@v7
@@ -105,38 +104,20 @@ jobs:
           node-version-file: .nvmrc
 
       - id: plan
-        run: node scripts/verify.mjs --plan rls worker-sql --base "$BASE" $FORCE
+        run: node scripts/verify.mjs --plan rls worker-sql --base "$BASE"
 
-      - if: steps.plan.outputs.rls == 'true'
-        uses: pnpm/action-setup@v6
-        with:
-          cache: true
-
-      - if: steps.plan.outputs.rls == 'true'
-        run: pnpm install --frozen-lockfile
-
-      - if: steps.plan.outputs.worker_sql == 'true'
-        uses: actions/setup-python@v7
-        with:
-          python-version-file: worker/.python-version
-          cache: pip
-          cache-dependency-path: worker/requirements*.txt
-
-      - if: steps.plan.outputs.worker_sql == 'true'
-        run: pip install --no-deps --requirement requirements-dev.txt
-        working-directory: worker
-
-      # test:rls sets REQUIRE_SUPABASE and --dev-sql fails without DATABASE_URL, so a missing
-      # secret fails the run instead of skipping. Each SQL test makes its own pgmq queue inside a
-      # transaction that rolls back, so it never reads `jobs`. The two run at once, and test:rls
-      # runs the tests of each describe block side by side, since nearly all of the time is spent
-      # waiting on the dev project. Both now need Postgres itself, which listens on the server's
-      # loopback only, so where this job runs is Open (D-163, D-164).
-      - name: Run the RLS and worker SQL tests that apply
+      - name: Name the tests to run through the tunnel
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_DEV_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_DEV_PUBLISHABLE_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_DEV_SERVICE_ROLE_KEY }}
-          API_DATABASE_URL: ${{ secrets.SUPABASE_DEV_API_DATABASE_URL }}
-          DATABASE_URL: ${{ secrets.SUPABASE_DEV_DATABASE_URL }}
-        run: node scripts/verify.mjs --strict rls worker-sql --base "$BASE" $FORCE
+          RLS: ${{ steps.plan.outputs.rls }}
+          WORKER_SQL: ${{ steps.plan.outputs.worker_sql }}
+        run: |
+          need=""
+          if [ "$RLS" = true ]; then need="$need pnpm --filter api test:rls;"; fi
+          if [ "$WORKER_SQL" = true ]; then need="$need node scripts/verify.mjs worker-sql --force;"; fi
+          if [ -n "$need" ]; then
+            msg="Not run in CI. Run through the SSH tunnel before merging (hb §13.4, D-167):$need"
+            echo "::notice title=Dev-project tests::$msg"
+            echo "$msg" >>"$GITHUB_STEP_SUMMARY"
+          else
+            echo "Nothing these tests cover changed against $BASE."
+          fi
