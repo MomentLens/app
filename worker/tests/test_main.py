@@ -199,6 +199,25 @@ def test_sigterm_during_the_load_reads_nothing_from_the_queue(start, monkeypatch
     assert health_status(servers[0]) == 503
 
 
+def test_sigterm_before_the_load_skips_it(start, monkeypatch):
+    handlers, _servers = start
+    started = main.start_health_server
+
+    def start_then_stop(*args):
+        server = started(*args)
+        handlers[signal.SIGTERM](signal.SIGTERM, None)
+        return server
+
+    def refuse():
+        raise AssertionError("the model loaded after SIGTERM")
+
+    monkeypatch.setattr(main, "start_health_server", start_then_stop)
+    monkeypatch.setattr(main.model, "load", refuse)
+
+    assert main.main() == 0
+    assert FakeWorker.runs == 0
+
+
 def test_a_missing_model_file_exits_1_without_a_download(start, monkeypatch, tmp_path, caplog):
     _handlers, servers = start
     monkeypatch.setattr(main.model, "model_dir", lambda: tmp_path / "buffalo_l")
