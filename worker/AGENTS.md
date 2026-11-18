@@ -19,6 +19,8 @@ The worker connects to Postgres directly with `DATABASE_URL`, so RLS does not ap
 
 **Load the InsightFace model once at startup and keep it resident.** Cold-loading per job costs several seconds and is the most likely reason a demo feels slow.
 
+`app/ai/model.py` does this. `main.py` calls `load()` while `/health` answers 503, before the jobs' setup hooks, and a job calls `get_model()`, which raises before the load. The model is `det_10g.onnx` and `w600k_r50.onnx` in `.insightface/models/buffalo_l` under the home of the user running the worker, `/var/lib/momentlens` on the server. **The worker never downloads it**: a missing file exits before the loop (D-169). `scripts/provision.sh` and `scripts/deploy.sh` fetch it, and on a new machine you run the same fetch once, from `worker/`: `.venv/bin/python -m app.ai.fetch_model` (`.venv\Scripts\python` on Windows). It checks the zip against `worker/models.sha256` and does nothing when the right zip is already there.
+
 **One worker process per machine** (`docs/ARCHITECTURE.md` §5). Leave CPU for Express, Postgres connections and nginx. Do not run two.
 
 Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch runtime (D-92).

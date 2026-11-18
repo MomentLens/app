@@ -215,6 +215,13 @@ WORKER_READY=0
 if [ -f "$APP_DIR/worker/requirements.txt" ]; then
   as_app "$APP_DIR/worker/.venv/bin/pip" install --no-deps --requirement "$APP_DIR/worker/requirements.txt"
   [ -f "$APP_DIR/worker/app/main.py" ] && WORKER_READY=1
+  # buffalo_l into $APP_HOME/.insightface/models, checked against worker/models.sha256. The
+  # worker never downloads it and exits at start without it (D-169).
+  if [ -f "$APP_DIR/worker/app/ai/fetch_model.py" ]; then
+    log "Fetching the InsightFace model"
+    as_app env -C "$APP_DIR/worker" .venv/bin/python -m app.ai.fetch_model ||
+      die "buffalo_l could not be fetched or failed its hash check. The lines above say why. Run this script again once that is fixed."
+  fi
 else
   note "worker/requirements.txt does not exist yet, so no worker dependencies were installed."
 fi

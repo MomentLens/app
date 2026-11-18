@@ -112,6 +112,14 @@ else
   log "Updating the worker"
   [ -x "$APP_DIR/worker/.venv/bin/pip" ] || die "worker/.venv is missing. Run scripts/provision.sh."
   as_app "$APP_DIR/worker/.venv/bin/pip" install --no-deps --requirement "$APP_DIR/worker/requirements.txt"
+  # The worker never downloads its model, and exits at start without it (D-169). The fetch
+  # skips a zip already there with the hash in worker/models.sha256, so this costs a hash check
+  # on every deploy after the first. An older branch has no fetch, and no model to load.
+  if [ -f "$APP_DIR/worker/app/ai/fetch_model.py" ]; then
+    log "Checking the InsightFace model"
+    as_app env -C "$APP_DIR/worker" .venv/bin/python -m app.ai.fetch_model ||
+      die "buffalo_l could not be fetched or failed its hash check, so the worker was not restarted. The lines above say why."
+  fi
   systemctl enable momentlens-worker
   systemctl restart momentlens-worker
   WORKER_RESTARTED=1

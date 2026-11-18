@@ -17,6 +17,7 @@ runuser() {
     *'rev-parse --abbrev-ref HEAD'*) printf 'main\\n' ;;
     *'rev-parse HEAD'*) printf 'same-head\\n' ;;
     *'/pip install '*) printf 'worker-install\\n' >> "$AUDIT_LOG"; builtin [ "\${FAIL_WORKER:-0}" != 1 ] ;;
+    *'app.ai.fetch_model'*) printf 'model-fetch\\n' >> "$AUDIT_LOG"; builtin [ "\${FAIL_MODEL:-0}" != 1 ] ;;
     *) return 0 ;;
   esac
 }
@@ -50,7 +51,7 @@ test('retries the worker at the same Git head after a failed deploy or --skip-wo
     assert.equal(run().status, 0);
     assert.match(
       readFileSync(log, 'utf8'),
-      /worker-install\nenable momentlens-worker\nrestart momentlens-worker/,
+      /worker-install\nmodel-fetch\nenable momentlens-worker\nrestart momentlens-worker/,
     );
     const before = readFileSync(log, 'utf8').match(/worker-install/g)?.length;
     assert.equal(run(['--skip-worker']).status, 0);
@@ -81,6 +82,23 @@ test('fails when the restarted worker never answers /health', () => {
       env: { ...process.env, AUDIT_LOG: join(dir, 'calls'), WORKER_HEALTH: '000' },
     });
     assert.equal(skipped.status, 0, skipped.stderr);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('leaves the worker running as it was when the model fetch fails', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'momentlens-deploy-'));
+  const log = join(dir, 'calls');
+  try {
+    const failed = spawnSync('bash', ['-c', harness, 'audit', script], {
+      encoding: 'utf8',
+      env: { ...process.env, AUDIT_LOG: log, FAIL_WORKER: '0', FAIL_MODEL: '1' },
+    });
+    assert.equal(failed.status, 1);
+    assert.match(failed.stderr, /buffalo_l could not be fetched/);
+    assert.match(readFileSync(log, 'utf8'), /worker-install\nmodel-fetch\n/);
+    assert.doesNotMatch(readFileSync(log, 'utf8'), /momentlens-worker/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
