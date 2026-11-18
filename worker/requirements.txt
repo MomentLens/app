@@ -4,12 +4,12 @@
 # transitive dependency is pinned below, with platform markers for Windows.
 fastapi==0.141.1
 uvicorn==0.53.0
-# D-123. psycopg is used synchronously over DATABASE_URL, the session pooler. Both the wrapper
+# D-123. psycopg is used synchronously over DATABASE_URL, a session connection. Both the wrapper
 # and the binary wheel are listed because --no-deps does not expand extras.
 psycopg==3.3.6
 psycopg-binary==3.3.6 ; implementation_name != 'pypy'
 boto3==1.43.107
-# OpenCV stays on 4.x until S-18 checks InsightFace against 5.0. numpy is OpenCV's own
+# OpenCV stays on 4.x: S-18 measured 5.0 and found no gain (D-169). numpy is OpenCV's own
 # dependency, pinned because the worker imports it to hand OpenCV the upload's bytes.
 opencv-python-headless==4.14.0.94
 numpy==2.5.3

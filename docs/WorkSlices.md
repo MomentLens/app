@@ -174,7 +174,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 | ID | Slice | Spec | Owner | Depends on |
 |---|---|---|---|---|
-| S-18 | InsightFace model resident at startup, job dispatch for `face_process` and `reprocess` | HB §6, HB §14.5 Phase 5, D-40, arch §5 | U | S-18a, P0-5 |
+| S-18 | InsightFace model resident at startup, warmed up before `/health` answers 200, read by the jobs S-20, S-21 and S-25 add. S-18a built job dispatch, so S-18 registers no job. The model files come from deploy, never a download at startup (D-169) | HB §6, HB §14.5 Phase 5, D-40, arch §5 | U | S-18a, P0-5 |
 | S-19 | **Blur regions**: drawing a rectangle on a photo (Guests and the Admin), the endpoints and `manual_blur_region`, removal by the drawer or the Admin. Build this before S-20 | §4.11.4.4, D-83, HB §14.5, arch:manual_blur_region | B | S-13 |
 | S-19a | `blur_region` job: regenerate a photo's files and thumbnails with every stored blur region, at new versioned keys | §4.11.4.4, D-83, D-60, D-69, arch §5, arch:manual_blur_region | U | S-18a, S-19 |
 | S-20 | Face detection, embeddings, matches stored on `face` rows, reference photo upload per event from Event Preferences (up to 5 per event, one face each, rejected otherwise), the `face_reference` migration with `event_id`, `reference_process` job | §4.11.2, §4.11.3, §4.2, D-74, D-29, D-91, arch §5, arch §6, arch:face_reference, arch:face, D-141 | U | S-18 |

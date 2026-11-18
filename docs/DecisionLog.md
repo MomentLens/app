@@ -1078,6 +1078,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-130).** The worker no longer processes a soft-deleted photo. A message naming one is deleted as done, and `media_delete` removes its files.
 **Amended (see D-149).** The SQL test runs in one CI job on every pull request, which runs it when `worker/`, `supabase/`, CI's workflow or `scripts/verify.mjs` changed and passes at once otherwise. That job is a required check on `main`, so a pgmq call or a media update the real database refuses blocks the merge.
 **Amended (see D-163).** `DATABASE_URL` is Postgres on the server's loopback, `127.0.0.1:5432`, which `infra/supabase/setup.sh` writes. It is still a session connection, as the lock needs. A laptop's worker reaches it through the SSH tunnel in hb §13.4. GitHub's runners cannot reach it, so where the SQL test's CI job runs is Open.
+**Amended (see D-169).** OpenCV stays on 4.x for the demo. S-18 measured 5.0 against it on 2026-11-18 and found no gain.
 
 ### D-124: Each platform draws the controls, and the brand stays in the content
 **Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
@@ -1760,6 +1761,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Rive's runtime, which needs a native package, a Rive account to export the file and a paid plan to export without Rive's own splash. react-native-svg, which Android draws into a bitmap, so a 15 times zoom blurs and a full-screen redraw every frame allocates a new bitmap each time.
 **Cost.** One native rebuild on all three machines for the larger splash image. The overlay's first frame depends on `splash-icon.png` and `imageWidth`, so a change to either changes `SPLASH_IMAGE_WIDTH` in `features/launch/iris-timeline.ts`.
 **Reopen if.** The animation drops frames on the judges' Android phones (D-61), or testers find the extra second at launch slow.
+
+### D-169: S-18 loads a model that deploy fetched, and OpenCV stays on 4.x
+**Decision.** Amends D-123. Ukasha ruled on these on 2026-11-18, at S-18's read-back.
+- `scripts/provision.sh` and `scripts/deploy.sh` fetch `buffalo_l.zip` from InsightFace's GitHub release (`deepinsight/insightface`, tag `model-zoo`), check it against the SHA-256 committed in `worker/`, and unpack it into `.insightface/models/buffalo_l` under the home of the user that runs the worker. A file already there with the right hash is not fetched again. A developer runs the same fetch once on their own machine.
+- The worker loads `det_10g.onnx` and `w600k_r50.onnx` from that folder and never downloads. If either file is missing, it logs which and exits before the loop starts, and `/health` never answers 200.
+- The worker loads the model and runs one inference on a blank image before `/health` answers 200, so the first real job pays no warm-up.
+- S-18 registers no job. S-18a built dispatch, and a job with no handler is archived on its first try (D-123), which is correct until S-20, S-21 and S-25 add theirs.
+- OpenCV stays on `opencv-python-headless` 4.14. On the M1, on the 17 photos in `worker/bench/photos.sha256`, 4.14.0.94 and 5.0.0.93 were run twice each with InsightFace on 2 threads. OpenCV's own work (decode, blur, JPEG and WebP encode) took 2.4 s on both versions, about 6% of the total. Detection and recognition took 32.7 to 38.6 s, and the two runs of one version differed more than the two versions did. Both found the same 327 faces with identical boxes, and the lowest cosine similarity between one face's two embeddings was 0.99938.
+**Why.** InsightFace downloads a missing model at startup on its own, about 280 MB from GitHub. On the server that download would race the 60 s that `deploy.sh` waits for `/health`, and after a failure systemd would restart the worker and download again every 10 s. OpenCV 5 gives the worker no speed it can measure, and a version three machines share is a change with a cost.
+**Rejected.** InsightFace's own download at first start. OpenCV 5.1.0.95, released on 2026-11-17 and too new to pin.
+**Cost.** About 30 lines of shell and a hash file. A developer whose machine has no model gets a clear error on starting the worker, until they run the fetch. Embeddings from 5.0 differ from 4.14's in the fourth decimal place, so a move to 5 after S-26 calibrates the thresholds needs a recheck of them.
+**Reopen if.** InsightFace moves `buffalo_l` off that release, or a profile on the server shows OpenCV taking more than 10% of a job.
 
 ## Open items that are not decisions yet
 
