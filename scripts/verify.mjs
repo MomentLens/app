@@ -141,12 +141,11 @@ const changed = () => {
   ];
   return (changedCache = { files: [...new Set([...committed, ...local])] });
 };
-const SELF_PATHS = ['scripts/verify.mjs', '.github/workflows/ci.yml'];
 const touches = (prefixes) => {
   const c = changed();
   if (c.error) return { error: c.error };
   return {
-    hit: c.files.some((f) => prefixes.some((p) => f.startsWith(p)) || SELF_PATHS.includes(f)),
+    hit: c.files.some((f) => prefixes.some((p) => f.startsWith(p))),
   };
 };
 // A check that needs the dev project, gated on its paths. Returns a reason to skip, or null.
