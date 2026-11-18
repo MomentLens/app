@@ -74,7 +74,7 @@ jobs:
           cache: pip
           cache-dependency-path: worker/requirements*.txt
 
-      - run: pip install --requirement requirements-dev.txt
+      - run: pip install --no-deps --requirement requirements-dev.txt
         working-directory: worker
 
       # tests/test_dev_sql.py skips here, because this job has no DATABASE_URL.
@@ -123,7 +123,7 @@ jobs:
           cache-dependency-path: worker/requirements*.txt
 
       - if: steps.plan.outputs.worker_sql == 'true'
-        run: pip install --requirement requirements-dev.txt
+        run: pip install --no-deps --requirement requirements-dev.txt
         working-directory: worker
 
       # test:rls sets REQUIRE_SUPABASE and --dev-sql fails without DATABASE_URL, so a missing

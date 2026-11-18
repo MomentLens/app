@@ -110,7 +110,7 @@ else
   # A failed deploy may already have advanced HEAD without restarting the worker.
   log "Updating the worker"
   [ -x "$APP_DIR/worker/.venv/bin/pip" ] || die "worker/.venv is missing. Run scripts/provision.sh."
-  as_app "$APP_DIR/worker/.venv/bin/pip" install --requirement "$APP_DIR/worker/requirements.txt"
+  as_app "$APP_DIR/worker/.venv/bin/pip" install --no-deps --requirement "$APP_DIR/worker/requirements.txt"
   systemctl enable momentlens-worker
   systemctl restart momentlens-worker
 fi
