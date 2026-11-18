@@ -15,8 +15,10 @@ import hashlib
 import logging
 import shutil
 import sys
+import time
 import urllib.request
 import zipfile
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 
@@ -24,6 +26,9 @@ from app.ai.model import MODEL_FILES, missing_files, model_dir
 
 URL = "https://github.com/deepinsight/insightface/releases/download/model-zoo/buffalo_l.zip"
 ZIP_NAME = "buffalo_l.zip"
+# The whole download, about 280 MB. urlopen's own timeout covers one read, so without this a
+# connection that trickles bytes would hold the deploy with no end.
+DOWNLOAD_LIMIT_S = 600
 HASH_FILE = Path(__file__).resolve().parents[2] / "models.sha256"
 
 log = logging.getLogger("momentlens.worker.fetch_model")
@@ -54,16 +59,47 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def download(url: str, destination: Path) -> None:
+def crc32(path: Path) -> int:
+    value = 0
+    with path.open("rb") as file:
+        for block in iter(lambda: file.read(1 << 20), b""):
+            value = zlib.crc32(block, value)
+    return value
+
+
+def download(url: str, destination: Path, limit: float = DOWNLOAD_LIMIT_S) -> None:
+    deadline = time.monotonic() + limit
     # GitHub answers with a redirect to its file host, which urllib follows.
     with urllib.request.urlopen(url, timeout=60) as response, destination.open("wb") as file:
-        shutil.copyfileobj(response, file, 1 << 20)
+        while block := response.read(1 << 20):
+            file.write(block)
+            if time.monotonic() > deadline:
+                raise FetchError(f"{url} took more than {limit:.0f} s to download")
+
+
+def stale_files(zip_path: Path, folder: Path) -> list[str]:
+    """The model files in `folder` that are missing or differ from the zip's copy in size or
+    CRC-32. A truncated or corrupt file is unpacked again rather than reported in place."""
+    stale = []
+    with zipfile.ZipFile(zip_path) as archive:
+        for name in MODEL_FILES:
+            info = archive.getinfo(name)
+            path = folder / name
+            if (
+                not path.is_file()
+                or path.stat().st_size != info.file_size
+                or crc32(path) != info.CRC
+            ):
+                stale.append(name)
+    return stale
 
 
 def _unpack(zip_path: Path, folder: Path) -> None:
-    """Unpacks into a sibling folder, then swaps it in, so an interrupted unpack never leaves
-    a folder the worker would load half of."""
+    """Unpacks into a sibling folder, then swaps it in by two renames, so an interrupted unpack
+    never leaves a folder the worker would load half of. A rename that fails raises, rather than
+    leaving the old folder half deleted."""
     staging = folder.with_name(folder.name + ".unpacking")
+    old = folder.with_name(folder.name + ".old")
     shutil.rmtree(staging, ignore_errors=True)
     with zipfile.ZipFile(zip_path) as archive:
         archive.extractall(staging)
@@ -71,8 +107,11 @@ def _unpack(zip_path: Path, folder: Path) -> None:
     if missing:
         shutil.rmtree(staging)
         raise FetchError(f"{zip_path} has no {' or '.join(missing)}")
-    shutil.rmtree(folder, ignore_errors=True)
+    shutil.rmtree(old, ignore_errors=True)
+    if folder.exists():
+        folder.rename(old)
     staging.rename(folder)
+    shutil.rmtree(old, ignore_errors=True)
 
 
 def fetch(root: Path, expected: str, download: Callable[[str, Path], None] = download) -> str:
@@ -82,7 +121,7 @@ def fetch(root: Path, expected: str, download: Callable[[str, Path], None] = dow
     folder = root / zip_path.stem
 
     if zip_path.is_file() and sha256(zip_path) == expected:
-        if not missing_files(folder):
+        if not stale_files(zip_path, folder):
             return "present"
         _unpack(zip_path, folder)
         return "unpacked"
