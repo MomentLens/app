@@ -96,6 +96,7 @@ systemctl restart momentlens-api
 # --- Worker ---------------------------------------------------------------------------
 
 WORKER_READY=0
+WORKER_RESTARTED=0
 if [ -f "$APP_DIR/worker/requirements.txt" ] &&
   [ -f "$APP_DIR/worker/app/main.py" ] &&
   [ -f /etc/systemd/system/momentlens-worker.service ]; then
@@ -113,6 +114,7 @@ else
   as_app "$APP_DIR/worker/.venv/bin/pip" install --no-deps --requirement "$APP_DIR/worker/requirements.txt"
   systemctl enable momentlens-worker
   systemctl restart momentlens-worker
+  WORKER_RESTARTED=1
 fi
 
 # --- Check ----------------------------------------------------------------------------
@@ -120,16 +122,33 @@ fi
 API_PORT="$( (sed -n 's/^PORT=\([0-9][0-9]*\)[[:space:]]*$/\1/p' "$ENV_FILE" 2>/dev/null || true) | tail -n 1)"
 API_PORT="${API_PORT:-3000}" # apps/api falls back to 3000 when PORT is empty
 
+# /health reads one row from Postgres, so a 200 means the API is up and reaches its database.
 log "Checking the API on port $API_PORT"
 code="000"
 for _ in $(seq 1 15); do
-  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$API_PORT/" || true)"
-  [ "$code" != "000" ] && break
+  code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$API_PORT/health" || true)"
+  [ "$code" = "200" ] && break
   sleep 1
 done
-[ "$code" != "000" ] ||
-  die "The API is not answering on port $API_PORT. Read its log with: journalctl -u momentlens-api -n 50"
-note "The API answered with HTTP $code."
+[ "$code" = "200" ] ||
+  die "The API's /health answered HTTP $code, not 200. Read its log with: journalctl -u momentlens-api -n 50"
+note "The API's /health answered HTTP 200."
+
+# systemd restarts a worker that crashes on start, so the unit can read active while every start
+# fails, as it did on 2026-11-18 when GUI OpenCV could not load libGL. /health on 8000 answers only
+# once the worker has imported everything and started its loop (worker/app/main.py).
+if [ "$WORKER_RESTARTED" -eq 1 ]; then
+  log "Checking the worker on port 8000"
+  code="000"
+  for _ in $(seq 1 60); do
+    code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || true)"
+    [ "$code" = "200" ] && break
+    sleep 1
+  done
+  [ "$code" = "200" ] ||
+    die "The worker's /health did not answer within 60 s. Read its log with: journalctl -u momentlens-worker -n 50"
+  note "The worker's /health answered HTTP 200."
+fi
 
 log "Done"
 note "Logs: journalctl -u momentlens-api -f    and    journalctl -u momentlens-worker -f"
