@@ -213,7 +213,7 @@ if [ ! -x "$APP_DIR/worker/.venv/bin/python" ]; then
 fi
 WORKER_READY=0
 if [ -f "$APP_DIR/worker/requirements.txt" ]; then
-  as_app "$APP_DIR/worker/.venv/bin/pip" install --requirement "$APP_DIR/worker/requirements.txt"
+  as_app "$APP_DIR/worker/.venv/bin/pip" install --no-deps --requirement "$APP_DIR/worker/requirements.txt"
   [ -f "$APP_DIR/worker/app/main.py" ] && WORKER_READY=1
 else
   note "worker/requirements.txt does not exist yet, so no worker dependencies were installed."
