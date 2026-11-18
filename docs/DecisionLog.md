@@ -1100,6 +1100,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** Manrope for UI text, which sat beside the system font in every native bar and sheet. iOS controls drawn on Android, which read as foreign there. Darkening `accent` itself, which dulls the buttons and the tab tint, and both already pass.
 **Cost.** Every screen built so far changes: the auth screens, Events, Profile, the wizard, the Schedule and its sheets. A form control with no universal `@expo/ui` component needs one component per platform. The icon, the splash and the Android theme take one native rebuild on all three machines.
 **Reopen if.** Testers describe the app as plain or generic. Then the content side carries more of the brand, not the controls.
+**Amended (see D-168).** The splash still shows the mark on `#FAF6EF`, or `#17140F` in dark mode, now 128 points across, and it hands over to the Iris launch animation, which opens onto the app.
 
 ### D-125: Native headers, and the Event header collapses
 **Decision.** Amends D-112 and D-119, and replaces hb §16.5's custom Event header. Ukasha ruled on these on 2026-10-03, from the critique in D-124.
@@ -1747,6 +1748,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** A self-hosted GitHub runner on the VM, which runs only while the VM is up, about 2 hours a day, spends its burst credits on CI, and needs its own hardening. Adding the secrets and opening Postgres to GitHub's address ranges, which puts the database on the internet. Dropping the job, which needs the ruleset changed and leaves no reminder on the PR.
 **Cost.** CI no longer catches an RLS regression by itself. A PR whose developer skips the tunnel run merges untested, and only the readiness record shows it. A PR outside a slice has no readiness record, so its description carries the run.
 **Reopen if.** The server runs all day, which makes a self-hosted runner cheap, or an RLS regression reaches `main` because a run was skipped.
+
+### D-168: The launch plays the Iris, and the app loads under it
+**Decision.** Amends D-124's splash. Ukasha chose this on 2026-11-17, from thirty directions in `designs/splash` (direction 21).
+- The native splash shows the aperture mark 128 points across (`imageWidth` 147 in `app.json`). On the first frame JavaScript draws, `features/launch/launch-iris.tsx` puts up the same picture and the native splash goes, with no fade.
+- The shutter closes and opens fully into the ring while the lens turns, and the lens zooms until its opening clears the screen, showing the first screen underneath. It takes about 1.0 s and blocks touches while it plays.
+- The fonts load while it plays, and the app renders under it once they settle. The shutter waits shut if the app has not drawn by then. The root layout no longer holds the native splash for the fonts.
+- It is plain views moved by transforms on the UI thread with Reanimated: no new package, nothing on the JavaScript thread per frame. Colours come from the `accent` and `background` tokens, so dark mode matches the dark native splash.
+- With reduce motion on, the mark fades out over 250 ms instead.
+**Why.** The native splash already shows the still mark while JavaScript starts, so an animation that begins on that exact frame hides the handover, and the time it plays is time the app spends loading anyway.
+**Rejected.** Rive's runtime, which needs a native package, a Rive account to export the file and a paid plan to export without Rive's own splash. react-native-svg, which Android draws into a bitmap, so a 15 times zoom blurs and a full-screen redraw every frame allocates a new bitmap each time.
+**Cost.** One native rebuild on all three machines for the larger splash image. The overlay's first frame depends on `splash-icon.png` and `imageWidth`, so a change to either changes `SPLASH_IMAGE_WIDTH` in `features/launch/iris-timeline.ts`.
+**Reopen if.** The animation drops frames on the judges' Android phones (D-61), or testers find the extra second at launch slow.
 
 ## Open items that are not decisions yet
 

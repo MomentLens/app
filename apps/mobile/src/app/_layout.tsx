@@ -7,12 +7,13 @@ import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
-import { useColorScheme } from 'react-native';
+import { useEffect, useState } from 'react';
+import { useColorScheme, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { startSessionSync } from '@/features/auth/session';
 import { useConsentGate } from '@/features/consent/use-consent-gate';
+import { LaunchIris } from '@/features/launch/launch-iris';
 import { initializeQueue, startUploads } from '@/features/upload-queue/queue';
 import { persistOptions, queryClient } from '@/lib/query-client';
 import { useAuthStore } from '@/stores/auth';
@@ -62,32 +63,45 @@ function RootLayout() {
     }
   }, [fontError]);
 
-  // The native splash, the aperture on cream (D-124), stays up until the fonts settle, so the first
-  // frame already has its titles in Fraunces. A failed load still hides it and renders the app with
-  // system fonts, rather than holding the splash forever.
+  // The native splash, the aperture on cream (D-124), hands over to the launch animation on the
+  // first frame JavaScript draws (D-168). The fonts load while it plays, and the app renders under
+  // it once they settle, so the first frame anyone sees already has its titles in Fraunces. A
+  // failed load still renders the app, with system fonts, rather than holding the launch forever.
   const fontsSettled = fontsLoaded || fontError !== null;
+  // The animation opens onto the app a frame after the app first renders, so the first screen has
+  // been drawn before it shows through.
+  const [appDrawn, setAppDrawn] = useState(false);
+  const [launchDone, setLaunchDone] = useState(false);
   useEffect(() => {
-    if (fontsSettled) {
-      void SplashScreen.hideAsync();
-    }
+    if (!fontsSettled) return;
+    const frame = requestAnimationFrame(() => setAppDrawn(true));
+    return () => cancelAnimationFrame(frame);
   }, [fontsSettled]);
-
-  if (!fontsSettled) {
-    return null;
-  }
+  // The animation unmounts itself when it ends. This is a backstop, so that an animation that
+  // never reports its end cannot keep blocking touches.
+  useEffect(() => {
+    if (!appDrawn || launchDone) return;
+    const timer = setTimeout(() => setLaunchDone(true), 4000);
+    return () => clearTimeout(timer);
+  }, [appDrawn, launchDone]);
 
   // The provider restores the queries saved for an offline start before any query fetches (D-118).
   return (
     // Gesture Handler's root, which the Schedule's swipe action needs (D-127).
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          {/* Dark icons on the light palette and light on the dark one. Without it Android kept the
-            template theme's white icons, which vanished on the cream background. */}
-          <StatusBar style="auto" />
-          <RootStack />
-        </ThemeProvider>
-      </PersistQueryClientProvider>
+      {/* Dark icons on the light palette and light on the dark one, from the launch on. Without it
+        Android kept the template theme's white icons, which vanished on the cream background. */}
+      <StatusBar style="auto" />
+      {fontsSettled ? (
+        <PersistQueryClientProvider client={queryClient} persistOptions={persistOptions}>
+          <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+            <RootStack />
+          </ThemeProvider>
+        </PersistQueryClientProvider>
+      ) : (
+        <View style={{ flex: 1 }} />
+      )}
+      {launchDone ? null : <LaunchIris ready={appDrawn} onDone={() => setLaunchDone(true)} />}
     </GestureHandlerRootView>
   );
 }
