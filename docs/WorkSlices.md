@@ -38,7 +38,7 @@ A slice is not done when the screen renders. It is done when all of these are tr
 - [ ] **Dark mode.** Dark mode uses tokens, no hardcoded hex
 - [ ] **Architecture.** `docs/ARCHITECTURE.md` updated in the same PR if the slice added a table, a column, an R2 key, or a job type, written by the done stage as its own commit and named in that PR for Ukasha's review (D-75, D-107)
 - [ ] **PR descriptions.** Every PR in the stack names the human-read surfaces it touches, or says none, and links to the slice's issue
-- [ ] **Verification.** `scripts/verify.mjs` passes across the whole stack after the last edit, and CI is green on that head (D-149)
+- [ ] **Verification.** `scripts/verify.mjs` passes across the whole stack after the last edit, and CI is green on that head. Where the stack touches `apps/api/`, `supabase/` or `worker/`, `rls` and `worker sql` ran through the SSH tunnel and passed, because CI cannot run them (D-149, D-167)
 
 **Ready to merge**, cleanup:
 
