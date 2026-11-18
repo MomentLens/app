@@ -22,6 +22,7 @@ import uvicorn
 from fastapi import FastAPI, Response
 
 from app import config
+from app.ai import model
 from app.db import Store
 from app.jobs import REGISTRY, run_setup_hooks
 from app.loop import Worker
@@ -44,7 +45,7 @@ def create_app(loop_running: threading.Event) -> FastAPI:
     @app.get("/health")
     def health(response: Response) -> dict[str, str]:
         """200 while the queue loop runs, waiting for the lock included. 503 before it starts,
-        while the jobs' setup hooks run, and once it stopped."""
+        while the model loads and the jobs' setup hooks run, and once it stopped."""
         if loop_running.is_set():
             return {"status": "ok"}
         response.status_code = 503
@@ -115,11 +116,26 @@ def main() -> int:
         log.error("cannot start: %s", error)
         return 1
 
+    # /health answers 503 through the load, so deploy.sh's 200 means the model is warm (D-169).
+    try:
+        model.load()
+    except model.ModelMissingError as error:
+        log.error("cannot start: %s", error)
+        return 1
+    except Exception:
+        log.exception("cannot start: the InsightFace model did not load")
+        return 1
+
     try:
         run_setup_hooks()
     except Exception:
         log.exception("cannot start: a job's setup hook failed")
         return 1
+    # The signal handler can only set `stop` while the load holds the main thread, so a SIGTERM
+    # sent during it is honoured here, before the loop reads anything.
+    if stop.is_set():
+        log.info("worker stopped before its loop started")
+        return 0
     store = Store(settings.database_url)
     worker = Worker(store, Storage.from_settings(settings), REGISTRY, stop)
 
