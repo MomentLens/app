@@ -1,10 +1,13 @@
-# Exactly pinned, never ranges (worker/AGENTS.md). scripts/provision.sh installs these
-# into worker/.venv, and scripts/deploy.sh reinstalls them when anything under worker/
-# changes. P0-5 adds the InsightFace stack here, pinned the same way.
+# Exactly pinned, never ranges (worker/AGENTS.md). Installed with --no-deps in
+# scripts/provision.sh, scripts/deploy.sh, CI and locally so insightface never pulls GUI
+# opencv-python (which needs libGL.so.1) over opencv-python-headless. Every direct and
+# transitive dependency is pinned below, with platform markers for Windows.
 fastapi==0.141.1
 uvicorn==0.53.0
-# D-123. psycopg is used synchronously over DATABASE_URL, the session pooler.
-psycopg[binary]==3.3.6
+# D-123. psycopg is used synchronously over DATABASE_URL, the session pooler. Both the wrapper
+# and the binary wheel are listed because --no-deps does not expand extras.
+psycopg==3.3.6
+psycopg-binary==3.3.6 ; implementation_name != 'pypy'
 boto3==1.43.107
 # OpenCV stays on 4.x until S-18 checks InsightFace against 5.0. numpy is OpenCV's own
 # dependency, pinned because the worker imports it to hand OpenCV the upload's bytes.
@@ -12,3 +15,42 @@ opencv-python-headless==4.14.0.94
 numpy==2.5.3
 pydantic==2.13.5
 sentry-sdk==2.71.0
+# P0-5: InsightFace buffalo_l detection and recognition on ONNX Runtime CPU (D-78, D-92, D-165).
+insightface==2.1
+onnxruntime==1.32.0
+# Transitive dependencies of the packages above, pinned so --no-deps is complete on Linux,
+# macOS and Windows (D-162).
+annotated-doc==0.0.6
+annotated-types==0.8.0
+anyio==4.16.0
+botocore==1.43.127
+certifi==2026.10.23
+charset-normalizer==3.5.2
+click==8.5.1
+colorama==0.4.6 ; sys_platform == 'win32'
+flatbuffers==25.12.19
+h11==0.16.0
+idna==3.20
+imageio==2.38.2
+jmespath==1.1.0
+lazy-loader==0.6
+ml-dtypes==0.7.0
+networkx==3.7
+onnx==1.23.2
+packaging==26.3
+pillow==13.0.0
+protobuf==7.36.2
+pydantic-core==2.46.5
+python-dateutil==2.9.0.post0
+requests==2.34.2
+s3transfer==0.19.3
+scikit-image==0.26.0
+scipy==1.18.1
+six==1.17.0
+starlette==1.10.0
+tifffile==2026.11.16
+tqdm==4.70.1
+typing-extensions==4.16.0
+typing-inspection==0.4.5
+tzdata==2026.6 ; sys_platform == 'win32'
+urllib3==2.8.0
