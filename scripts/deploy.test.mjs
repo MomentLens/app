@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -16,6 +16,8 @@ runuser() {
   case "$*" in
     *'rev-parse --abbrev-ref HEAD'*) printf 'main\\n' ;;
     *'rev-parse HEAD'*) printf 'same-head\\n' ;;
+    *'hash-object --no-filters --stdin'*) cat > /dev/null; printf 'running-copy\\n' ;;
+    *'hash-object --no-filters scripts/deploy.sh'*) printf '%s\\n' "\${PULLED_HASH:-running-copy}" ;;
     *'/pip install '*) printf 'worker-install\\n' >> "$AUDIT_LOG"; builtin [ "\${FAIL_WORKER:-0}" != 1 ] ;;
     *'app.ai.fetch_model'*) printf 'model-fetch\\n' >> "$AUDIT_LOG"; builtin [ "\${FAIL_MODEL:-0}" != 1 ] ;;
     *) return 0 ;;
@@ -99,6 +101,48 @@ test('leaves the worker running as it was when the model fetch fails', () => {
     assert.match(failed.stderr, /buffalo_l could not be fetched/);
     assert.match(readFileSync(log, 'utf8'), /worker-install\nmodel-fetch\n/);
     assert.doesNotMatch(readFileSync(log, 'utf8'), /momentlens-worker/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('re-runs a deploy.sh that the pull changed, once, and leaves an unchanged one alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'momentlens-deploy-'));
+  const log = join(dir, 'calls');
+  // exec looks bash up on PATH, so this stand-in catches the re-run. It logs the call, then runs
+  // the harness again with this checkout's deploy.sh in place of /srv/momentlens/scripts/deploy.sh.
+  const stub = join(dir, 'bash');
+  writeFileSync(
+    stub,
+    '#!/bin/sh\nprintf \'reexec %s BEFORE=%s\\n\' "$*" "$MOMENTLENS_DEPLOY_BEFORE" >> "$AUDIT_LOG"\n' +
+      'shift\nexec /bin/bash -c "$HARNESS" audit "$DEPLOY_SCRIPT" "$@"\n',
+  );
+  chmodSync(stub, 0o755);
+  const run = (env) =>
+    spawnSync('/bin/bash', ['-c', harness, 'audit', script, '--skip-worker'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH}`,
+        AUDIT_LOG: log,
+        HARNESS: harness,
+        DEPLOY_SCRIPT: script,
+        ...env,
+      },
+    });
+  try {
+    const unchanged = run({});
+    assert.equal(unchanged.status, 0, unchanged.stderr);
+    assert.doesNotMatch(unchanged.stdout, /changed in the pull/);
+    assert.equal(readFileSync(log, 'utf8').match(/^reexec/gm), null);
+
+    const changed = run({ PULLED_HASH: 'pulled-copy' });
+    assert.equal(changed.status, 0, changed.stderr);
+    assert.equal(changed.stdout.match(/changed in the pull/g)?.length, 1);
+    assert.equal(changed.stdout.match(/==> Done/g)?.length, 1);
+    assert.deepEqual(readFileSync(log, 'utf8').match(/^reexec.*$/gm), [
+      'reexec /srv/momentlens/scripts/deploy.sh --skip-worker BEFORE=same-head',
+    ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

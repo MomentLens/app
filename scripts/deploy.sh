@@ -22,6 +22,9 @@ APP_DIR="/srv/momentlens"
 ENV_FILE="$APP_DIR/.env"
 BRANCH=""
 SKIP_WORKER=0
+ARGS=("$@") # kept for the re-run after the pull, since the loop below shifts them away
+# Read before any function runs: bash 3.2 can drop BASH_SOURCE of a sourced file after a call.
+SELF="${BASH_SOURCE[0]:-}"
 
 log() { printf '\n==> %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -69,14 +72,31 @@ git_app() { as_app git -C "$APP_DIR" "$@"; }
 [ -n "$BRANCH" ] || BRANCH="$(git_app rev-parse --abbrev-ref HEAD)"
 [ "$BRANCH" != "HEAD" ] || die "The checkout is on a detached HEAD. Pass --branch NAME."
 
+# Bash keeps reading the copy of this file it opened, and git checkout replaces the file rather than
+# writing into it. Without a re-run, a branch that changes this script runs its new steps only on
+# the second deploy: on 2026-11-18 the first deploy of feat/s-18-worker skipped fetching the face
+# model and the worker crash-looped. Hash the running copy now so the pull below can be compared.
+SELF_HASH=""
+if [ -n "$SELF" ] && [ -f "$SELF" ]; then
+  SELF_HASH="$(git_app hash-object --no-filters --stdin <"$SELF")"
+fi
+
 # --- Pull -----------------------------------------------------------------------------
 
 log "Deploying $BRANCH"
-BEFORE="$(git_app rev-parse HEAD)"
+# MOMENTLENS_DEPLOY_BEFORE is set only by the re-run below. It carries the first run's head, so
+# the note still shows what this deploy moved, and it stops a second re-run.
+BEFORE="${MOMENTLENS_DEPLOY_BEFORE:-$(git_app rev-parse HEAD)}"
 git_app fetch --prune origin
 git_app checkout "$BRANCH"
 git_app merge --ff-only "origin/$BRANCH"
 AFTER="$(git_app rev-parse HEAD)"
+if [ -z "${MOMENTLENS_DEPLOY_BEFORE:-}" ] &&
+  [ "$(git_app hash-object --no-filters scripts/deploy.sh)" != "$SELF_HASH" ]; then
+  note "scripts/deploy.sh changed in the pull. Running the new copy."
+  export MOMENTLENS_DEPLOY_BEFORE="$BEFORE"
+  exec bash "$APP_DIR/scripts/deploy.sh" ${ARGS[@]+"${ARGS[@]}"}
+fi
 if [ "$BEFORE" = "$AFTER" ]; then
   note "Already at $AFTER. Rebuilding anyway, in case an earlier run stopped half way."
 else
