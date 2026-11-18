@@ -112,6 +112,9 @@ for key in JWT_SECRET POSTGRES_PASSWORD ANON_KEY_ASYMMETRIC JWT_KEYS JWT_JWKS; d
   [ -n "$(get_env "$STACK_ENV" "$key")" ] || die "$key is empty in $STACK_ENV. Move the file aside and run again."
 done
 
+# Upstream's .env.example sets COMPOSE_FILE=docker-compose.yml, which stops Docker Compose from
+# loading docker-compose.override.yml unless it is listed there too.
+set_env "$STACK_ENV" COMPOSE_FILE "docker-compose.yml:docker-compose.override.yml"
 # Every setting here mirrors supabase/config.toml or the hosted project's Auth settings.
 set_env "$STACK_ENV" SUPABASE_PUBLIC_URL "https://$DOMAIN"
 # Email links are built from this, so it must be the public URL or reset links point nowhere.
