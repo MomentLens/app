@@ -588,11 +588,11 @@ ssh -N -L 15432:127.0.0.1:5432 momentlens
 Then, in the first terminal, with the password percent-encoded if it holds anything but letters and digits:
 
 ```bash
-pnpm exec supabase migration list --db-url "postgresql://postgres:<password>@127.0.0.1:15432/postgres"   # the Local and Remote columns show what is about to go up
-pnpm exec supabase db push --db-url "postgresql://postgres:<password>@127.0.0.1:15432/postgres"
+pnpm exec supabase migration list --db-url "postgresql://postgres:<password>@127.0.0.1:15432/postgres?sslmode=disable"   # the Local and Remote columns show what is about to go up
+pnpm exec supabase db push --db-url "postgresql://postgres:<password>@127.0.0.1:15432/postgres?sslmode=disable"
 ```
 
-`db push` sends every migration in your checkout that the dev project lacks, so push from the slice's own branch. If `migration list` shows a Remote migration with no Local file, someone pushed from a branch you do not have; the CLI refuses to push until you have it, so `git fetch` and ask the team which branch it came from. The password sits in your shell history after this, so keep that history on your own machine. Nobody pushes to the stable database before Phase 7 (D-76).
+`?sslmode=disable` is there because the server's Postgres offers no TLS, and the tunnel already encrypts the connection; without it the CLI refuses to connect. `db push` sends every migration in your checkout that the dev project lacks, so push from the slice's own branch. If `migration list` shows a Remote migration with no Local file, someone pushed from a branch you do not have; the CLI refuses to push until you have it, so `git fetch` and ask the team which branch it came from. The password sits in your shell history after this, so keep that history on your own machine. Nobody pushes to the stable database before Phase 7 (D-76).
 
 **Deploying the dev server.** After a stack that touched `apps/api/`, `worker/` or `supabase/migrations/` merges, whoever merged it deploys `main`:
 
