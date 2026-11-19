@@ -20,6 +20,11 @@ import {
   setEventCoverController,
   updateEventSettingsController,
 } from './controllers/events';
+import {
+  addBlurRegionController,
+  listBlurRegionsController,
+  removeBlurRegionController,
+} from './controllers/blur-regions';
 import { healthController } from './controllers/health';
 import {
   blockRequestController,
@@ -54,6 +59,7 @@ import { optionalAuth, requireAuth } from './middleware/auth';
 import type { VerifyToken } from './middleware/auth';
 import { errorHandler, notFound } from './middleware/errors';
 import { attendeesRouter } from './routes/attendees';
+import { blurRegionsRouter } from './routes/blur-regions';
 import { eventsRouter } from './routes/events';
 import { healthRouter } from './routes/health';
 import { invitesRouter } from './routes/invites';
@@ -64,6 +70,7 @@ import { subEventsRouter } from './routes/sub-events';
 import { venueQrsRouter } from './routes/venue-qrs';
 import type { AlbumStore } from './services/album';
 import type { AttendeeStore } from './services/attendees';
+import type { BlurRegionStore } from './services/blur-regions';
 import type { EventStore } from './services/events';
 import type { DatabaseCheck } from './services/health';
 import type { InviteManagementStore, InviteStore } from './services/invites';
@@ -92,6 +99,7 @@ export interface AppDeps {
   media: MediaStore;
   album: AlbumStore;
   mediaImages: MediaImagesStore;
+  blurRegions: BlurRegionStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
@@ -173,6 +181,13 @@ export function createApp(deps: AppDeps): Express {
       listAlbum: listAlbumController(deps.events, deps.album),
       listUploaders: listUploadersController(deps.events, deps.album),
       serveImages: mediaImagesController(serveImagesDeps),
+    }),
+  );
+  app.use(
+    blurRegionsRouter(auth, {
+      add: addBlurRegionController(deps.blurRegions),
+      list: listBlurRegionsController(deps.blurRegions),
+      remove: removeBlurRegionController(deps.blurRegions),
     }),
   );
   app.use(
