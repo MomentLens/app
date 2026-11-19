@@ -7,6 +7,7 @@ import { createApp } from '../../src/app';
 import type { AppDeps } from '../../src/app';
 import { createR2 } from '../../src/lib/r2';
 import type { AlbumStore } from '../../src/services/album';
+import type { BlurRegionStore } from '../../src/services/blur-regions';
 import type { EventStore } from '../../src/services/events';
 import type { InviteStore } from '../../src/services/invites';
 import type { MediaStore } from '../../src/services/media';
@@ -70,6 +71,14 @@ const noMediaImages: MediaImagesStore = {
   findForServing: () => Promise.reject(new Error('no media images store in this test')),
 };
 
+// A blur region store that knows no photos and fails any write.
+const noBlurRegions: BlurRegionStore = {
+  access: () => Promise.resolve({ outcome: 'not_found' }),
+  list: () => Promise.reject(new Error('no blur region store in this test')),
+  add: () => Promise.reject(new Error('no blur region store in this test')),
+  remove: () => Promise.reject(new Error('no blur region store in this test')),
+};
+
 // Dependencies for createApp that need no Supabase project. Each test overrides what it checks.
 // The token check rejects every token unless a test passes a real one, and R2 holds no objects.
 export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
@@ -106,6 +115,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     media: noMedia,
     album: noAlbum,
     mediaImages: noMediaImages,
+    blurRegions: noBlurRegions,
     presignGet: r2.presignGet,
     presignPut: r2.presignPut,
     objectExists: () => Promise.resolve(false),
