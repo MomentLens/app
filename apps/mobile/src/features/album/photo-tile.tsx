@@ -1,7 +1,7 @@
 import type { MediaImage } from '@momentlens/shared-types';
 import { Image } from 'expo-image';
 import { memo } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { presignedSource } from '@/lib/images';
 
@@ -9,19 +9,26 @@ interface PhotoTileProps {
   mediaId: string;
   image?: MediaImage;
   onError: (mediaId: string) => void;
+  onLongPress?: (mediaId: string) => void;
 }
 
 // 300px WebP thumbnail, center-cropped to square on purpose (spec §4.13, D-105).
 // Uniform square height allows FlashList v2 to compute content height without measuring (hb §16).
 // The app caches under cacheKey ({objectKey}#v{variant_version}), never url (root invariant 2, D-86).
 // A tile the serving endpoint left out never reaches here: sections.ts drops it (D-148).
-// Tapping opens nothing until S-22 (D-148).
-export const PhotoTile = memo(function PhotoTile({ mediaId, image, onError }: PhotoTileProps) {
+// Tapping opens nothing until S-22 (D-148). A development build opens Blur an Area on a long press
+// (S-19), which S-22 replaces with the photo view's Blur button.
+export const PhotoTile = memo(function PhotoTile({
+  mediaId,
+  image,
+  onError,
+  onLongPress,
+}: PhotoTileProps) {
   if (!image) {
     return <View className="aspect-square w-full bg-surfaceMuted" />;
   }
 
-  return (
+  const tile = (
     <View className="aspect-square w-full overflow-hidden bg-surfaceMuted">
       <Image
         source={presignedSource(image)}
@@ -33,5 +40,15 @@ export const PhotoTile = memo(function PhotoTile({ mediaId, image, onError }: Ph
         style={StyleSheet.absoluteFill}
       />
     </View>
+  );
+  if (!onLongPress) return tile;
+  return (
+    <Pressable
+      onLongPress={() => onLongPress(mediaId)}
+      accessibilityHint="Long press to blur an area"
+      accessibilityActions={[{ name: 'longpress', label: 'Blur an area' }]}
+      onAccessibilityAction={() => onLongPress(mediaId)}>
+      {tile}
+    </Pressable>
   );
 });

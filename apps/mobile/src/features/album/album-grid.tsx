@@ -25,6 +25,8 @@ interface AlbumGridProps {
   refreshing: boolean;
   onRefresh: () => void;
   onImageError: (mediaId: string) => void;
+  // A long press on a photo, given only in development builds until S-22's photo view (S-19).
+  onLongPressPhoto?: (mediaId: string) => void;
   ListEmptyComponent?: React.ReactElement;
 }
 
@@ -42,6 +44,7 @@ export function AlbumGrid({
   refreshing,
   onRefresh,
   onImageError,
+  onLongPressPhoto,
   ListEmptyComponent,
 }: AlbumGridProps) {
   const data = useMemo<GridItem[]>(
@@ -91,11 +94,16 @@ export function AlbumGrid({
 
       return (
         <View className="p-[0.5px]">
-          <PhotoTile mediaId={item.media.id} image={images[item.media.id]} onError={onImageError} />
+          <PhotoTile
+            mediaId={item.media.id}
+            image={images[item.media.id]}
+            onError={onImageError}
+            onLongPress={onLongPressPhoto}
+          />
         </View>
       );
     },
-    [images, header, ListEmptyComponent, onImageError],
+    [images, header, ListEmptyComponent, onImageError, onLongPressPhoto],
   );
 
   return (
