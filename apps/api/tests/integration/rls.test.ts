@@ -60,6 +60,7 @@ import { createServerClient } from '../../src/db/supabase';
 import { uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
 import { createAlbumStore, listAlbum } from '../../src/services/album';
+import { createBlurRegionStore } from '../../src/services/blur-regions';
 import {
   createEventParams,
   createEventStore,
@@ -6021,6 +6022,423 @@ if (project === null) {
           mehndiRows.filter((row) => row.uploader === g.id).map((row) => row.id),
         );
         expect(guestInMehndi.sectionCounts).toEqual([{ subEventId: mehndi, count: 10 }]);
+      });
+    });
+
+    describe('S-19 manual_blur_region, add_blur_region and remove_blur_region (D-83, D-170)', () => {
+      const subEvents = createSubEventStore(db);
+      const regions = createBlurRegionStore(db);
+      const RECT = { x: 0.1, y: 0.2, width: 0.3, height: 0.25 };
+
+      class Rollback extends Error {}
+
+      // An event with every role and status the card names, and one published photo.
+      async function fixture() {
+        const [a, g, g2, p, pen, blk, rem, out] = await Promise.all([
+          createNamedUser('Blur Admin'),
+          createNamedUser('Blur Guest'),
+          createNamedUser('Blur Other Guest'),
+          createNamedUser('Blur Photographer'),
+          createNamedUser('Blur Pending'),
+          createNamedUser('Blur Blocked'),
+          createNamedUser('Blur Removed'),
+          createNamedUser('Blur Outsider'),
+        ]);
+        const event = await createdEvent(a.id);
+        const other = await createdEvent(out.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, g2.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        await addMember(event.id, pen.id, 'guest', 'pending');
+        await addMember(event.id, blk.id, 'guest', 'blocked');
+        await addMember(event.id, rem.id, 'guest', 'removed');
+        const subEventId = ((await subEvents.schedule(event.id)) ?? [])[0]?.id;
+        if (subEventId === undefined) throw new Error('no sub-event found');
+        const photo = await seedPhoto(event.id, subEventId, a.id);
+        return { a, g, g2, p, pen, blk, rem, out, event, other, subEventId, photo };
+      }
+
+      // A finished, published photo by `uploader`, as the worker leaves one.
+      async function seedPhoto(
+        eventId: string,
+        subEventId: string,
+        uploader: string,
+        { processed = true } = {},
+      ) {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const result = await admin.from('media').insert({
+          id,
+          event_id: eventId,
+          sub_event_id: subEventId,
+          uploader_user_id: uploader,
+          uploader_role_at_upload: 'admin',
+          captured_at: now,
+          content_hash: randomBytes(32).toString('hex'),
+          size_bytes: 100,
+          upload_key: `${id}/upload.jpg`,
+          upload_thumb_key: `${id}/upload_thumb.webp`,
+          uploaded_at: now,
+          public_key: processed ? `${id}/public_v1.jpg` : null,
+          public_thumb_key: processed ? `${id}/public_thumb_v1.webp` : null,
+          variant_version: processed ? 1 : 0,
+          processed_at: processed ? now : null,
+        });
+        expect(result.error).toBeNull();
+        return id;
+      }
+
+      async function seedRegion(mediaId: string, drawnBy: string) {
+        const id = randomUUID();
+        const result = await admin
+          .from('manual_blur_region')
+          .insert({ id, media_id: mediaId, drawn_by_user_id: drawnBy, ...RECT });
+        expect(result.error).toBeNull();
+        return id;
+      }
+
+      async function regionIds(mediaId: string) {
+        const result = await admin.from('manual_blur_region').select('id').eq('media_id', mediaId);
+        expect(result.error).toBeNull();
+        return ((result.data ?? []) as { id: string }[]).map((r) => r.id).sort();
+      }
+
+      // blur_region messages for this photo, queued or archived. The dev server's worker has no
+      // blur_region job until S-19a, so it archives one on its first read (D-170).
+      async function messagesFor(sql: Sql | postgres.TransactionSql, mediaId: string) {
+        const rows = await sql`
+          select msg_id from pgmq.q_jobs
+          where message->>'job' = 'blur_region' and message->>'media_id' = ${mediaId}
+          union all
+          select msg_id from pgmq.a_jobs
+          where message->>'job' = 'blur_region' and message->>'media_id' = ${mediaId}`;
+        return rows.length;
+      }
+
+      // Deletes the photo's queued messages, so the dev worker does not archive them and report
+      // each to Sentry. One it has already read is archived anyway.
+      async function dropMessages(mediaId: string) {
+        await owner`
+          select pgmq.delete('jobs', msg_id) from pgmq.q_jobs
+          where message->>'job' = 'blur_region' and message->>'media_id' = ${mediaId}`;
+      }
+
+      // Runs `body` in a transaction on the owner login that always rolls back, so no message it
+      // sends reaches the worker. `api` calls a function as the API's role.
+      async function rolledBack(
+        body: (tx: postgres.TransactionSql, api: ApiCalls) => Promise<void>,
+      ): Promise<void> {
+        try {
+          await owner.begin(async (tx) => {
+            await body(tx, apiCalls(tx));
+            throw new Rollback();
+          });
+        } catch (error) {
+          if (!(error instanceof Rollback)) throw error;
+        }
+      }
+
+      interface ApiCalls {
+        add(
+          userId: string,
+          mediaId: string,
+          regionId?: string,
+          rect?: typeof RECT,
+        ): Promise<Record<string, unknown>>;
+        remove(userId: string, regionId: string): Promise<Record<string, unknown>>;
+      }
+
+      function apiCalls(tx: postgres.TransactionSql): ApiCalls {
+        const asApi = async (query: () => Promise<Record<string, unknown>[]>) => {
+          await tx`set local role service_role`;
+          try {
+            const [row, ...rest] = await query();
+            if (row === undefined || rest.length > 0) throw new Error('expected one row');
+            return row;
+          } finally {
+            await tx`reset role`;
+          }
+        };
+        return {
+          add: (userId, mediaId, regionId = randomUUID(), rect = RECT) =>
+            asApi(
+              () => tx`
+                select * from public.add_blur_region(
+                  p_region_id => ${regionId}, p_media_id => ${mediaId}, p_user_id => ${userId},
+                  p_x => ${rect.x}, p_y => ${rect.y}, p_width => ${rect.width},
+                  p_height => ${rect.height})`,
+            ),
+          remove: (userId, regionId) =>
+            asApi(
+              () =>
+                tx`select * from public.remove_blur_region(p_region_id => ${regionId}, p_user_id => ${userId})`,
+            ),
+        };
+      }
+
+      it('shows manual_blur_region to neither anon nor a signed-in member, and refuses their writes', async () => {
+        const f = await fixture();
+        const theirs = await seedRegion(f.photo, f.g.id);
+        const guest = await signedInClient(f.g);
+
+        for (const client of [anon, guest]) {
+          const read = await client.from('manual_blur_region').select('*');
+          expect(read.error).toBeNull();
+          expect(read.data).toEqual([]);
+          await client
+            .from('manual_blur_region')
+            .insert({ id: randomUUID(), media_id: f.photo, drawn_by_user_id: f.g.id, ...RECT });
+          await client.from('manual_blur_region').update({ x: 0.5 }).eq('id', theirs);
+          await client.from('manual_blur_region').delete().eq('id', theirs);
+          const add = await client.rpc('add_blur_region', {
+            p_region_id: randomUUID(),
+            p_media_id: f.photo,
+            p_user_id: f.g.id,
+            p_x: 0.1,
+            p_y: 0.1,
+            p_width: 0.1,
+            p_height: 0.1,
+          });
+          expect(add.error).not.toBeNull();
+          const remove = await client.rpc('remove_blur_region', {
+            p_region_id: theirs,
+            p_user_id: f.g.id,
+          });
+          expect(remove.error).not.toBeNull();
+        }
+        await expect(regionIds(f.photo)).resolves.toEqual([theirs]);
+        const row = await admin.from('manual_blur_region').select('x').eq('id', theirs).single();
+        expect(row.data).toEqual({ x: RECT.x });
+        expect(await messagesFor(owner, f.photo)).toBe(0);
+      });
+
+      it('refuses a rectangle with no size or past an edge with its check constraint', async () => {
+        const f = await fixture();
+        for (const rect of [
+          { x: 0.8, y: 0, width: 0.3, height: 0.1 },
+          { x: 0, y: 0.9, width: 0.1, height: 0.2 },
+          { x: 0.1, y: 0.1, width: 0, height: 0.1 },
+          { x: 0.1, y: 0.1, width: 0.1, height: 0 },
+          { x: -0.1, y: 0.1, width: 0.1, height: 0.1 },
+        ]) {
+          const result = await admin
+            .from('manual_blur_region')
+            .insert({ id: randomUUID(), media_id: f.photo, drawn_by_user_id: f.g.id, ...rect });
+          expect(result.error?.code).toBe('23514');
+        }
+        // The whole image is a valid region; the server sets no minimum (D-170).
+        const whole = { x: 0, y: 0, width: 1, height: 1 };
+        const ok = await admin
+          .from('manual_blur_region')
+          .insert({ id: randomUUID(), media_id: f.photo, drawn_by_user_id: f.g.id, ...whole });
+        expect(ok.error).toBeNull();
+      });
+
+      it('refuses in the contract order and sends exactly one message per add and remove', async () => {
+        const f = await fixture();
+        const unprocessed = await seedPhoto(f.event.id, f.subEventId, f.a.id, { processed: false });
+        const deleted = await seedPhoto(f.event.id, f.subEventId, f.a.id);
+        await admin
+          .from('media')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', deleted);
+        const departed = await seedRegion(f.photo, f.rem.id);
+
+        await rolledBack(async (tx, api) => {
+          // 404 first, for everyone, members and outsiders alike.
+          for (const mediaId of [randomUUID(), unprocessed, deleted]) {
+            for (const user of [f.a, f.out]) {
+              await expect(api.add(user.id, mediaId)).resolves.toMatchObject({
+                outcome: 'not_found',
+                message_id: null,
+              });
+            }
+          }
+          await expect(api.remove(f.a.id, randomUUID())).resolves.toMatchObject({
+            outcome: 'not_found',
+          });
+
+          for (const user of [f.pen, f.blk, f.rem, f.out]) {
+            await expect(api.add(user.id, f.photo)).resolves.toEqual({
+              outcome: 'not_member',
+              role: null,
+              message_id: null,
+            });
+            await expect(api.remove(user.id, departed)).resolves.toMatchObject({
+              outcome: 'not_member',
+              media_id: null,
+            });
+          }
+          await expect(api.add(f.p.id, f.photo)).resolves.toMatchObject({ outcome: 'wrong_role' });
+          await expect(api.remove(f.p.id, departed)).resolves.toMatchObject({
+            outcome: 'wrong_role',
+          });
+          expect(await messagesFor(tx, f.photo)).toBe(0);
+
+          // A Guest adds; a repeat of the id stores and sends nothing new.
+          const mine = randomUUID();
+          const added = await api.add(f.g.id, f.photo, mine);
+          expect(added).toEqual({
+            outcome: 'added',
+            role: 'guest',
+            message_id: expect.any(Number),
+          });
+          expect(await messagesFor(tx, f.photo)).toBe(1);
+          await expect(
+            api.add(f.g.id, f.photo, mine, { x: 0.5, y: 0.5, width: 0.1, height: 0.1 }),
+          ).resolves.toEqual({ outcome: 'repeat', role: 'guest', message_id: null });
+          const [stored] = await tx`select x from public.manual_blur_region where id = ${mine}`;
+          expect(stored).toEqual({ x: RECT.x });
+
+          // The same id from another person, or on another photo, is taken.
+          await expect(api.add(f.g2.id, f.photo, mine)).resolves.toMatchObject({
+            outcome: 'duplicate',
+          });
+          const second = await seedPhoto(f.event.id, f.subEventId, f.a.id);
+          await expect(api.add(f.g.id, second, mine)).resolves.toMatchObject({
+            outcome: 'duplicate',
+          });
+          expect(await messagesFor(tx, f.photo)).toBe(1);
+
+          // A closed album takes a region (D-170).
+          await tx`update public.event set album_open = false where id = ${f.event.id}`;
+          await expect(api.add(f.a.id, f.photo)).resolves.toMatchObject({ outcome: 'added' });
+          expect(await messagesFor(tx, f.photo)).toBe(2);
+
+          // Another Guest cannot remove it; its drawer can, once.
+          await expect(api.remove(f.g2.id, mine)).resolves.toMatchObject({
+            outcome: 'not_drawer',
+            media_id: null,
+          });
+          await expect(api.remove(f.g.id, mine)).resolves.toEqual({
+            outcome: 'removed',
+            role: 'guest',
+            media_id: f.photo,
+            message_id: expect.any(Number),
+          });
+          await expect(api.remove(f.g.id, mine)).resolves.toMatchObject({ outcome: 'not_found' });
+          expect(await messagesFor(tx, f.photo)).toBe(3);
+
+          // The Admin removes a departed drawer's region.
+          await expect(api.remove(f.a.id, departed)).resolves.toMatchObject({
+            outcome: 'removed',
+            role: 'admin',
+          });
+          expect(await messagesFor(tx, f.photo)).toBe(4);
+
+          // A deleted event is 404 for its Admin too.
+          await tx`update public.event set deleted_at = now() where id = ${f.event.id}`;
+          await expect(api.add(f.a.id, f.photo)).resolves.toMatchObject({ outcome: 'not_found' });
+        });
+        // Nothing of the above committed.
+        expect(await messagesFor(owner, f.photo)).toBe(0);
+        await expect(regionIds(f.photo)).resolves.toEqual([departed]);
+      });
+
+      it('keeps a drawer’s regions after they leave, and their account cannot be deleted under them', async () => {
+        const f = await fixture();
+        const id = await seedRegion(f.photo, f.g.id);
+        await admin
+          .from('membership')
+          .update({ status: 'removed' })
+          .eq('event_id', f.event.id)
+          .eq('user_id', f.g.id);
+        await expect(regionIds(f.photo)).resolves.toEqual([id]);
+        const deleted = await admin.auth.admin.deleteUser(f.g.id);
+        expect(deleted.error).not.toBeNull();
+        await expect(regionIds(f.photo)).resolves.toEqual([id]);
+      });
+
+      it('runs through the store: access, lists by role with names, one message per write', async () => {
+        const f = await fixture();
+        await expect(regions.access(f.photo, f.g.id)).resolves.toEqual({
+          outcome: 'active',
+          role: 'guest',
+        });
+        await expect(regions.access(f.photo, f.p.id)).resolves.toEqual({
+          outcome: 'active',
+          role: 'photographer',
+        });
+        for (const user of [f.pen, f.blk, f.rem, f.out]) {
+          await expect(regions.access(f.photo, user.id)).resolves.toEqual({
+            outcome: 'not_member',
+          });
+        }
+        await expect(regions.access(randomUUID(), f.a.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+
+        // The dev worker has no blur_region job until S-19a and unpublishes a photo whose message it
+        // reads (D-170), so each photo here takes at most one write, and that write comes last.
+        const id = randomUUID();
+        // Two sends of one id at once store one row and send one message (D-170).
+        const both = await Promise.all([
+          regions.add(f.g.id, f.photo, { id, ...RECT }),
+          regions.add(f.g.id, f.photo, { id, ...RECT }),
+        ]);
+        expect(both.map((r) => r.outcome).sort()).toEqual(['added', 'repeat']);
+        await expect(regionIds(f.photo)).resolves.toEqual([id]);
+        expect(await messagesFor(owner, f.photo)).toBe(1);
+        await dropMessages(f.photo);
+
+        const photo = await seedPhoto(f.event.id, f.subEventId, f.a.id);
+        const mine = await seedRegion(photo, f.g.id);
+        const theirs = await seedRegion(photo, f.g2.id);
+        await expect(regions.list(photo, f.g.id)).resolves.toEqual([
+          {
+            id: mine,
+            ...RECT,
+            drawnBy: { userId: f.g.id, fullName: 'Blur Guest' },
+            createdAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
+          },
+        ]);
+        const all = await regions.list(photo, null);
+        expect(all.map((r) => r.drawnBy.fullName).sort()).toEqual([
+          'Blur Guest',
+          'Blur Other Guest',
+        ]);
+        expect(all.map((r) => r.id).sort()).toEqual([mine, theirs].sort());
+
+        await expect(regions.remove(theirs, f.g.id)).resolves.toEqual({ outcome: 'not_drawer' });
+        expect(await messagesFor(owner, photo)).toBe(0);
+        await expect(regions.remove(theirs, f.a.id)).resolves.toEqual({
+          outcome: 'removed',
+          role: 'admin',
+          mediaId: photo,
+        });
+        await expect(regionIds(photo)).resolves.toEqual([mine]);
+        expect(await messagesFor(owner, photo)).toBe(1);
+        await dropMessages(photo);
+      });
+
+      it('answers not_found to an add that waited on a delete of its photo (the media row lock)', async () => {
+        const f = await fixture();
+        let release = () => undefined as void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let locked = () => undefined as void;
+        const isLocked = new Promise<void>((resolve) => {
+          locked = resolve;
+        });
+        // A delete in flight: the media row updated and not yet committed.
+        const deleting = owner.begin(async (tx) => {
+          await tx`update public.media set deleted_at = now() where id = ${f.photo}`;
+          locked();
+          await released;
+        });
+        await isLocked;
+        let settled = false;
+        const adding = regions.add(f.g.id, f.photo, { id: randomUUID(), ...RECT }).finally(() => {
+          settled = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(settled).toBe(false);
+        release();
+        await deleting;
+        await expect(adding).resolves.toEqual({ outcome: 'not_found' });
+        await expect(regionIds(f.photo)).resolves.toEqual([]);
+        expect(await messagesFor(owner, f.photo)).toBe(0);
       });
     });
 
