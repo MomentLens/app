@@ -56,6 +56,11 @@ export default function AppLayout() {
         name="capture/[eventId]"
         options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
       />
+      {/* No swipe down: a drag on the photo draws a blur region (S-19). */}
+      <Stack.Screen
+        name="blur/[eventId]/[mediaId]"
+        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+      />
       <Stack.Screen name="join/confirm" />
       <Stack.Screen
         name="scan-venue/[eventId]"
