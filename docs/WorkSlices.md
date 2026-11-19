@@ -188,6 +188,8 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-19 first, before the ML work.** No ML, and it is the escape hatch when automatic matching misses something live (HB §14.5). S-19 is the screen, the endpoints and the table; S-19a, Ukasha's, is the worker job, so worker code stays with the worker owner. Before S-21 there are no subject files, so S-19a regenerates the public file and thumbnail only; S-21 and S-25 then apply every stored region to the files they write (root invariant 6). The rectangle is stored as fractions of the upright stored image, the frame the worker's face boxes use (D-99). Its real entry point is S-22's action bar; until S-22 lands, reach the drawing screen through a development-only route, and S-22 deletes that route.
 
+**S-19 merges on the same day as S-19a**, once S-19a's PR is ready (D-170). A worker without `blur_region` archives the message and clears the photo's `processed_at`, so every region drawn before S-19a lands takes its photo out of the album.
+
 **S-20 also builds setting a profile photo**, for the signup step in spec §2.1.1 and for S-29's Settings row. It writes `avatar_key` and nothing else, because the profile photo is never a reference (D-141). S-01 left it out. Its reference photos screen opens from Event Preferences, which S-29 builds; until S-29 lands, reach it through a development-only route.
 
 **S-26 comes straight after S-20.** It needs nothing else, and until it records thresholds the worker matches nobody (D-104), so S-21, S-23 and S-25 cannot be tested on a real match.

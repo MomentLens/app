@@ -590,6 +590,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** The audit's first draft of this entry: keep tap-to-blur and refuse a tap on a face already matched to another subject. A loose-match band sent to the Admin, blurred or visible while it waits.
 **Cost.** ⚠ Any Guest can blur any part of any photo until its drawer or the Admin removes it. D-23's similarity check no longer stands between a guest and the bride's face, so abuse is caught only by the Admin looking at the Review Queue. A face below the match threshold stays visible until someone draws a region over it. D-64's rate limit is the designed answer if abuse ever appears.
 
+**Amended (see D-170).** A region applies when the `blur_region` job finishes, not at the moment it is drawn. Until then every viewer sees the previous file. The drawer lists their own regions on a photo, and only the Admin lists everyone's.
 ### D-84: Joining an event re-matches the new member's references
 **Decision.** When a subject with references becomes an active member of an event, by auto-approve or by an Admin's approval, the API enqueues `reprocess` for that subject in that event.
 **Why.** `face_process` matches against the subjects who are active members at the moment a photo is processed (D-74). A Do Not Publish user who joins after photos were uploaded stays unblurred in all of them, and nothing reruns the match. The same gap leaves Find My Photos missing every photo taken before the user joined.
@@ -1773,6 +1774,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** InsightFace's own download at first start. OpenCV 5.1.0.95, released on 2026-11-17 and too new to pin.
 **Cost.** A Python module of about 130 lines, `python -m app.ai.fetch_model`, so the fetch runs on Windows too, a few lines in each script and a hash file. A developer whose machine has no model gets a clear error on starting the worker, until they run the fetch. Embeddings from 5.0 differ from 4.14's in the fourth decimal place, so a move to 5 after S-26 calibrates the thresholds needs a recheck of them.
 **Reopen if.** InsightFace moves `buffalo_l` off that release, or a profile on the server shows OpenCV taking more than 10% of a job.
+
+### D-170: A blur region applies when its job finishes, and its drawer lists their own
+**Decision.** Amends D-83. Ukasha ruled on these on 2026-11-20, at S-19's read-back.
+- A region applies when the worker's `blur_region` job finishes, usually seconds after it is drawn. Until then every viewer sees the previous file. The drawing screen draws the new rectangle solid at once, so the person who drew it sees it covered.
+- A Guest lists only their own regions on a photo, so they can remove one from the photo (spec §4.11.4.4). The Admin lists every region, with who drew each.
+- No cap per photo and no minimum size on the server. The drawing screen ignores a drag shorter than about 24 points, so a tap does not save a region.
+- Drawing and removing are allowed while the album is closed. Closing the album blocks uploads only (spec §4.9).
+- A drawer's regions stay after they leave the event. `drawn_by_user_id` references `auth.users` with no cascade, as `media.uploader_user_id` does, and only the Admin can then remove them.
+- S-19's stack merges on the same day as S-19a's, after S-19a's PR is ready. A worker without `blur_region` archives the message on its first try and clears the photo's `processed_at` (arch §5, D-108), so every region drawn before S-19a lands takes its photo out of the album.
+**Why.** The `blur_region` message waits behind every earlier message on `jobs` (D-103), so "at once" was never true. The spec let the drawer remove a region from the photo while arch §1 let only the Admin list regions.
+**Rejected.** Clearing `processed_at` on every draw until the job finishes, which takes the photo out of every viewer's album and shows it as processing in its uploader's My Media for each region. A feature flag around the enqueue, so S-19 could merge first, which is more code for a gap of about half a day.
+**Cost.** A missed face stays visible for the seconds the job takes, longer when the queue is busy. It was already visible until someone noticed it. S-19's merge waits for S-19a.
 
 ## Open items that are not decisions yet
 

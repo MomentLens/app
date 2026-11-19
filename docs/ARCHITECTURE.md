@@ -41,7 +41,7 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | `membership` | A user sees their own rows, with the event's name on a pending one (D-115); the Admin sees every row for their events (Handbook §5) |
 | `face`, `dnp_subject` | Only through the viewer-scoped rule (root invariant 4). A Do Not Publish subject learns they are in a photo; no other viewer learns who is. A Photographer gets no `face` rows, for their own photos too (§4.10, D-08) |
 | `face_reference` | The owner, and only their photos, with or without Do Not Publish (D-109). Embeddings never leave the database and the worker (Handbook §5) |
-| `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see; its drawer or the Admin removes it. Only the Admin lists them, with who drew each, in the Review Queue (D-83) |
+| `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see, the album closed included; its drawer or the Admin removes it. A Guest lists only their own regions on a photo. The Admin lists every region, with who drew each, on the photo and in the Review Queue (D-83, D-170) |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
 | `profile.avatar_key` | The user, and the same people as `profile.full_name`, so a Photographer sees no other member's (D-08). Shown in an event's context, it goes to nobody but the user when their membership in that event has Do Not Publish on, the Admin included. Another event's context shows it as usual (D-35, D-109, D-129) |
 | `profile.full_name` | Active members of an event the user belongs to, and that event's Admin while the user's join request is pending. Do Not Publish does not hide it (D-35). A Photographer sees no other member's name, since the name list is the guest list (D-08) |
@@ -225,8 +225,10 @@ A Do Not Publish subject found in a photo, with that subject's personalized file
 
 ### `manual_blur_region`
 A rectangle someone drew to hide part of a photo, usually a face the detector missed (D-83).
-- `media_id`, `drawn_by_user_id`, `x`, `y`, `width`, `height` as fractions of the stored image, so one row fits every file of the photo (D-99)
-- Adding or deleting a row enqueues `blur_region`. Removing one deletes the row
+- `id`, `media_id`, `drawn_by_user_id`, `x`, `y`, `width`, `height`, `created_at`. The four numbers are fractions of the stored image, so one row fits every file of the photo (D-99). The app sends `id`, so a retry after a lost answer inserts nothing new
+- `drawn_by_user_id` references `auth.users` with no cascade, so a drawer's regions stay after they leave the event (D-170)
+- `add_blur_region` and `remove_blur_region` change the row and send `blur_region` in one transaction (§1, §5). Removing one deletes the row
+- Endpoints, from S-19: `POST /media/{mediaId}/blur-regions`, `GET /media/{mediaId}/blur-regions` (the caller's own, or every region for the Admin) and `DELETE /blur-regions/{regionId}`
 - Every file the worker writes for the photo applies every row, on every regeneration (root invariant 6)
 
 ### `photo_flag`
