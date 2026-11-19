@@ -17,6 +17,7 @@ import {
   HealthResponse,
   JoinEventResponse,
   ListAlbumResponse,
+  ListBlurRegionsResponse,
   ListEventsResponse,
   ListAttendeesResponse,
   ListInvitesResponse,
@@ -36,6 +37,7 @@ import {
   SetEventCoverResponse,
   UpdateEventSettingsResponse,
   type AcceptConsentRequest,
+  type AddBlurRegionRequest,
   type AddSubEventRequest,
   type ApproveRequestsRequest,
   type BlockRequestRequest,
@@ -930,4 +932,45 @@ export async function listUploaders(
     throw await errorFrom('GET /events/{eventId}/media/uploaders', response);
   }
   return parseBody('GET /events/{eventId}/media/uploaders', response, ListUploadersResponse);
+}
+
+// POST /media/{mediaId}/blur-regions, for an active Guest or the Admin (spec §4.11.4.4). 201 stored
+// a new region and 200 answered a resend of an id this caller already stored, so a retry with the
+// same id is safe. Both carry the list after the write (D-170).
+export async function addBlurRegion(
+  mediaId: string,
+  body: AddBlurRegionRequest,
+): Promise<ListBlurRegionsResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}/blur-regions`;
+  const response = await authenticatedRequest(path, { method: 'POST', body });
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /media/{mediaId}/blur-regions', response);
+  }
+  return parseBody('POST /media/{mediaId}/blur-regions', response, ListBlurRegionsResponse);
+}
+
+// GET /media/{mediaId}/blur-regions: a Guest's own regions on the photo, or every region for the
+// Admin, each with who drew it (D-170).
+export async function listBlurRegions(
+  mediaId: string,
+  signal?: AbortSignal,
+): Promise<ListBlurRegionsResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}/blur-regions`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /media/{mediaId}/blur-regions', response);
+  }
+  return parseBody('GET /media/{mediaId}/blur-regions', response, ListBlurRegionsResponse);
+}
+
+// DELETE /blur-regions/{regionId}. Answers the photo's list after the delete. A region already gone
+// is 404 not_found, which a resend of a delete that landed also gets, so the caller treats that 404
+// as done (shared-types blur-region.ts).
+export async function removeBlurRegion(regionId: string): Promise<ListBlurRegionsResponse> {
+  const path = `/blur-regions/${encodeURIComponent(regionId)}`;
+  const response = await authenticatedRequest(path, { method: 'DELETE' });
+  if (response.status !== 200) {
+    throw await errorFrom('DELETE /blur-regions/{regionId}', response);
+  }
+  return parseBody('DELETE /blur-regions/{regionId}', response, ListBlurRegionsResponse);
 }
