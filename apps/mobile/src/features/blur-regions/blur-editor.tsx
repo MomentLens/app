@@ -143,7 +143,9 @@ export function BlurEditor({
         />
       ) : (
         <GestureDetector gesture={Gesture.Race(pan, tap)}>
+          {/* The faint fill marks the photo's place while the full image downloads. */}
           <View
+            className="bg-onPhoto/10"
             style={{
               position: 'absolute',
               left: frame.x,
