@@ -1,5 +1,5 @@
 import { currentSubEvent, type SubEvent } from '@momentlens/shared-types';
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, RefreshControl, Text, View } from 'react-native';
 
@@ -60,6 +60,12 @@ function HomeContent({
   eventId: string;
   initialSubEventId?: string;
 }) {
+  const router = useRouter();
+  const openBlur = useCallback(
+    (mediaId: string) =>
+      router.push({ pathname: '/blur/[eventId]/[mediaId]', params: { eventId, mediaId } }),
+    [router, eventId],
+  );
   const eventQuery = useEvent(eventId);
   const event = eventQuery.data?.event;
   const scheduleQuery = useSubEvents(eventId);
@@ -212,6 +218,9 @@ function HomeContent({
             refreshing={pulling}
             onRefresh={() => void refresh()}
             onImageError={thumbnails.retry}
+            // Development builds only: S-22's photo view gives Blur an Area its real entry and
+            // deletes this one (S-19 card).
+            onLongPressPhoto={__DEV__ ? openBlur : undefined}
             items={items}
             images={thumbnails.images}
             stickyIndices={stickyIndices}
