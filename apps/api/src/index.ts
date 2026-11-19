@@ -8,6 +8,7 @@ import { createR2 } from './lib/r2';
 import { createTokenVerifier } from './middleware/auth';
 import { createAlbumStore } from './services/album';
 import { createAttendeeStore } from './services/attendees';
+import { createBlurRegionStore } from './services/blur-regions';
 import { createEventStore } from './services/events';
 import { createDatabaseCheck } from './services/health';
 import { createInviteManagementStore, createInviteStore } from './services/invites';
@@ -74,6 +75,7 @@ createApp({
   media: createMediaStore(sql),
   album: createAlbumStore(sql),
   mediaImages: createMediaImagesStore(sql),
+  blurRegions: createBlurRegionStore(sql),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,
