@@ -6,7 +6,12 @@ import type {
   ListBlurRegionsResponse,
   MediaImage,
 } from '@momentlens/shared-types';
-import { useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query';
+import {
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+  type QueryCacheNotifyEvent,
+} from '@tanstack/react-query';
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 
@@ -61,14 +66,27 @@ function findInAlbum(data: AlbumData, mediaId: string): AlbumMediaItem | undefin
   return undefined;
 }
 
+// A query-cache listener that calls `onChange` only when one of this event's album queries gets
+// new data or goes. A query is `added` while some component renders, and answering that with a
+// re-render is a React error (setState in render). A new album query has no data until an
+// `updated` event anyway.
+export function albumChangeListener(eventId: string, onChange: () => void) {
+  return (event: QueryCacheNotifyEvent) => {
+    const [root, id] = event.query.queryKey;
+    if (root !== 'album' || id !== eventId) return;
+    if (event.type === 'updated' || event.type === 'removed') onChange();
+  };
+}
+
 // The photo as the album last loaded it. Realtime refetches the album when the worker bumps
 // `variant_version` after a blur_region job (use-media-realtime.ts), and this follows, so the
 // screen signs the regenerated file instead of keeping the old one (root invariant 2).
 export function useAlbumItem(eventId: string, mediaId: string): AlbumMediaItem | undefined {
   const client = useQueryClient();
   const subscribe = useCallback(
-    (onChange: () => void) => client.getQueryCache().subscribe(onChange),
-    [client],
+    (onChange: () => void) =>
+      client.getQueryCache().subscribe(albumChangeListener(eventId, onChange)),
+    [client, eventId],
   );
   const read = useCallback(() => {
     for (const [, data] of client.getQueriesData<AlbumData>({ queryKey: ['album', eventId] })) {
