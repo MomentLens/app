@@ -2266,3 +2266,81 @@ describe('the Supabase Unavailable check', () => {
     expect(unavailable()).toBe(false);
   });
 });
+
+describe('Blur region endpoints (S-19)', () => {
+  const mediaId = '33333333-3333-4333-8333-333333333333';
+  const regionId = '44444444-4444-4444-8444-444444444444';
+  const list = {
+    regions: [
+      {
+        id: regionId,
+        x: 0.1,
+        y: 0.2,
+        width: 0.3,
+        height: 0.4,
+        drawnBy: { userId: '55555555-5555-4555-8555-555555555555', fullName: 'Sana Iqbal' },
+        createdAt: '2026-11-20T10:00:00.000Z',
+      },
+    ],
+  };
+  function signIn() {
+    mockAuth.getSession.mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    });
+  }
+
+  it.each([201, 200])('POST takes %i, a new region or a resend of the same id', async (status) => {
+    signIn();
+    const fetched = answers(status, list);
+    globalThis.fetch = fetched;
+    const body = { id: regionId, x: 0.1, y: 0.2, width: 0.3, height: 0.4 };
+    await expect(loadApi(BASE_URL).addBlurRegion(mediaId, body)).resolves.toEqual(list);
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/media/${mediaId}/blur-regions`,
+    );
+    expect(fetched.mock.calls[0]?.[1]?.method).toBe('POST');
+    expect(JSON.parse(fetched.mock.calls[0]?.[1]?.body as string)).toEqual(body);
+  });
+
+  it('GET reads the list for the photo', async () => {
+    signIn();
+    const fetched = answers(200, list);
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).listBlurRegions(mediaId)).resolves.toEqual(list);
+    expect(fetched.mock.calls[0]?.[0]).toBe(
+      `https://api.example.test/media/${mediaId}/blur-regions`,
+    );
+  });
+
+  it('DELETE answers the list after the delete', async () => {
+    signIn();
+    const fetched = answers(200, { regions: [] });
+    globalThis.fetch = fetched;
+    await expect(loadApi(BASE_URL).removeBlurRegion(regionId)).resolves.toEqual({ regions: [] });
+    expect(fetched.mock.calls[0]?.[0]).toBe(`https://api.example.test/blur-regions/${regionId}`);
+    expect(fetched.mock.calls[0]?.[1]?.method).toBe('DELETE');
+  });
+
+  it.each<[number, string]>([
+    [403, 'not_drawer'],
+    [403, 'not_member'],
+    [403, 'wrong_role'],
+    [404, 'not_found'],
+  ])('DELETE keeps %i %s for the screen to decide', async (status, code) => {
+    signIn();
+    globalThis.fetch = answers(status, { error: { code, message: 'refused' } });
+    await expect(loadApi(BASE_URL).removeBlurRegion(regionId)).rejects.toMatchObject({
+      status,
+      code,
+    });
+  });
+
+  it('POST keeps 409 duplicate', async () => {
+    signIn();
+    globalThis.fetch = answers(409, { error: { code: 'duplicate', message: 'taken' } });
+    await expect(
+      loadApi(BASE_URL).addBlurRegion(mediaId, { id: regionId, x: 0, y: 0, width: 1, height: 1 }),
+    ).rejects.toMatchObject({ status: 409, code: 'duplicate' });
+  });
+});
