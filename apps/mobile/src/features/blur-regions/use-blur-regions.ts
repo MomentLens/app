@@ -88,14 +88,30 @@ export function useAlbumItem(eventId: string, mediaId: string): AlbumMediaItem |
       client.getQueryCache().subscribe(albumChangeListener(eventId, onChange)),
     [client, eventId],
   );
-  const read = useCallback(() => {
-    for (const [, data] of client.getQueriesData<AlbumData>({ queryKey: ['album', eventId] })) {
-      const found = findInAlbum(data, mediaId);
-      if (found) return found;
-    }
-    return undefined;
-  }, [client, eventId, mediaId]);
+  const read = useCallback(
+    () =>
+      newestInAlbums(
+        client.getQueriesData<AlbumData>({ queryKey: ['album', eventId] }).map(([, data]) => data),
+        mediaId,
+      ),
+    [client, eventId, mediaId],
+  );
   return useSyncExternalStore(subscribe, read, read);
+}
+
+// The photo's newest copy across every cached album query of the event. Realtime's invalidate
+// refetches only the queries on screen, so a filter left earlier keeps an old `variant_version`,
+// and the first copy found could be that one.
+export function newestInAlbums(
+  albums: readonly AlbumData[],
+  mediaId: string,
+): AlbumMediaItem | undefined {
+  let newest: AlbumMediaItem | undefined;
+  for (const data of albums) {
+    const found = findInAlbum(data, mediaId);
+    if (found && (!newest || found.variantVersion > newest.variantVersion)) newest = found;
+  }
+  return newest;
 }
 
 const RENEW_AFTER = 45 * 60 * 1000;
@@ -138,7 +154,7 @@ export type BlurProblem = 'photo_gone' | 'no_access' | null;
 
 export function useBlurEditing(eventId: string, mediaId: string) {
   const client = useQueryClient();
-  const key = blurRegionsQueryKey(mediaId);
+  const key = useMemo(() => blurRegionsQueryKey(mediaId), [mediaId]);
   const [pending, setPending] = useState<PendingRegion[]>([]);
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set());
   const [problem, setProblem] = useState<BlurProblem>(null);
