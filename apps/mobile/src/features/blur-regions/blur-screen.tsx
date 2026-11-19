@@ -163,8 +163,7 @@ export function BlurScreen({ eventId, mediaId }: { eventId: string; mediaId: str
         <View className="px-8 pt-5" style={{ paddingBottom: insets.bottom + 16 }}>
           <Text className="text-center font-bodySecondary text-bodySecondary text-onPhoto/70">
             Drag to cover a face or anything that shouldn’t be shared. It blurs for everyone at this
-            event.{' '}
-            {isAdmin ? 'Tap a blurred area to remove it.' : 'You or the organizer can remove it.'}
+            event. Tap a blurred area to remove it.
           </Text>
         </View>
       </>
