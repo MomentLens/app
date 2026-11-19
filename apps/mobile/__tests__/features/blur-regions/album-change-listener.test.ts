@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { QueryClient } from '@tanstack/react-query';
 
-import { albumChangeListener } from '@/features/blur-regions/use-blur-regions';
+import { albumChangeListener, newestInAlbums } from '@/features/blur-regions/use-blur-regions';
 
 jest.mock('@/lib/api', () => ({ ApiError: class ApiError extends Error {} }));
 jest.mock('@/features/event-shell/use-event', () => ({
@@ -34,5 +34,23 @@ describe('albumChangeListener', () => {
     expect(onChange).toHaveBeenCalled();
     unsubscribe();
     client.clear();
+  });
+});
+
+describe('newestInAlbums', () => {
+  const mediaId = '22222222-2222-4222-8222-222222222222';
+  const copy = (variantVersion: number) => ({ id: mediaId, variantVersion }) as never;
+
+  it('picks the highest variant_version when a stale filtered album lists the photo first', () => {
+    const staleFiltered = { pages: [{ media: [copy(1)] }] } as never;
+    const refetched = { pages: [{ media: [copy(2)] }] } as never;
+    expect(newestInAlbums([staleFiltered, refetched], mediaId)?.variantVersion).toBe(2);
+  });
+
+  it('reads a single page, skips albums without the photo, and answers undefined when none has it', () => {
+    const page = { media: [copy(3)] } as never;
+    const other = { pages: [{ media: [] }] } as never;
+    expect(newestInAlbums([undefined, other, page], mediaId)?.variantVersion).toBe(3);
+    expect(newestInAlbums([other], mediaId)).toBeUndefined();
   });
 });
