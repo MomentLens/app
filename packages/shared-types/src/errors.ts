@@ -14,6 +14,7 @@ export const ErrorCode = z.enum([
   'not_member',
   'wrong_role',
   'not_uploader',
+  'not_drawer',
   'blocked',
   // 404
   'not_found',
