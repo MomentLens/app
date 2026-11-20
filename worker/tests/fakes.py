@@ -17,7 +17,8 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
-from app.db import BlurRegion, MediaRow, Store
+from app.ai.model import FaceModel
+from app.db import BlurRegion, MediaRow, ReferenceRow, Store
 from app.images import cv2
 from app.queue import Message
 from app.storage import ObjectMissing
@@ -42,6 +43,9 @@ class State:
     media: dict[UUID, dict[str, Any]] = field(default_factory=dict)
     # A photo's manual_blur_region rows, oldest first, as BlurRegion.
     regions: dict[UUID, list[BlurRegion]] = field(default_factory=dict)
+    # face_reference rows by id: status, reject_reason, embedding (a list of floats or None),
+    # photo_key and event_id.
+    references: dict[UUID, dict[str, Any]] = field(default_factory=dict)
 
 
 class FakeTx:
@@ -99,6 +103,29 @@ class FakeTx:
         )
         return True
 
+    def lock_reference(self, reference_id: UUID) -> str | None:
+        row = self._state.references.get(reference_id)
+        return None if row is None else row["status"]
+
+    def fail_reference(self, reference_id: UUID) -> None:
+        row = self._state.references[reference_id]
+        if row["status"] == "pending":
+            row.update(status="rejected", reject_reason="failed")
+
+    def decide_reference(
+        self, reference_id: UUID, status: str, reject_reason: str | None, embedding: Any
+    ) -> bool:
+        self._store.fault("decide_reference")
+        row = self._state.references.get(reference_id)
+        if row is None or row["status"] != "pending":
+            return False
+        row.update(
+            status=status,
+            reject_reason=reject_reason,
+            embedding=None if embedding is None else [float(v) for v in embedding],
+        )
+        return True
+
 
 class FakeStore:
     """One worker's session. Stores built with the same `shared` see one database and lock."""
@@ -151,6 +178,18 @@ class FakeStore:
         self.state.regions.setdefault(media_id, []).append(region)
         return region
 
+    def add_reference(self, reference_id: UUID | None = None, **overrides: Any) -> UUID:
+        reference_id = reference_id or uuid4()
+        event_id = overrides.pop("event_id", uuid4())
+        self.state.references[reference_id] = {
+            "event_id": event_id,
+            "photo_key": f"users/{uuid4()}/events/{event_id}/reference_{reference_id}.jpg",
+            "status": "pending",
+            "reject_reason": None,
+            "embedding": None,
+        } | overrides
+        return reference_id
+
     # --- the Store interface ----------------------------------------------------------------
 
     def connect(self) -> None:
@@ -180,12 +219,8 @@ class FakeStore:
         try:
             yield FakeTx(self)
         except BaseException:
-            self.state.messages, self.state.archived, self.state.media, self.state.regions = (
-                before.messages,
-                before.archived,
-                before.media,
-                before.regions,
-            )
+            # In place, so stores built with the same `shared` keep seeing one State.
+            self.state.__dict__.update(before.__dict__)
             raise
 
     def read(self, visibility_timeout_s: int) -> Message | None:
@@ -227,6 +262,18 @@ class FakeStore:
             public_thumb_key=row["public_thumb_key"],
             variant_version=row["variant_version"],
             published=row["processed_at"] is not None,
+        )
+
+    def reference_for_job(self, reference_id: UUID) -> ReferenceRow | None:
+        self.fault("reference_for_job")
+        row = self.state.references.get(reference_id)
+        if row is None:
+            return None
+        return ReferenceRow(
+            id=reference_id,
+            event_id=row["event_id"],
+            photo_key=row["photo_key"],
+            status=row["status"],
         )
 
     def blur_regions(self, media_id: UUID) -> list[BlurRegion]:
@@ -356,3 +403,49 @@ def drain(worker: Any, limit: int = 50) -> None:
         if not handled and not visible:
             return
     raise AssertionError(f"the queue did not drain in {limit} steps")
+
+
+class FakeDetector:
+    """SCRFD's detect(): rows of x1, y1, x2, y2, score in pixels, and five landmarks per face."""
+
+    def __init__(self, boxes):
+        self.boxes = np.array(boxes, np.float32).reshape(-1, 5)
+        self.calls = 0
+
+    def detect(self, img, max_num=0, metric="default"):
+        self.calls += 1
+        kpss = []
+        for x1, y1, x2, y2, _ in self.boxes:
+            cx, cy, w = (x1 + x2) / 2, (y1 + y2) / 2, x2 - x1
+            kpss.append(
+                [
+                    [cx - w / 5, cy - w / 6],
+                    [cx + w / 5, cy - w / 6],
+                    [cx, cy],
+                    [cx - w / 6, cy + w / 5],
+                    [cx + w / 6, cy + w / 5],
+                ]
+            )
+        return self.boxes, np.array(kpss, np.float32).reshape(-1, 5, 2)
+
+
+class FakeRecognizer:
+    """ArcFace's get_feat(): one 512-float row per aligned crop, never of length 1."""
+
+    input_size = (112, 112)
+
+    def __init__(self):
+        self.crops = []
+
+    def get_feat(self, imgs):
+        self.crops.extend(imgs)
+        rows = np.zeros((len(imgs), 512), np.float32)
+        for i in range(len(imgs)):
+            rows[i, i] = 3.0
+            rows[i, 511] = 4.0
+        return rows
+
+
+def face_model(boxes: Any) -> FaceModel:
+    """buffalo_l stand-in whose detector finds `boxes`: rows of x1, y1, x2, y2, score."""
+    return FaceModel(detector=FakeDetector(boxes), recognizer=FakeRecognizer())
