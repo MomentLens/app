@@ -422,6 +422,7 @@ Two constraints settled a third of these before any of them were argued individu
 ### D-65 — Blur geometry and blur strength are specified, not left to the implementer
 **Decision.** Expand the detection box by 30 to 40 percent, apply an elliptical mask, and blur by downsampling then upsampling with a box blur on top.
 **Why.** A tight InsightFace bounding box leaves hair, ears, jawline and clothing visible, and at a wedding where the guest list is known that is still identifying. A single light Gaussian pass is also partially invertible. Both are one line in the worker and both are answerable viva questions that nobody had an answer to.
+**Amended (see D-171).** The strength has numbers: shrink the blurred area until its shorter side is 8 pixels, scale it back up, then a box blur one cell wide. A blur region uses the same rule.
 
 ### D-66 — Retroactive reprocessing never re-runs detection
 **Decision.** The reprocess job compares stored embeddings against the newly-active reference set, then regenerates variants for matched photos only.
@@ -792,6 +793,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** The photo is gone from the album until someone re-queues the job, and only the log says so, and Sentry once the worker has it. A URL already signed stays valid for up to an hour, and a phone that already shows the photo keeps it until its next fetch.
 **Amended (see D-123).** The archive and the clearing of `processed_at` commit in one transaction, and the worker reports each archived message to Sentry.
 **Amended (see D-148).** Other phones drop the photo on their next fetch of the album, which a Realtime reconnect and a return to the foreground both start. The event fetch carries no photos.
+**Amended (see D-171).** A re-sent `blur_region` sets `processed_at` when it is null and `variant_version` is above 0. `thumbnail_dims` never does, because it acts only at version 0 (D-123).
 
 ### D-109: Auth rulings from S-01's read-back
 **Decision.** Amends D-35, D-94 and D-105. Ukasha ruled on each of these on 2026-09-24.
@@ -1786,6 +1788,15 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Why.** The `blur_region` message waits behind every earlier message on `jobs` (D-103), so "at once" was never true. The spec let the drawer remove a region from the photo while arch §1 let only the Admin list regions.
 **Rejected.** Clearing `processed_at` on every draw until the job finishes, which takes the photo out of every viewer's album and shows it as processing in its uploader's My Media for each region. A feature flag around the enqueue, so S-19 could merge first, which is more code for a gap of about half a day.
 **Cost.** A missed face stays visible for the seconds the job takes, longer when the queue is busy. It was already visible until someone noticed it. S-19's merge waits for S-19a.
+
+### D-171: A blur's strength is set by the area's shorter side, and a re-sent `blur_region` republishes its photo
+**Decision.** Amends D-65 and D-108. Ukasha ruled on these on 2026-11-20, at S-19a's read-back.
+- Every blurred area, a face box or a blur region, is shrunk until its shorter side is 8 pixels, scaled back up, then box-blurred with a kernel one cell wide, where a cell is the area's shorter side divided by 8. A blur region covers exactly the rectangle drawn, rounded outward to whole pixels.
+- `blur_region` sets `processed_at` in its row update when it is null and `variant_version` is above 0. Every file it writes applies every stored region, so the photo is safe to publish once the update commits.
+- With no region left and no Do Not Publish file, `blur_region` points the public keys back at the upload keys, bumps `variant_version` and writes no object (`docs/ARCHITECTURE.md` §3, root invariant 13).
+**Why.** D-65 named the method and no number, so two developers would write two strengths and a viva question would have no answer. A `blur_region` that fails three times clears `processed_at` (D-108), and `add_blur_region` and `remove_blur_region` then refuse the photo as unprocessed, so re-sending the archived message is the only way back. Without this rule the re-sent job would rebuild the files and leave the photo out of the album.
+**Rejected.** A fixed downsample factor for the whole image, which blurs a small face less than a large one. Republishing through `thumbnail_dims`, which acts only at version 0 and ignores regions.
+**Cost.** A large region turns into 8 soft cells across its shorter side, so the area becomes a smear rather than recognisable shapes. A re-sent message republishes a photo whose earlier failure nobody investigated; the archive and Sentry still record it.
 
 ## Open items that are not decisions yet
 
