@@ -16,6 +16,7 @@ import secrets
 import time
 from uuid import uuid4
 
+import numpy as np
 import psycopg
 import pytest
 from psycopg import sql
@@ -318,6 +319,89 @@ def test_archive_keeps_an_unknown_jobs_message_whose_row_is_gone(conn, store):
 
     assert store.archive(msg_id, uuid4(), gone_is_done=False) is Archive.ARCHIVED
     assert in_archive(conn, store, msg_id)
+
+
+@pytest.fixture
+def reference_id(conn):
+    """A pending face_reference in a throwaway event, for a subject with no account (D-63)."""
+    event_id = conn.execute(
+        "insert into public.event (name, type, create_request_id)"
+        " values ('Worker SQL test', 'other', gen_random_uuid()) returning id"
+    ).fetchone()[0]
+    subject_id = conn.execute(
+        "insert into public.subject (user_id) values (null) returning id"
+    ).fetchone()[0]
+    reference = uuid4()
+    conn.execute(
+        "insert into public.face_reference (id, subject_id, event_id, photo_key)"
+        " values (%s, %s, %s, %s)",
+        (
+            reference,
+            subject_id,
+            event_id,
+            f"users/{uuid4()}/events/{event_id}/reference_{reference}.jpg",
+        ),
+    )
+    return reference
+
+
+def reference_row(conn, reference_id):
+    return conn.execute(
+        "select status, reject_reason, embedding is not null from public.face_reference"
+        " where id = %s",
+        (reference_id,),
+    ).fetchone()
+
+
+def test_reference_for_job_reads_the_row_and_none_for_a_gone_one(conn, store, reference_id):
+    row = store.reference_for_job(reference_id)
+    assert row is not None
+    assert (row.id, row.status) == (reference_id, "pending")
+    assert row.photo_key.endswith(f"/reference_{reference_id}.jpg")
+    assert store.reference_for_job(uuid4()) is None
+
+
+def test_decide_reference_stores_the_embedding_as_512_floats(conn, store, reference_id):
+    embedding = np.zeros(512, np.float32)
+    embedding[0], embedding[511] = 0.6, 0.8
+    with store.transaction() as tx:
+        assert tx.decide_reference(reference_id, "accepted", None, embedding)
+
+    assert reference_row(conn, reference_id) == ("accepted", None, True)
+    dims, first, last = conn.execute(
+        "select extensions.vector_dims(embedding), (embedding::real[])[1],"
+        " (embedding::real[])[512] from public.face_reference where id = %s",
+        (reference_id,),
+    ).fetchone()
+    assert (dims, first, last) == (512, pytest.approx(0.6), pytest.approx(0.8))
+
+
+def test_decide_reference_rejects_and_then_refuses_a_decided_row(conn, store, reference_id):
+    with store.transaction() as tx:
+        assert tx.decide_reference(reference_id, "rejected", "multiple_faces", None)
+    with store.transaction() as tx:
+        assert not tx.decide_reference(reference_id, "rejected", "no_face", None)
+
+    assert reference_row(conn, reference_id) == ("rejected", "multiple_faces", False)
+
+
+def test_archive_rejects_a_pending_reference_as_failed(conn, store, reference_id):
+    msg_id = send(conn, store, {"job": "reference_process", "face_reference_id": str(reference_id)})
+
+    assert (
+        store.archive(msg_id, None, gone_is_done=True, reference_id=reference_id)
+        is Archive.REJECTED
+    )
+
+    assert reference_row(conn, reference_id) == ("rejected", "failed", False)
+    assert in_archive(conn, store, msg_id)
+
+
+def test_archive_deletes_a_gone_references_message_as_done(conn, store):
+    msg_id = send(conn, store, {"job": "reference_process", "face_reference_id": str(uuid4())})
+
+    assert store.archive(msg_id, None, gone_is_done=True, reference_id=uuid4()) is Archive.GONE
+    assert not in_archive(conn, store, msg_id)
 
 
 def test_a_second_worker_cannot_take_the_lock(database_url):

@@ -1,8 +1,9 @@
 """Postgres for the worker: one connection, the queue lock, reconnects and transactions.
 
 The worker connects with DATABASE_URL as the postgres role, so RLS does not apply. Every query
-here names one media row by its primary key, or that row's blur regions, so none reaches into
-another event (worker/AGENTS.md asks for every query to be scoped to its event).
+here names one media row or one face_reference row by its primary key, or that photo's blur
+regions, so none reaches into another event (worker/AGENTS.md asks for every query to be scoped to
+its event).
 
 The connection runs in autocommit, so a statement outside `transaction()` commits on its own.
 That is what makes a pgmq read count as a try when the process dies before the job's own
@@ -20,6 +21,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+import numpy as np
 import psycopg
 
 from app import queue
@@ -59,11 +61,26 @@ class BlurRegion:
     height: float
 
 
+@dataclass(frozen=True)
+class ReferenceRow:
+    """The face_reference row reference_process works on."""
+
+    id: UUID
+    event_id: UUID
+    # Built by the API (root invariant 12); the worker only reads it.
+    photo_key: str
+    status: str
+
+
 class Archive(Enum):
     ARCHIVED = "archived"
     # Archived, and the photo's processed_at cleared in the same transaction (D-108).
     UNPUBLISHED = "unpublished"
-    # The photo's row no longer exists, so the message was deleted as done (arch §5).
+    # Archived, and the pending reference set rejected with `failed` in the same transaction, so
+    # the app stops polling it (D-172).
+    REJECTED = "rejected"
+    # The photo's or the reference's row no longer exists, so the message was deleted as done
+    # (arch §5).
     GONE = "gone"
 
 
@@ -94,6 +111,50 @@ class Tx:
     def unpublish(self, media_id: UUID) -> None:
         """Takes the photo out of the album after a final failure (D-108)."""
         self._cur.execute("update public.media set processed_at = null where id = %s", (media_id,))
+
+    def lock_reference(self, reference_id: UUID) -> str | None:
+        """Locks the reference and returns its status, or None when it is gone."""
+        self._cur.execute(
+            "select status from public.face_reference where id = %s for update", (reference_id,)
+        )
+        row = self._cur.fetchone()
+        return None if row is None else str(row[0])
+
+    def fail_reference(self, reference_id: UUID) -> None:
+        """Rejects a pending reference as `failed` after reference_process's final failure, so the
+        app stops polling it (D-172). A decided row is left as it is."""
+        self._cur.execute(
+            "update public.face_reference set status = 'rejected', reject_reason = 'failed'"
+            " where id = %s and status = 'pending'",
+            (reference_id,),
+        )
+
+    def decide_reference(
+        self,
+        reference_id: UUID,
+        status: str,
+        reject_reason: str | None,
+        embedding: np.ndarray | None,
+    ) -> bool:
+        """Writes reference_process's decision on a pending row. False when no row matched.
+
+        `accepted` carries the embedding and no reason; `rejected` carries a reason and no
+        embedding. face_reference's checks refuse any other pairing. Matching only a pending row
+        means a message re-sent from the archive never overwrites a decision.
+        """
+        self._cur.execute(
+            "update public.face_reference"
+            " set status = %(status)s, reject_reason = %(reason)s,"
+            " embedding = %(embedding)s::extensions.vector"
+            " where id = %(id)s and status = 'pending'",
+            {
+                "id": reference_id,
+                "status": status,
+                "reason": reject_reason,
+                "embedding": None if embedding is None else vector_literal(embedding),
+            },
+        )
+        return self._cur.rowcount == 1
 
     def finish_thumbnail_dims(self, media_id: UUID, width: int, height: int) -> bool:
         """Publishes a row no job has written yet, in one update. False when no row matched.
@@ -231,21 +292,38 @@ class Store:
         with self._statement() as cur:
             return queue.unhide(cur, self.queue)
 
-    def archive(self, msg_id: int, media_id: UUID | None, *, gone_is_done: bool) -> Archive:
-        """A final failure. Archives the message and unpublishes its photo in one transaction.
+    def archive(
+        self,
+        msg_id: int,
+        media_id: UUID | None,
+        *,
+        gone_is_done: bool,
+        reference_id: UUID | None = None,
+    ) -> Archive:
+        """A final failure. Archives the message and, in the same transaction, unpublishes the
+        photo it names (D-108) or rejects the pending reference it names as `failed` (D-172).
 
-        When the photo's row is gone and `gone_is_done` is set, the message is deleted as done
-        instead, with no archive (arch §5).
+        When that row is gone and `gone_is_done` is set, the message is deleted as done instead,
+        with no archive (arch §5).
         """
         with self.transaction() as tx:
             published = None if media_id is None else tx.lock_media(media_id)
             if media_id is not None and published is None and gone_is_done:
                 tx.delete_message(msg_id)
                 return Archive.GONE
+            status = None if reference_id is None else tx.lock_reference(reference_id)
+            if reference_id is not None and status is None and gone_is_done:
+                tx.delete_message(msg_id)
+                return Archive.GONE
             if media_id is not None and published:
                 tx.unpublish(media_id)
+            rejected = reference_id is not None and status == "pending"
+            if rejected:
+                tx.fail_reference(reference_id)
             tx.archive_message(msg_id)
-        return Archive.UNPUBLISHED if published else Archive.ARCHIVED
+        if published:
+            return Archive.UNPUBLISHED
+        return Archive.REJECTED if rejected else Archive.ARCHIVED
 
     # --- media ------------------------------------------------------------------------------
 
@@ -284,6 +362,20 @@ class Store:
             rows = cur.fetchall()
         return [BlurRegion(x=r[0], y=r[1], width=r[2], height=r[3]) for r in rows]
 
+    # --- face_reference ---------------------------------------------------------------------
+
+    def reference_for_job(self, reference_id: UUID) -> ReferenceRow | None:
+        """The reference reference_process decides, or None when the API deleted it (D-172)."""
+        with self._statement() as cur:
+            cur.execute(
+                "select id, event_id, photo_key, status from public.face_reference where id = %s",
+                (reference_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return ReferenceRow(id=row[0], event_id=row[1], photo_key=row[2], status=row[3])
+
     # --- internals --------------------------------------------------------------------------
 
     def _live(self) -> psycopg.Connection[Any]:
@@ -307,6 +399,12 @@ class Store:
     def _statement(self) -> Iterator[psycopg.Cursor[Any]]:
         with self._guard(), self._live().cursor() as cur:
             yield cur
+
+
+def vector_literal(embedding: np.ndarray) -> str:
+    """pgvector's text form, `[v1,v2,...]`, which a `::extensions.vector` cast reads. Nine
+    significant digits bring a float32 back exactly, so no Python pgvector package is needed."""
+    return "[" + ",".join(format(float(v), ".9g") for v in np.ravel(embedding)) + "]"
 
 
 def _first_line(error: BaseException) -> str:
