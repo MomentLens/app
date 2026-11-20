@@ -648,6 +648,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Cost.** The rejection arrives a few seconds after the upload rather than with it, so the app polls the reference until the worker has decided.
 
 **Amended (see D-141).** A profile photo is never a reference, so it gets no check. Each reference photo belongs to one event, and the one-face rule applies to each.
+**Amended (see D-172).** A reference whose job fails for good is rejected as `failed`, so the app stops polling.
 ### D-92: The worker runs `buffalo_l`
 **Decision.** The worker uses InsightFace's `buffalo_l` model pack, with the detection and recognition modules only, the configuration D-78 benchmarked. `buffalo_s` is not a fallback.
 **Why.** Blur and Find My Photos both rest on recognition accuracy, and a missed match is the costly failure (spec §4.11.4.5). `buffalo_l` is the more accurate pack, and D-78's timings were measured on it, so the latency the team knows is the latency of the model it ships.
@@ -740,6 +741,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Why.** S-20 and S-21 come before S-26, which needs them in order to measure. Without a rule the stopgap is an example number, which is how the blur silently fails in a demo (Handbook §11.4).
 **Rejected.** A provisional number, however low, which nobody remembers to replace.
 **Cost.** Until S-26, Find My Photos returns nothing and no subject sees their own face clear, so the self-visible marker cannot be shown on real data before then.
+**Amended (see D-172).** Fail-closed covers Unknown clustering too: `cluster_id` stays null until `docs/ARCHITECTURE.md` §6 records a clustering threshold.
 
 ### D-105: Smaller build rulings from the pre-feature audit
 **Decision.** Each of these was a fact an agent would otherwise have guessed.
@@ -1797,6 +1799,20 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Why.** D-65 named the method and no number, so two developers would write two strengths and a viva question would have no answer. A `blur_region` that fails three times clears `processed_at` (D-108), and `add_blur_region` and `remove_blur_region` then refuse the photo as unprocessed, so re-sending the archived message is the only way back. Without this rule the re-sent job would rebuild the files and leave the photo out of the album.
 **Rejected.** A fixed downsample factor for the whole image, which blurs a small face less than a large one. Republishing through `thumbnail_dims`, which acts only at version 0 and ignores regions.
 **Cost.** A large region turns into 8 soft cells across its shorter side, so the area becomes a smear rather than recognisable shapes. A re-sent message republishes a photo whose earlier failure nobody investigated; the archive and Sentry still record it.
+
+### D-172: S-20 ships references and face detection without the jobs that come after it
+**Decision.** Amends D-91 and D-104. Ukasha ruled on these on 2026-11-20, at S-20's read-back.
+- S-20 writes the `face` table and the worker's detect, embed, match and cluster functions. S-21 registers `face_process` and removes the `thumbnail_dims` enqueue in one PR (D-72).
+- S-20's `reference_process` and reference delete enqueue no `reprocess`. S-25 adds both enqueues.
+- The last-reference guard (root invariant 8) lands in S-29, which adds the membership column it reads.
+- `face_reference.reject_reason` gains `failed`. When `reference_process` fails three times, the worker sets the row `rejected` with `failed` in the archive's transaction, and the app says the photo could not be checked.
+- A reference photo and a profile photo go through `docs/ARCHITECTURE.md` §4.1's Stage 1 before their PUT: orientation applied, every EXIF field stripped, JPEG at quality 0.9, resize only past 4096px.
+- `reference_process` counts faces at SCRFD's default detection score, 0.5, with no minimum face size. `docs/ARCHITECTURE.md` §6 records it and S-26 checks it.
+- `cluster_id` stays null until `docs/ARCHITECTURE.md` §6 records a clustering threshold.
+- A `reference_process` message whose `face_reference` row is gone is deleted as done, as for a media row (D-122).
+**Why.** S-20 comes before the jobs it would hand work to. The worker archives a message naming a job it does not have and reports it to Sentry, and without S-21's blur pipeline `face_process` could not publish a photo. Until S-26 nothing matches, so `reprocess` would change nothing, and nobody can turn Do Not Publish on before S-29. A reference left `pending` after a final failure keeps the app polling forever. The worker reads pixels as stored (D-99), so a reference with an orientation tag would be detected sideways.
+**Rejected.** Registering a `reprocess` that does nothing, which hides a missing job behind a passing one. A minimum face size, which is a number nobody has measured. Leaving a failed reference `pending` with a client-side timeout.
+**Cost.** S-20 can test detection only through `reference_process` and unit tests. A selfie with a stranger in the background is rejected as `multiple_faces`. The Unknown strip is empty until S-26.
 
 ## Open items that are not decisions yet
 

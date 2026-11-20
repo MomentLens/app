@@ -190,7 +190,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-19 merges on the same day as S-19a**, once S-19a's PR is ready (D-170). A worker without `blur_region` archives the message and clears the photo's `processed_at`, so every region drawn before S-19a lands takes its photo out of the album.
 
-**S-20 also builds setting a profile photo**, for the signup step in spec §2.1.1 and for S-29's Settings row. It writes `avatar_key` and nothing else, because the profile photo is never a reference (D-141). S-01 left it out. Its reference photos screen opens from Event Preferences, which S-29 builds; until S-29 lands, reach it through a development-only route.
+**S-20 also builds setting a profile photo**, for the signup step in spec §2.1.1 and for S-29's Settings row. It writes `avatar_key` and nothing else, because the profile photo is never a reference (D-141). S-01 left it out. Its reference photos screen opens from Event Preferences, which S-29 builds; until S-29 lands, reach it through a development-only route. S-20 writes the `face` table and the detect, match and cluster functions and registers no `face_process`, which S-21 does. It enqueues no `reprocess`, and its reference delete has no last-reference guard; S-25 and S-29 add those (D-172).
 
 **S-26 comes straight after S-20.** It needs nothing else, and until it records thresholds the worker matches nobody (D-104), so S-21, S-23 and S-25 cannot be tested on a real match.
 
@@ -200,7 +200,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-22's marker is a correctness requirement, not polish** (D-26). Without it a missed match is undetectable by the only person who could report it.
 
-**S-25 looks skippable and is not.** Three things break at once without it (HB §14.5 Phase 5). It regenerates thumbnails as well as full files; forgetting them throws nothing and shows the face in the grid only (D-69). It adds the enqueue to S-03's and S-07's join paths, so a Do Not Publish user who joins late is blurred in the photos already there (D-84). And it applies every stored blur region to what it regenerates, or a region someone drew disappears on the next run (root invariant 6).
+**S-25 looks skippable and is not.** Three things break at once without it (HB §14.5 Phase 5). It regenerates thumbnails as well as full files; forgetting them throws nothing and shows the face in the grid only (D-69). It adds the enqueue to S-03's and S-07's join paths, so a Do Not Publish user who joins late is blurred in the photos already there (D-84). And it applies every stored blur region to what it regenerates, or a region someone drew disappears on the next run (root invariant 6). It also adds the `reprocess` enqueue to S-20's `reference_process` and reference delete (D-172).
 
 **S-24's Remove on a blur region** deletes the row and enqueues `blur_region`, which rebuilds the photo without it. Delete on a flagged photo calls S-22's `delete_media`, and nothing restores it (D-130).
 
@@ -229,7 +229,7 @@ The heaviest phase. Ukasha owns most of it because the worker is his, so hand hi
 
 **S-29 also puts the avatar in the Event shell header**, in the slot S-08 leaves for it, and it opens that event's Event Preferences, whose account row opens Account Settings (spec §2.5.11, D-132).
 
-**S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request retain the row with status set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144).
+**S-29 upgrades the shared avatar presigner and the Attendees and Pending Approvals mappings** to read the event's membership flag. S-06 and S-07 return initials until that upgrade rather than use the old account-wide flag (D-143, D-144). S-29 also makes Cancel Request retain the row with status set to `removed` instead of deleting it, as reject already does, or the flag that D-129 never clears goes with the row (D-144). S-29 also adds the last-reference guard to S-20's reference delete, reading the membership column its migration adds (root invariant 8, D-172).
 
 **S-29's Upload over Mobile Data toggle writes the MMKV key S-11's runner reads** (arch §4.3, D-146).
 
