@@ -17,7 +17,7 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
-from app.db import MediaRow, Store
+from app.db import BlurRegion, MediaRow, Store
 from app.images import cv2
 from app.queue import Message
 from app.storage import ObjectMissing
@@ -40,6 +40,8 @@ class State:
     messages: dict[int, FakeMessage] = field(default_factory=dict)
     archived: dict[int, FakeMessage] = field(default_factory=dict)
     media: dict[UUID, dict[str, Any]] = field(default_factory=dict)
+    # A photo's manual_blur_region rows, oldest first, as BlurRegion.
+    regions: dict[UUID, list[BlurRegion]] = field(default_factory=dict)
 
 
 class FakeTx:
@@ -79,6 +81,21 @@ class FakeTx:
             public_thumb_key=row["upload_thumb_key"],
             variant_version=row["variant_version"] + 1,
             processed_at="now",
+        )
+        return True
+
+    def finish_blur_region(
+        self, media_id: UUID, read_version: int, public_key: str, public_thumb_key: str
+    ) -> bool:
+        self._store.fault("finish_blur_region")
+        row = self._state.media.get(media_id)
+        if row is None or row["variant_version"] != read_version or read_version == 0:
+            return False
+        row.update(
+            public_key=public_key,
+            public_thumb_key=public_thumb_key,
+            variant_version=read_version + 1,
+            processed_at=row["processed_at"] or "now",
         )
         return True
 
@@ -127,6 +144,13 @@ class FakeStore:
         } | overrides
         return media_id
 
+    def add_region(
+        self, media_id: UUID, x: float, y: float, width: float, height: float
+    ) -> BlurRegion:
+        region = BlurRegion(x=x, y=y, width=width, height=height)
+        self.state.regions.setdefault(media_id, []).append(region)
+        return region
+
     # --- the Store interface ----------------------------------------------------------------
 
     def connect(self) -> None:
@@ -156,10 +180,11 @@ class FakeStore:
         try:
             yield FakeTx(self)
         except BaseException:
-            self.state.messages, self.state.archived, self.state.media = (
+            self.state.messages, self.state.archived, self.state.media, self.state.regions = (
                 before.messages,
                 before.archived,
                 before.media,
+                before.regions,
             )
             raise
 
@@ -195,8 +220,18 @@ class FakeStore:
         if row is None:
             return None
         return MediaRow(
-            id=media_id, upload_key=row["upload_key"], variant_version=row["variant_version"]
+            id=media_id,
+            upload_key=row["upload_key"],
+            upload_thumb_key=row["upload_thumb_key"],
+            public_key=row["public_key"],
+            public_thumb_key=row["public_thumb_key"],
+            variant_version=row["variant_version"],
+            published=row["processed_at"] is not None,
         )
+
+    def blur_regions(self, media_id: UUID) -> list[BlurRegion]:
+        self.fault("blur_regions")
+        return list(self.state.regions.get(media_id, []))
 
 
 class FakeStorage:
@@ -205,6 +240,12 @@ class FakeStorage:
     def __init__(self) -> None:
         self.objects: dict[str, bytes | list[bytes]] = {}
         self.reads: list[str] = []
+        # Every PUT as (key, content type), and every DELETE by key, in order, failed ones included.
+        self.puts: list[tuple[str, str]] = []
+        self.deletes: list[str] = []
+        # Errors the next PUTs or DELETEs raise, in order.
+        self.put_faults: list[Exception] = []
+        self.delete_faults: list[Exception] = []
         # Errors the next reads raise, in order, before any object is looked up.
         self.read_faults: list[Exception] = []
         # What the next probes answer, in order. True once the list runs out.
@@ -221,6 +262,18 @@ class FakeStorage:
         if isinstance(value, list):
             return value.pop(0) if len(value) > 1 else value[0]
         return value
+
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        self.puts.append((key, content_type))
+        if self.put_faults:
+            raise self.put_faults.pop(0)
+        self.objects[key] = data
+
+    def delete(self, key: str) -> None:
+        self.deletes.append(key)
+        if self.delete_faults:
+            raise self.delete_faults.pop(0)
+        self.objects.pop(key, None)
 
     def reachable(self) -> bool:
         self.probes += 1
@@ -259,6 +312,14 @@ def jpeg(width: int, height: int, *, orientation: int | None = None) -> bytes:
     payload = b"Exif\x00\x00" + b"MM\x00\x2a" + (8).to_bytes(4, "big") + ifd
     app1 = b"\xff\xe1" + (len(payload) + 2).to_bytes(2, "big") + payload
     return data[:2] + app1 + data[2:]
+
+
+def noise_jpeg(width: int, height: int, seed: int = 7) -> bytes:
+    """A JPEG of random pixels, so any blur shows as a large change."""
+    image = np.random.default_rng(seed).integers(0, 256, (height, width, 3), dtype=np.uint8)
+    ok, buffer = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    assert ok
+    return buffer.tobytes()
 
 
 def make_worker(

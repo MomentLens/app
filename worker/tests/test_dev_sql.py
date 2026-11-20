@@ -186,8 +186,95 @@ def test_media_for_job_returns_a_soft_deleted_row_and_none_for_a_gone_one(conn, 
     conn.execute("update public.media set deleted_at = now() where id = %s", (media_id,))
 
     row = store.media_for_job(media_id)
-    assert (row.id, row.upload_key, row.variant_version) == (media_id, f"{media_id}/upload.jpg", 0)
+    assert (row.id, row.upload_key, row.upload_thumb_key, row.variant_version) == (
+        media_id,
+        f"{media_id}/upload.jpg",
+        f"{media_id}/upload_thumb.webp",
+        0,
+    )
+    assert (row.public_key, row.public_thumb_key, row.published) == (None, None, False)
     assert store.media_for_job(uuid4()) is None
+
+
+def publish(conn, media_id, version=1):
+    conn.execute(
+        "update public.media set public_key = upload_key, public_thumb_key = upload_thumb_key,"
+        " variant_version = %s, processed_at = now() - interval '1 day' where id = %s",
+        (version, media_id),
+    )
+
+
+def add_region(conn, media_id, x, y, width, height):
+    conn.execute(
+        "insert into public.manual_blur_region"
+        " (id, media_id, drawn_by_user_id, x, y, width, height)"
+        " select gen_random_uuid(), id, uploader_user_id, %s, %s, %s, %s"
+        " from public.media where id = %s",
+        (x, y, width, height, media_id),
+    )
+
+
+def test_blur_regions_reads_the_photos_rows_oldest_first(conn, store, media_id):
+    publish(conn, media_id)
+    add_region(conn, media_id, 0.1, 0.2, 0.3, 0.4)
+    conn.execute("select pg_sleep(0.01)")
+    add_region(conn, media_id, 0.5, 0.5, 0.25, 0.25)
+
+    regions = store.blur_regions(media_id)
+
+    assert [(r.x, r.y, r.width, r.height) for r in regions] == [
+        (0.1, 0.2, 0.3, 0.4),
+        (0.5, 0.5, 0.25, 0.25),
+    ]
+    assert store.blur_regions(uuid4()) == []
+
+
+def processed_at(conn, media_id):
+    return conn.execute(
+        "select processed_at from public.media where id = %s", (media_id,)
+    ).fetchone()[0]
+
+
+def test_finish_blur_region_points_the_row_at_new_keys_and_keeps_processed_at(
+    conn, store, media_id
+):
+    publish(conn, media_id, version=2)
+    before = processed_at(conn, media_id)
+
+    with store.transaction() as tx:
+        assert tx.finish_blur_region(
+            media_id, 2, f"{media_id}/public_v3.jpg", f"{media_id}/public_thumb_v3.webp"
+        )
+
+    row = media_row(conn, media_id)
+    assert row[2:5] == (f"{media_id}/public_v3.jpg", f"{media_id}/public_thumb_v3.webp", 3)
+    assert processed_at(conn, media_id) == before
+
+
+def test_finish_blur_region_sets_processed_at_when_null(conn, store, media_id):
+    publish(conn, media_id)
+    conn.execute("update public.media set processed_at = null where id = %s", (media_id,))
+
+    with store.transaction() as tx:
+        assert tx.finish_blur_region(
+            media_id, 1, f"{media_id}/upload.jpg", f"{media_id}/upload_thumb.webp"
+        )
+
+    assert media_row(conn, media_id)[4:6] == (2, True)
+
+
+def test_finish_blur_region_refuses_a_changed_version_and_version_0(conn, store, media_id):
+    with store.transaction() as tx:
+        assert not tx.finish_blur_region(media_id, 0, "x", "y")
+    publish(conn, media_id, version=4)
+    with store.transaction() as tx:
+        assert not tx.finish_blur_region(media_id, 3, "x", "y")
+
+    assert media_row(conn, media_id)[2:5] == (
+        f"{media_id}/upload.jpg",
+        f"{media_id}/upload_thumb.webp",
+        4,
+    )
 
 
 def test_archive_clears_processed_at_in_the_same_transaction(conn, store, media_id):
