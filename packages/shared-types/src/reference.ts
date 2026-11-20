@@ -32,8 +32,8 @@ export type ReferenceRejectReason = z.infer<typeof ReferenceRejectReason>;
  * the Admin included, so every endpoint below answers about the caller's own rows and nobody
  * else's (spec §4.2, arch §3). The embedding never leaves the server.
  *
- * `rejectReason` is set exactly when `status` is `rejected`, as the table's check constraint
- * requires. `image` is the reference photo presigned for its owner; its `cacheKey` is the object
+ * `rejectReason` is set exactly when `status` is `rejected`. S-20's migration gives
+ * `face_reference` a check constraint that requires the same, so a stored row always parses. `image` is the reference photo presigned for its owner; its `cacheKey` is the object
  * key, which carries the reference's own id, so no two references share a cache entry.
  */
 export const Reference = z
