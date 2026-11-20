@@ -1,6 +1,7 @@
 """R2 errors sorted into missing, unavailable and everything else."""
 
 import io
+from uuid import UUID
 
 import boto3
 import pytest
@@ -14,6 +15,7 @@ from botocore.exceptions import (
 from botocore.response import StreamingBody
 from botocore.stub import Stubber
 
+from app import storage as storage_module
 from app.storage import PROBE_KEY, ObjectMissing, Storage, StorageUnavailable
 
 BUCKET = "momentlens-test"
@@ -152,3 +154,46 @@ def test_the_probe_counts_no_connection_as_unreachable(stubbed, monkeypatch):
 
     monkeypatch.setattr(client, "get_object", refuse)
     assert not storage.reachable()
+
+
+def test_put_sends_the_bytes_and_their_type(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_response(
+        "put_object",
+        {},
+        {"Bucket": BUCKET, "Key": "a/public_v2.jpg", "Body": b"jpeg", "ContentType": "image/jpeg"},
+    )
+    storage.put("a/public_v2.jpg", b"jpeg", "image/jpeg")
+
+
+def test_put_answered_with_a_5xx_is_unavailable(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_client_error("put_object", "InternalError", http_status_code=503)
+    with pytest.raises(StorageUnavailable):
+        storage.put("a/public_v2.jpg", b"jpeg", "image/jpeg")
+
+
+def test_put_refused_is_an_outage(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_client_error("put_object", "AccessDenied", http_status_code=403)
+    with pytest.raises(StorageUnavailable, match="R2_"):
+        storage.put("a/public_v2.jpg", b"jpeg", "image/jpeg")
+
+
+def test_delete_names_the_key(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_response("delete_object", {}, {"Bucket": BUCKET, "Key": "a/public_v1.jpg"})
+    storage.delete("a/public_v1.jpg")
+
+
+def test_delete_answered_with_a_5xx_is_unavailable(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_client_error("delete_object", "InternalError", http_status_code=500)
+    with pytest.raises(StorageUnavailable):
+        storage.delete("a/public_v1.jpg")
+
+
+def test_the_worker_builds_its_keys_with_forward_slashes_on_every_platform():
+    media_id = UUID("6f1c2a52-0d3e-4c55-9b51-0b8e9d1f2a33")
+    assert storage_module.public_key(media_id, 4) == f"{media_id}/public_v4.jpg"
+    assert storage_module.public_thumb_key(media_id, 4) == f"{media_id}/public_thumb_v4.webp"

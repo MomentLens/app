@@ -1,4 +1,5 @@
-"""R2 for the worker: read an object, and tell a missing file apart from an outage.
+"""R2 for the worker: read, write and delete an object, build the worker's keys, and tell a
+missing file apart from an outage.
 
 The loop treats the two differently. A missing upload is archived on its first try, because a
 retry cannot bring it back (D-123). An outage costs the try in flight, and the loop then waits
@@ -10,6 +11,7 @@ instead of archiving every message it reaches (D-123).
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 import boto3
 from botocore.config import Config
@@ -32,6 +34,20 @@ PROBE_KEY = "momentlens-worker-probe"
 
 # What R2 answers when the worker's key is wrong or lacks access to the bucket.
 _REFUSED = (401, 403)
+
+
+def public_key(media_id: UUID, version: int) -> str:
+    """The public file's key at a variant_version (arch §3, D-60).
+
+    The worker's one builder for this key family (root invariant 12). Built as a string with `/`,
+    never with os.path or Path, which write `\\` on Windows (D-162).
+    """
+    return f"{media_id}/public_v{version}.jpg"
+
+
+def public_thumb_key(media_id: UUID, version: int) -> str:
+    """The public thumbnail's key at a variant_version (arch §3)."""
+    return f"{media_id}/public_thumb_v{version}.webp"
 
 
 class ObjectMissing(Exception):
@@ -79,6 +95,23 @@ class Storage:
             response = self._client.get_object(Bucket=self._bucket, Key=key)
             with response["Body"] as body:
                 return body.read()
+        except (ClientError, BotoCoreError) as error:
+            raise _classify(error, key) from error
+
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        """Writes the object. Raises StorageUnavailable, or boto's error."""
+        try:
+            self._client.put_object(
+                Bucket=self._bucket, Key=key, Body=data, ContentType=content_type
+            )
+        except (ClientError, BotoCoreError) as error:
+            raise _classify(error, key) from error
+
+    def delete(self, key: str) -> None:
+        """Deletes the object. R2 answers a missing key as deleted. Raises StorageUnavailable, or
+        boto's error."""
+        try:
+            self._client.delete_object(Bucket=self._bucket, Key=key)
         except (ClientError, BotoCoreError) as error:
             raise _classify(error, key) from error
 
