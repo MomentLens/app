@@ -8,9 +8,11 @@ The rules are arch §5's, from D-103, D-108 and D-123:
   message goes back to the head of the line, and the worker waits and reads it again before any
   newer one. Taking the lock unhides every message a stopped worker left hidden.
 - The third failure archives the message and clears its photo's processed_at in one
-  transaction, then logs it and reports it to Sentry. A missing upload object, a message that
-  does not parse and an unknown job are archived on their first try.
-- A message whose photo row is gone is deleted as done, with no archive and no report.
+  transaction, or rejects its pending reference as `failed` (D-172), then logs it and reports it
+  to Sentry. A missing upload object, a message that does not parse and an unknown job are
+  archived on their first try.
+- A message whose photo or reference row is gone is deleted as done, with no archive and no
+  report.
 - A lost connection to Postgres or R2 is waited out here, never by exiting, because every exit
   costs the unit's 10-second RestartSec and a fresh start. R2 refusing the worker's key or
   bucket is waited out the same way.
@@ -56,6 +58,7 @@ def report_archive(
     read_ct: int,
     reason: str,
     error: BaseException | None = None,
+    reference_id: UUID | None = None,
 ) -> None:
     """Sends one archived message to Sentry, the only thing the worker reports (D-123).
 
@@ -66,7 +69,12 @@ def report_archive(
         scope.set_tag("archive_reason", kind)
         scope.set_context(
             "message",
-            {"msg_id": msg_id, "media_id": str(media_id) if media_id else None, "read_ct": read_ct},
+            {
+                "msg_id": msg_id,
+                "media_id": str(media_id) if media_id else None,
+                "face_reference_id": str(reference_id) if reference_id else None,
+                "read_ct": read_ct,
+            },
         )
         scope.fingerprint = ["worker-archive", job or "unknown", kind]
         if error is not None and not isinstance(error, _EXPECTED):
@@ -161,14 +169,14 @@ class Worker:
         if parsed is None:
             return
         job, body = parsed
-        media_id: UUID | None = getattr(body, "media_id", None)
-        where = _where(job.name, message, media_id)
+        ids = Ids(getattr(body, "media_id", None), getattr(body, "face_reference_id", None))
+        where = _where(job.name, message, ids)
 
         if message.read_ct > MAX_TRIES:
             self._final(
                 message,
                 job.name,
-                media_id,
+                ids,
                 kind="stopped",
                 known=True,
                 reason=f"{message.read_ct - 1} earlier reads never finished, so the worker"
@@ -186,13 +194,13 @@ class Worker:
             raise
         except ObjectMissing as error:
             self._final(
-                message, job.name, media_id, kind="missing_object", known=True, reason=str(error)
+                message, job.name, ids, kind="missing_object", known=True, reason=str(error)
             )
         except StorageUnavailable as error:
-            self._failed_try(message, job.name, media_id, error)
+            self._failed_try(message, job.name, ids, error)
             self._wait_for_storage()
         except Exception as error:
-            self._failed_try(message, job.name, media_id, error)
+            self._failed_try(message, job.name, ids, error)
         else:
             log.info("%s done in %dms", where, (time.monotonic() - started) * 1000)
 
@@ -203,7 +211,7 @@ class Worker:
             self._final(
                 message,
                 None,
-                _media_id_in(body),
+                _ids_in(body),
                 kind="malformed",
                 known=False,
                 reason="the message has no job name",
@@ -214,7 +222,7 @@ class Worker:
             self._final(
                 message,
                 name,
-                _media_id_in(body),
+                _ids_in(body),
                 kind="unknown_job",
                 known=False,
                 reason=f"this worker has no job named {name!r}",
@@ -226,22 +234,20 @@ class Worker:
             self._final(
                 message,
                 name,
-                _media_id_in(body),
+                _ids_in(body),
                 kind="malformed",
                 known=False,
                 reason=f"the message does not parse: {_summary(error)}",
             )
             return None
 
-    def _failed_try(
-        self, message: Message, job: str, media_id: UUID | None, error: Exception
-    ) -> None:
+    def _failed_try(self, message: Message, job: str, ids: Ids, error: Exception) -> None:
         trace = None if isinstance(error, _EXPECTED) else error
         if message.read_ct >= MAX_TRIES:
             self._final(
                 message,
                 job,
-                media_id,
+                ids,
                 kind="failed",
                 known=True,
                 reason=f"failed {MAX_TRIES} tries, the last with {type(error).__name__}: {error}",
@@ -250,7 +256,7 @@ class Worker:
             return
         log.warning(
             "%s failed with %s: %s. Reading it again in %.0fs, before any newer message",
-            _where(job, message, media_id),
+            _where(job, message, ids),
             type(error).__name__,
             error,
             self.retry_wait_s,
@@ -263,7 +269,7 @@ class Worker:
         self,
         message: Message,
         job: str | None,
-        media_id: UUID | None,
+        ids: Ids,
         *,
         kind: str,
         known: bool,
@@ -271,16 +277,19 @@ class Worker:
         error: Exception | None = None,
     ) -> None:
         """Archives the message, or deletes it as done when its known job's row is gone."""
-        where = _where(job, message, media_id)
-        result = self.store.archive(message.msg_id, media_id, gone_is_done=known)
+        where = _where(job, message, ids)
+        result = self.store.archive(
+            message.msg_id, ids.media_id, gone_is_done=known, reference_id=ids.reference_id
+        )
         if result is Archive.GONE:
             log.info("%s the row is gone, so the message is done (arch §5)", where)
             return
-        unpublished = (
-            " Cleared processed_at, so the photo left the album (D-108)."
-            if result is Archive.UNPUBLISHED
-            else ""
-        )
+        if result is Archive.UNPUBLISHED:
+            unpublished = " Cleared processed_at, so the photo left the album (D-108)."
+        elif result is Archive.REJECTED:
+            unpublished = " Set the reference rejected as failed, so the app stops waiting (D-172)."
+        else:
+            unpublished = ""
         log.error(
             "%s archived, %s: %s.%s Send it from pgmq.a_%s back to %s to run it again (arch §5)",
             where,
@@ -295,10 +304,11 @@ class Worker:
             kind=kind,
             job=job,
             msg_id=message.msg_id,
-            media_id=media_id,
+            media_id=ids.media_id,
             read_ct=message.read_ct,
             reason=reason,
             error=error,
+            reference_id=ids.reference_id,
         )
 
     def _wait_for_storage(self) -> None:
@@ -320,16 +330,33 @@ class Worker:
             wait = min(wait * 2, self.storage_wait_s[1])
 
 
-def _where(job: str | None, message: Message, media_id: UUID | None) -> str:
-    return f"job={job or '?'} msg_id={message.msg_id} media_id={media_id} try={message.read_ct}"
+@dataclass(frozen=True)
+class Ids:
+    """The row a message names: a photo, or a reference for reference_process (D-172)."""
+
+    media_id: UUID | None = None
+    reference_id: UUID | None = None
 
 
-def _media_id_in(body: Any) -> UUID | None:
-    """The photo a message names, when it names one, even if the rest does not parse."""
+def _where(job: str | None, message: Message, ids: Ids) -> str:
+    row = (
+        f"face_reference_id={ids.reference_id}"
+        if ids.reference_id is not None
+        else f"media_id={ids.media_id}"
+    )
+    return f"job={job or '?'} msg_id={message.msg_id} {row} try={message.read_ct}"
+
+
+def _ids_in(body: Any) -> Ids:
+    """The rows a message names, when it names any, even if the rest does not parse."""
     if not isinstance(body, dict):
-        return None
+        return Ids()
+    return Ids(_uuid(body.get("media_id")), _uuid(body.get("face_reference_id")))
+
+
+def _uuid(value: Any) -> UUID | None:
     try:
-        return UUID(str(body.get("media_id")))
+        return UUID(str(value))
     except ValueError:
         return None
 
