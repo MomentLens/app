@@ -43,3 +43,35 @@ export const ProfileResponse = z.object({
   consentRequired: z.boolean(),
 });
 export type ProfileResponse = z.infer<typeof ProfileResponse>;
+
+/**
+ * POST /profiles/me/avatar-upload, for any signed-in caller, with no body.
+ *
+ * The app runs the photo through arch §4.1's Stage 1 (orientation applied, every EXIF field
+ * stripped, JPEG at quality 0.9) and PUTs it to `uploadUrl` with `Content-Type: image/jpeg` within
+ * 15 minutes, then sends `uploadId` to PUT /profiles/me/avatar (D-172). The API builds the key
+ * `users/{user_id}/avatar_{upload_id}.jpg` from the caller and `uploadId`, so the app never sees
+ * or sends a key and cannot point its avatar at another user's file (root invariant 12).
+ */
+export const CreateAvatarUploadResponse = z.object({
+  uploadId: z.uuid(),
+  uploadUrl: z.url({ protocol: /^https$/ }),
+});
+export type CreateAvatarUploadResponse = z.infer<typeof CreateAvatarUploadResponse>;
+
+/**
+ * PUT /profiles/me/avatar. The API HEADs the object and answers 409 `upload_missing` when it is
+ * not in R2, then writes `avatar_key` through `set_avatar`. It writes nothing else: a profile
+ * photo is never a reference, gets no face check, creates no subject and queues no job (D-141).
+ * A repeat with the same `uploadId` sets the same avatar again.
+ */
+export const SetAvatarRequest = z.object({
+  uploadId: z.uuid(),
+});
+export type SetAvatarRequest = z.infer<typeof SetAvatarRequest>;
+
+/** PUT /profiles/me/avatar. The new avatar, presigned for the caller. */
+export const SetAvatarResponse = z.object({
+  avatar: PresignedImage,
+});
+export type SetAvatarResponse = z.infer<typeof SetAvatarResponse>;
