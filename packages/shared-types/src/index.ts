@@ -17,6 +17,7 @@ export * from './invite';
 export * from './join-request';
 export * from './media';
 export * from './profile';
+export * from './reference';
 export * from './sub-event';
 export * from './verification';
 export * from './venue-qr';
