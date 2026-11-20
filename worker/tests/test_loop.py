@@ -239,4 +239,6 @@ def test_registry_names_match_their_message_models():
     assert "thumbnail_dims" in REGISTRY
     for name, job in REGISTRY.items():
         assert job.name == name
-        assert job.message.model_validate({"job": name, "media_id": str(uuid4())}).job == name
+        # Each message names its row by its own field; the extra one is ignored.
+        body = {"job": name, "media_id": str(uuid4()), "face_reference_id": str(uuid4())}
+        assert job.message.model_validate(body).job == name

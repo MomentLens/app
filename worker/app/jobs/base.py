@@ -28,6 +28,12 @@ class MediaMessage(JobMessage):
     media_id: UUID
 
 
+class ReferenceMessage(JobMessage):
+    """A message about one reference photo. A final failure rejects it as `failed` (D-172)."""
+
+    face_reference_id: UUID
+
+
 @dataclass(frozen=True)
 class Job:
     name: str
@@ -43,7 +49,7 @@ class JobContext:
     store: Store
     storage: Storage
     msg_id: int
-    # The loop's prefix for this message's log lines: job, msg_id, media_id and try.
+    # The loop's prefix for this message's log lines: job, msg_id, the row's id and try.
     where: str
     committed: bool = False
 
