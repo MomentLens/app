@@ -1,7 +1,7 @@
 """Postgres for the worker: one connection, the queue lock, reconnects and transactions.
 
 The worker connects with DATABASE_URL as the postgres role, so RLS does not apply. Every query
-here names one media row by its primary key, the photo the message names, so none reaches into
+here names one media row by its primary key, or that row's blur regions, so none reaches into
 another event (worker/AGENTS.md asks for every query to be scoped to its event).
 
 The connection runs in autocommit, so a statement outside `transaction()` commits on its own.
@@ -40,7 +40,23 @@ class DatabaseUnavailable(Exception):
 class MediaRow:
     id: UUID
     upload_key: str
+    upload_thumb_key: str
+    # None until a job first writes the row.
+    public_key: str | None
+    public_thumb_key: str | None
     variant_version: int
+    # processed_at is set, so the photo is in the album.
+    published: bool
+
+
+@dataclass(frozen=True)
+class BlurRegion:
+    """One manual_blur_region row: fractions of the stored image, upright (D-99)."""
+
+    x: float
+    y: float
+    width: float
+    height: float
 
 
 class Archive(Enum):
@@ -94,6 +110,32 @@ class Tx:
             " variant_version = variant_version + 1, processed_at = now()"
             " where id = %(id)s and variant_version = 0",
             {"id": media_id, "width": width, "height": height},
+        )
+        return self._cur.rowcount == 1
+
+    def finish_blur_region(
+        self, media_id: UUID, read_version: int, public_key: str, public_thumb_key: str
+    ) -> bool:
+        """Points the row at a blur_region's files, in one update. False when no row matched.
+
+        Matches only while variant_version is still the one the job read, so nothing another
+        write changed is overwritten, and a retry after a failure rebuilds the same keys.
+        processed_at is set when it is null and kept when it is not, so a message re-sent from the
+        archive republishes the photo (D-171). Every file the keys name already applies every
+        stored region, so publishing in this statement is safe (root invariant 1, D-55).
+        """
+        self._cur.execute(
+            "update public.media"
+            " set public_key = %(public)s, public_thumb_key = %(thumb)s,"
+            " variant_version = variant_version + 1,"
+            " processed_at = coalesce(processed_at, now())"
+            " where id = %(id)s and variant_version = %(version)s and variant_version > 0",
+            {
+                "id": media_id,
+                "version": read_version,
+                "public": public_key,
+                "thumb": public_thumb_key,
+            },
         )
         return self._cur.rowcount == 1
 
@@ -208,17 +250,39 @@ class Store:
     # --- media ------------------------------------------------------------------------------
 
     def media_for_job(self, media_id: UUID) -> MediaRow | None:
-        """The row a job works on. A soft-deleted row is returned like any other, because the
-        Admin can restore it for 30 days (spec §4.21, D-123)."""
+        """The row a job works on. A soft-deleted row is returned like any other for now. Nobody
+        can restore a deleted photo, so S-22a makes every job but media_delete skip one (D-130)."""
         with self._statement() as cur:
             cur.execute(
-                "select id, upload_key, variant_version from public.media where id = %s",
+                "select id, upload_key, upload_thumb_key, public_key, public_thumb_key,"
+                " variant_version, processed_at is not null"
+                " from public.media where id = %s",
                 (media_id,),
             )
             row = cur.fetchone()
-        return (
-            None if row is None else MediaRow(id=row[0], upload_key=row[1], variant_version=row[2])
+        if row is None:
+            return None
+        return MediaRow(
+            id=row[0],
+            upload_key=row[1],
+            upload_thumb_key=row[2],
+            public_key=row[3],
+            public_thumb_key=row[4],
+            variant_version=row[5],
+            published=bool(row[6]),
         )
+
+    def blur_regions(self, media_id: UUID) -> list[BlurRegion]:
+        """Every region stored on the photo now, oldest first, through
+        manual_blur_region_media_idx. The job reads them itself; the message carries none."""
+        with self._statement() as cur:
+            cur.execute(
+                "select x, y, width, height from public.manual_blur_region"
+                " where media_id = %s order by created_at, id",
+                (media_id,),
+            )
+            rows = cur.fetchall()
+        return [BlurRegion(x=r[0], y=r[1], width=r[2], height=r[3]) for r in rows]
 
     # --- internals --------------------------------------------------------------------------
 
