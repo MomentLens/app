@@ -4,10 +4,10 @@ S-21 removes thumbnail_dims from this registry when face_process replaces it, so
 run on the same upload (D-72).
 """
 
-from app.jobs import thumbnail_dims
+from app.jobs import blur_region, thumbnail_dims
 from app.jobs.base import Job
 
-REGISTRY: dict[str, Job] = {job.name: job for job in (thumbnail_dims.JOB,)}
+REGISTRY: dict[str, Job] = {job.name: job for job in (thumbnail_dims.JOB, blur_region.JOB)}
 
 
 def run_setup_hooks(registry: dict[str, Job] = REGISTRY) -> None:
