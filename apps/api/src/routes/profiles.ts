@@ -6,6 +6,8 @@ import { jsonBody } from '../middleware/body';
 export interface ProfileHandlers {
   getMine: RequestHandler;
   acceptConsent: RequestHandler;
+  createAvatarUpload: RequestHandler;
+  setAvatar: RequestHandler;
 }
 
 // requireAuth sits on the route, not on the router with router.use, which would also run it for
@@ -15,5 +17,7 @@ export function profilesRouter(auth: RequestHandler, handlers: ProfileHandlers):
   const router = Router();
   router.get('/profiles/me', auth, handlers.getMine);
   router.post('/profiles/me/consent', auth, jsonBody, handlers.acceptConsent);
+  router.post('/profiles/me/avatar-upload', auth, handlers.createAvatarUpload);
+  router.put('/profiles/me/avatar', auth, jsonBody, handlers.setAvatar);
   return router;
 }
