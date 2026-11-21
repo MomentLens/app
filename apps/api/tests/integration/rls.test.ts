@@ -57,10 +57,11 @@ import type {
 import { createSql } from '../../src/db/sql';
 import type { Sql } from '../../src/db/sql';
 import { createServerClient } from '../../src/db/supabase';
-import { uploadKeys } from '../../src/lib/keys';
+import { avatarKey, uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
 import { createAlbumStore, listAlbum } from '../../src/services/album';
 import { createBlurRegionStore } from '../../src/services/blur-regions';
+import { createReferenceStore } from '../../src/services/references';
 import {
   createEventParams,
   createEventStore,
@@ -95,6 +96,7 @@ import {
   acceptConsent,
   createConsentStore,
   createFindProfile,
+  createSetAvatar,
   getOwnProfile,
 } from '../../src/services/profiles';
 import {
@@ -6439,6 +6441,394 @@ if (project === null) {
         await expect(adding).resolves.toEqual({ outcome: 'not_found' });
         await expect(regionIds(f.photo)).resolves.toEqual([]);
         expect(await messagesFor(owner, f.photo)).toBe(0);
+      });
+    });
+
+    describe('S-20 face_reference, face, add_face_reference and delete_face_reference (D-141, D-172)', () => {
+      const subEvents = createSubEventStore(db);
+      const references = createReferenceStore(db);
+      const setAvatar = createSetAvatar(db);
+
+      class Rollback extends Error {}
+
+      // An event with every role and status the card names, and another event the owner is in.
+      async function fixture() {
+        const [a, g, g2, p, pen, blk, rem, out] = await Promise.all([
+          createNamedUser('Reference Admin'),
+          createNamedUser('Reference Guest'),
+          createNamedUser('Reference Other Guest'),
+          createNamedUser('Reference Photographer'),
+          createNamedUser('Reference Pending'),
+          createNamedUser('Reference Blocked'),
+          createNamedUser('Reference Removed'),
+          createNamedUser('Reference Outsider'),
+        ]);
+        const event = await createdEvent(a.id);
+        const other = await createdEvent(out.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, g2.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        await addMember(event.id, pen.id, 'guest', 'pending');
+        await addMember(event.id, blk.id, 'guest', 'blocked');
+        await addMember(event.id, rem.id, 'guest', 'removed');
+        await addMember(other.id, g.id, 'guest', 'active');
+        return { a, g, g2, p, pen, blk, rem, out, event, other };
+      }
+
+      const key = (userId: string, eventId: string, id: string) =>
+        `users/${userId}/events/${eventId}/reference_${id}.jpg`;
+
+      // reference_process messages for these references, queued or archived. The dev server's
+      // worker has no reference_process job until S-20 merges, so it archives one it reads.
+      async function messagesFor(sql: Sql | postgres.TransactionSql, ids: string[]) {
+        const rows = await sql`
+          select msg_id from pgmq.q_jobs
+          where message->>'job' = 'reference_process'
+            and message->>'face_reference_id' = any(${ids}::text[])
+          union all
+          select msg_id from pgmq.a_jobs
+          where message->>'job' = 'reference_process'
+            and message->>'face_reference_id' = any(${ids}::text[])`;
+        return rows.length;
+      }
+
+      // Deletes their queued messages, so the dev worker does not archive each and report it.
+      async function dropMessages(ids: string[]) {
+        await owner`
+          select pgmq.delete('jobs', msg_id) from pgmq.q_jobs
+          where message->>'job' = 'reference_process'
+            and message->>'face_reference_id' = any(${ids}::text[])`;
+      }
+
+      async function referenceIds(eventId: string) {
+        const rows = await owner`
+          select id from public.face_reference where event_id = ${eventId} order by id`;
+        return rows.map((r) => r.id as string);
+      }
+
+      // Runs `body` in a transaction on the owner login that always rolls back, so no message it
+      // sends reaches the worker. `api` calls a function as the API's role.
+      async function rolledBack(
+        body: (tx: postgres.TransactionSql, api: ApiCalls) => Promise<void>,
+      ): Promise<void> {
+        try {
+          await owner.begin(async (tx) => {
+            await body(tx, apiCalls(tx));
+            throw new Rollback();
+          });
+        } catch (error) {
+          if (!(error instanceof Rollback)) throw error;
+        }
+      }
+
+      interface ApiCalls {
+        add(userId: string, eventId: string, id?: string): Promise<Record<string, unknown>>;
+        remove(userId: string, eventId: string, id: string): Promise<Record<string, unknown>>;
+      }
+
+      function apiCalls(tx: postgres.TransactionSql): ApiCalls {
+        const asApi = async (query: () => Promise<Record<string, unknown>[]>) => {
+          await tx`set local role service_role`;
+          try {
+            const [row, ...rest] = await query();
+            if (row === undefined || rest.length > 0) throw new Error('expected one row');
+            return row;
+          } finally {
+            await tx`reset role`;
+          }
+        };
+        return {
+          add: (userId, eventId, id = randomUUID()) =>
+            asApi(
+              () => tx`
+                select * from public.add_face_reference(
+                  p_reference_id => ${id}, p_event_id => ${eventId}, p_user_id => ${userId},
+                  p_photo_key => ${key(userId, eventId, id)})`,
+            ),
+          remove: (userId, eventId, id) =>
+            asApi(
+              () => tx`
+                select * from public.delete_face_reference(
+                  p_reference_id => ${id}, p_event_id => ${eventId}, p_user_id => ${userId})`,
+            ),
+        };
+      }
+
+      it('shows face_reference and face to neither anon nor a signed-in member, and refuses their writes', async () => {
+        const f = await fixture();
+        const id = randomUUID();
+        const added = await references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
+        expect(added).toBe('added');
+        await dropMessages([id]);
+        // A face on a published photo, as the worker writes one from S-21.
+        const subEventId = ((await subEvents.schedule(f.event.id)) ?? [])[0]?.id;
+        if (subEventId === undefined) throw new Error('no sub-event found');
+        const mediaId = randomUUID();
+        const now = new Date().toISOString();
+        const media = await admin.from('media').insert({
+          id: mediaId,
+          event_id: f.event.id,
+          sub_event_id: subEventId,
+          uploader_user_id: f.a.id,
+          uploader_role_at_upload: 'admin',
+          captured_at: now,
+          content_hash: randomBytes(32).toString('hex'),
+          size_bytes: 100,
+          upload_key: `${mediaId}/upload.jpg`,
+          upload_thumb_key: `${mediaId}/upload_thumb.webp`,
+          uploaded_at: now,
+          public_key: `${mediaId}/public_v1.jpg`,
+          public_thumb_key: `${mediaId}/public_thumb_v1.webp`,
+          variant_version: 1,
+          processed_at: now,
+        });
+        expect(media.error).toBeNull();
+        await owner`
+          insert into public.face (media_id, x, y, width, height, embedding)
+          values (${mediaId}, 0.1, 0.1, 0.2, 0.2,
+            array_fill(0.01::real, array[512])::extensions.vector)`;
+
+        const guest = await signedInClient(f.g);
+        for (const client of [anon, guest]) {
+          for (const table of ['face_reference', 'face']) {
+            const read = await client.from(table).select('*');
+            expect(read.error).toBeNull();
+            expect(read.data).toEqual([]);
+          }
+          await client.from('face_reference').update({ status: 'accepted' }).eq('id', id);
+          await client.from('face_reference').delete().eq('id', id);
+          await client.from('face').delete().eq('media_id', mediaId);
+          const add = await client.rpc('add_face_reference', {
+            p_reference_id: randomUUID(),
+            p_event_id: f.event.id,
+            p_user_id: f.g.id,
+            p_photo_key: key(f.g.id, f.event.id, randomUUID()),
+          });
+          expect(add.error).not.toBeNull();
+          const remove = await client.rpc('delete_face_reference', {
+            p_reference_id: id,
+            p_event_id: f.event.id,
+            p_user_id: f.g.id,
+          });
+          expect(remove.error).not.toBeNull();
+        }
+        const [stored] = await owner`select status from public.face_reference where id = ${id}`;
+        expect(stored).toEqual({ status: 'pending' });
+        const faces = await owner`select id from public.face where media_id = ${mediaId}`;
+        expect(faces).toHaveLength(1);
+      });
+
+      it('refuses in the contract order and sends exactly one message per new reference', async () => {
+        const f = await fixture();
+        const theirs = randomUUID();
+        const elsewhere = randomUUID();
+
+        await rolledBack(async (tx, api) => {
+          // 404 first, for an unknown event, members and outsiders alike.
+          for (const user of [f.g, f.out]) {
+            await expect(api.add(user.id, randomUUID())).resolves.toEqual({
+              outcome: 'not_found',
+              message_id: null,
+            });
+            await expect(api.remove(user.id, randomUUID(), randomUUID())).resolves.toEqual({
+              outcome: 'not_found',
+              photo_key: null,
+            });
+          }
+          for (const user of [f.pen, f.blk, f.rem, f.out]) {
+            await expect(api.add(user.id, f.event.id)).resolves.toEqual({
+              outcome: 'not_member',
+              message_id: null,
+            });
+            await expect(api.remove(user.id, f.event.id, randomUUID())).resolves.toEqual({
+              outcome: 'not_member',
+              photo_key: null,
+            });
+          }
+          // No subject was made for anyone refused.
+          const subjects = await tx`
+            select user_id from public.subject
+            where user_id = any(${[f.pen.id, f.blk.id, f.rem.id, f.out.id]}::uuid[])`;
+          expect(subjects).toEqual([]);
+
+          // Every role keeps references; the first one makes the caller's subject.
+          for (const user of [f.a, f.p]) {
+            await expect(api.add(user.id, f.event.id)).resolves.toMatchObject({ outcome: 'added' });
+          }
+
+          // A Guest adds one; a repeat of the id stores and sends nothing new.
+          const mine = randomUUID();
+          await expect(api.add(f.g.id, f.event.id, mine)).resolves.toEqual({
+            outcome: 'added',
+            message_id: expect.any(Number),
+          });
+          expect(await messagesFor(tx, [mine])).toBe(1);
+          await expect(api.add(f.g.id, f.event.id, mine)).resolves.toEqual({
+            outcome: 'repeat',
+            message_id: null,
+          });
+          expect(await messagesFor(tx, [mine])).toBe(1);
+          const [row] = await tx`
+            select status, reject_reason, embedding, photo_key
+            from public.face_reference where id = ${mine}`;
+          expect(row).toEqual({
+            status: 'pending',
+            reject_reason: null,
+            embedding: null,
+            photo_key: key(f.g.id, f.event.id, mine),
+          });
+
+          // The same id from another person, or in another event, is taken.
+          await expect(api.add(f.g2.id, f.event.id, mine)).resolves.toEqual({
+            outcome: 'taken',
+            message_id: null,
+          });
+          await expect(api.add(f.g.id, f.other.id, mine)).resolves.toEqual({
+            outcome: 'taken',
+            message_id: null,
+          });
+
+          // A key built for anyone but the caller, this event and this id raises.
+          await tx`savepoint wrong_key`;
+          await expect(
+            tx`select * from public.add_face_reference(
+              p_reference_id => ${theirs}, p_event_id => ${f.event.id}, p_user_id => ${f.g.id},
+              p_photo_key => ${key(f.g2.id, f.event.id, theirs)})`,
+          ).rejects.toMatchObject({ code: '22023' });
+          await tx`rollback to savepoint wrong_key`;
+
+          // Five kept references; a rejected one does not count; a 6th is refused.
+          for (let i = 0; i < 4; i += 1) {
+            await expect(api.add(f.g.id, f.event.id)).resolves.toMatchObject({ outcome: 'added' });
+          }
+          await expect(api.add(f.g.id, f.event.id)).resolves.toEqual({
+            outcome: 'too_many',
+            message_id: null,
+          });
+          await tx`
+            update public.face_reference set status = 'rejected', reject_reason = 'no_face'
+            where id = ${mine}`;
+          await expect(api.add(f.g.id, f.event.id)).resolves.toMatchObject({ outcome: 'added' });
+          await expect(api.add(f.g.id, f.event.id)).resolves.toMatchObject({
+            outcome: 'too_many',
+          });
+          // Another event counts its own.
+          await expect(api.add(f.g.id, f.other.id, elsewhere)).resolves.toMatchObject({
+            outcome: 'added',
+          });
+
+          // Delete: another person's, or the caller's from another event, matches nothing.
+          await expect(api.remove(f.g2.id, f.event.id, mine)).resolves.toEqual({
+            outcome: 'not_found',
+            photo_key: null,
+          });
+          await expect(api.remove(f.a.id, f.event.id, mine)).resolves.toEqual({
+            outcome: 'not_found',
+            photo_key: null,
+          });
+          await expect(api.remove(f.g.id, f.event.id, elsewhere)).resolves.toEqual({
+            outcome: 'not_found',
+            photo_key: null,
+          });
+          await expect(api.remove(f.g.id, f.event.id, mine)).resolves.toEqual({
+            outcome: 'removed',
+            photo_key: key(f.g.id, f.event.id, mine),
+          });
+          await expect(api.remove(f.g.id, f.event.id, mine)).resolves.toMatchObject({
+            outcome: 'not_found',
+          });
+          // A delete sends nothing until S-25 (D-172).
+          expect(await messagesFor(tx, [mine])).toBe(1);
+
+          // Removal from the event keeps the rows, and refuses the removed member (D-84).
+          await tx`
+            update public.membership set status = 'removed'
+            where event_id = ${f.event.id} and user_id = ${f.g.id}`;
+          const kept = await tx`
+            select count(*)::int as n from public.face_reference fr
+            join public.subject s on s.id = fr.subject_id
+            where s.user_id = ${f.g.id} and fr.event_id = ${f.event.id}`;
+          expect(kept).toEqual([{ n: 5 }]);
+          await expect(api.add(f.g.id, f.event.id)).resolves.toMatchObject({
+            outcome: 'not_member',
+          });
+
+          // A deleted event is 404 for its Admin too.
+          await tx`update public.event set deleted_at = now() where id = ${f.event.id}`;
+          await expect(api.add(f.a.id, f.event.id)).resolves.toMatchObject({
+            outcome: 'not_found',
+          });
+          await expect(api.remove(f.a.id, f.event.id, randomUUID())).resolves.toMatchObject({
+            outcome: 'not_found',
+          });
+        });
+        // Nothing of the above committed.
+        await expect(referenceIds(f.event.id)).resolves.toEqual([]);
+        await expect(referenceIds(f.other.id)).resolves.toEqual([]);
+      });
+
+      it('runs through the store, and stores one of a 5th and 6th sent at once (D-95)', async () => {
+        const f = await fixture();
+        const ids: string[] = [];
+        const addOne = async () => {
+          const id = randomUUID();
+          ids.push(id);
+          return references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
+        };
+        for (let i = 0; i < 4; i += 1) await expect(addOne()).resolves.toBe('added');
+        const both = await Promise.all([addOne(), addOne()]);
+        expect(both.sort()).toEqual(['added', 'too_many']);
+        expect(await messagesFor(owner, ids)).toBe(5);
+        await dropMessages(ids);
+        await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(5);
+        await expect(references.countKept(f.event.id, f.g2.id)).resolves.toBe(0);
+
+        const listed = await references.list(f.event.id, f.g.id);
+        expect(listed).toHaveLength(5);
+        expect(listed[0]).toEqual({
+          id: expect.any(String),
+          status: 'pending',
+          rejectReason: null,
+          photoKey: key(f.g.id, f.event.id, listed[0]?.id ?? ''),
+          createdAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/),
+        });
+        await expect(references.list(f.event.id, f.g2.id)).resolves.toEqual([]);
+        await expect(references.list(f.other.id, f.g.id)).resolves.toEqual([]);
+
+        const first = listed[0]?.id ?? '';
+        await expect(references.findOwner(first)).resolves.toEqual({
+          userId: f.g.id,
+          eventId: f.event.id,
+        });
+        await expect(references.findOwner(randomUUID())).resolves.toBeNull();
+
+        await expect(references.remove(first, f.event.id, f.g2.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(references.remove(first, f.event.id, f.g.id)).resolves.toEqual({
+          outcome: 'removed',
+          photoKey: key(f.g.id, f.event.id, first),
+        });
+        await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(4);
+        expect(await messagesFor(owner, ids)).toBeLessThanOrEqual(5);
+      });
+
+      it('sets an avatar only in the caller’s own folder, and answers false with no profile', async () => {
+        const [a, b] = await Promise.all([
+          createNamedUser('Avatar Owner'),
+          createNamedUser('Avatar Other'),
+        ]);
+        const mine = avatarKey(a.id, randomUUID());
+        await expect(setAvatar(a.id, mine)).resolves.toBe(true);
+        await expect(setAvatar(a.id, avatarKey(b.id, randomUUID()))).rejects.toMatchObject({
+          code: '23514',
+        });
+        const [row] = await owner`select avatar_key from public.profile where user_id = ${a.id}`;
+        expect(row).toEqual({ avatar_key: mine });
+        await expect(setAvatar(randomUUID(), mine)).resolves.toBe(false);
+        // Setting an avatar makes no subject and queues no job (D-141).
+        const subjects = await owner`select id from public.subject where user_id = ${a.id}`;
+        expect(subjects).toEqual([]);
       });
     });
 
