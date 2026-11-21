@@ -27,3 +27,18 @@ export function uploadKeys(mediaId: string): { photo: string; thumbnail: string 
   const id = uuidPart(mediaId, 'mediaId');
   return { photo: `${id}/upload.jpg`, thumbnail: `${id}/upload_thumb.webp` };
 }
+
+// users/{user_id}/avatar_{upload_id}.jpg. The user is always the caller, so nobody can point their
+// avatar at another user's file, and profile_avatar_key_check refuses any other folder (arch §3).
+export function avatarKey(userId: string, uploadId: string): string {
+  return `users/${uuidPart(userId, 'userId')}/avatar_${uuidPart(uploadId, 'uploadId')}.jpg`;
+}
+
+// users/{user_id}/events/{event_id}/reference_{upload_id}.jpg (D-141). The upload_id becomes the
+// face_reference row's id, which face_reference_photo_key_check compares with the key.
+export function referenceKey(userId: string, eventId: string, uploadId: string): string {
+  return (
+    `users/${uuidPart(userId, 'userId')}/events/${uuidPart(eventId, 'eventId')}` +
+    `/reference_${uuidPart(uploadId, 'uploadId')}.jpg`
+  );
+}
