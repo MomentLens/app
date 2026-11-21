@@ -15,7 +15,8 @@ import { createInviteManagementStore, createInviteStore } from './services/invit
 import { createJoinRequestStore } from './services/join-requests';
 import { createMediaStore } from './services/media';
 import { createMediaImagesStore } from './services/media-images';
-import { createConsentStore, createFindProfile } from './services/profiles';
+import { createConsentStore, createFindProfile, createSetAvatar } from './services/profiles';
+import { createReferenceStore } from './services/references';
 import { createSubEventStore } from './services/sub-events';
 import { createVenueQrStore } from './services/venue-qrs';
 
@@ -64,6 +65,7 @@ createApp({
   checkDatabase: createDatabaseCheck(sql, logger),
   verifyToken: createTokenVerifier(authClient),
   findProfile: createFindProfile(sql),
+  setAvatar: createSetAvatar(sql),
   consent: createConsentStore(sql),
   events: createEventStore(sql),
   attendees: createAttendeeStore(sql),
@@ -76,6 +78,7 @@ createApp({
   album: createAlbumStore(sql),
   mediaImages: createMediaImagesStore(sql),
   blurRegions: createBlurRegionStore(sql),
+  references: createReferenceStore(sql),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,
   objectExists: r2.objectExists,

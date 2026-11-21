@@ -46,7 +46,18 @@ import {
   mediaStatusController,
   preflightUploadController,
 } from './controllers/media';
-import { acceptConsentController, getMyProfileController } from './controllers/profiles';
+import {
+  acceptConsentController,
+  createAvatarUploadController,
+  getMyProfileController,
+  setAvatarController,
+} from './controllers/profiles';
+import {
+  addReferenceController,
+  createReferenceUploadController,
+  listReferencesController,
+  removeReferenceController,
+} from './controllers/references';
 import {
   addSubEventController,
   deleteSubEventController,
@@ -66,6 +77,7 @@ import { invitesRouter } from './routes/invites';
 import { joinRequestsRouter } from './routes/join-requests';
 import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
+import { referencesRouter } from './routes/references';
 import { subEventsRouter } from './routes/sub-events';
 import { venueQrsRouter } from './routes/venue-qrs';
 import type { AlbumStore } from './services/album';
@@ -77,7 +89,8 @@ import type { InviteManagementStore, InviteStore } from './services/invites';
 import type { JoinRequestStore } from './services/join-requests';
 import type { MediaStore } from './services/media';
 import type { MediaImagesStore } from './services/media-images';
-import type { ConsentStore, FindProfile } from './services/profiles';
+import type { ConsentStore, FindProfile, SetAvatar } from './services/profiles';
+import type { ReferenceStore } from './services/references';
 import type { SubEventStore } from './services/sub-events';
 import type { VenueQrStore } from './services/venue-qrs';
 
@@ -88,6 +101,7 @@ export interface AppDeps {
   checkDatabase: DatabaseCheck;
   verifyToken: VerifyToken;
   findProfile: FindProfile;
+  setAvatar: SetAvatar;
   consent: ConsentStore;
   events: EventStore;
   attendees: AttendeeStore;
@@ -100,6 +114,7 @@ export interface AppDeps {
   album: AlbumStore;
   mediaImages: MediaImagesStore;
   blurRegions: BlurRegionStore;
+  references: ReferenceStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
   objectExists: ObjectExists;
@@ -119,6 +134,8 @@ export function createApp(deps: AppDeps): Express {
     profilesRouter(auth, {
       getMine: getMyProfileController(deps.findProfile, deps.consent, deps.presignGet),
       acceptConsent: acceptConsentController(deps.consent),
+      createAvatarUpload: createAvatarUploadController(deps.presignPut),
+      setAvatar: setAvatarController(deps.setAvatar, deps.objectExists, deps.presignGet),
     }),
   );
   app.use(
@@ -188,6 +205,23 @@ export function createApp(deps: AppDeps): Express {
       add: addBlurRegionController(deps.blurRegions),
       list: listBlurRegionsController(deps.blurRegions),
       remove: removeBlurRegionController(deps.blurRegions),
+    }),
+  );
+  const referenceDeps = {
+    events: deps.events,
+    references: deps.references,
+    presignGet: deps.presignGet,
+    presignPut: deps.presignPut,
+    objectExists: deps.objectExists,
+    deleteObject: deps.deleteObject,
+    logger: deps.logger,
+  };
+  app.use(
+    referencesRouter(auth, {
+      list: listReferencesController(referenceDeps),
+      createUpload: createReferenceUploadController(referenceDeps),
+      add: addReferenceController(referenceDeps),
+      remove: removeReferenceController(referenceDeps),
     }),
   );
   app.use(

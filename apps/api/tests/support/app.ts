@@ -12,6 +12,7 @@ import type { EventStore } from '../../src/services/events';
 import type { InviteStore } from '../../src/services/invites';
 import type { MediaStore } from '../../src/services/media';
 import type { MediaImagesStore } from '../../src/services/media-images';
+import type { ReferenceStore } from '../../src/services/references';
 import type { SubEventStore } from '../../src/services/sub-events';
 
 // R2 settings that presign for real, with no network and no account. A URL signed with them
@@ -79,6 +80,15 @@ const noBlurRegions: BlurRegionStore = {
   remove: () => Promise.reject(new Error('no blur region store in this test')),
 };
 
+// A reference store with no rows that fails any write.
+const noReferences: ReferenceStore = {
+  list: () => Promise.resolve([]),
+  countKept: () => Promise.resolve(0),
+  findOwner: () => Promise.resolve(null),
+  add: () => Promise.reject(new Error('no reference store in this test')),
+  remove: () => Promise.reject(new Error('no reference store in this test')),
+};
+
 // Dependencies for createApp that need no Supabase project. Each test overrides what it checks.
 // The token check rejects every token unless a test passes a real one, and R2 holds no objects.
 export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
@@ -88,6 +98,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     checkDatabase: () => Promise.resolve('ok'),
     verifyToken: () => Promise.resolve(null),
     findProfile: () => Promise.resolve(null),
+    setAvatar: () => Promise.reject(new Error('no profile writes in this test')),
     consent: {
       accepted: () => Promise.resolve(false),
       accept: () => Promise.reject(new Error('no consent store in this test')),
@@ -116,6 +127,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     album: noAlbum,
     mediaImages: noMediaImages,
     blurRegions: noBlurRegions,
+    references: noReferences,
     presignGet: r2.presignGet,
     presignPut: r2.presignPut,
     objectExists: () => Promise.resolve(false),
