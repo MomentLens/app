@@ -1,15 +1,20 @@
+import { randomUUID } from 'node:crypto';
+
 import { z } from 'zod';
 
 import { PRIVACY_POLICY_VERSION } from '@momentlens/shared-types';
 import type {
   AcceptConsentRequest,
   AcceptConsentResponse,
+  CreateAvatarUploadResponse,
   ProfileResponse,
+  SetAvatarResponse,
 } from '@momentlens/shared-types';
 
 import { isForeignKeyViolation } from '../db/sql';
 import type { Sql } from '../db/sql';
-import type { PresignGet } from '../lib/r2';
+import { avatarKey } from '../lib/keys';
+import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
 import { presignAvatar } from './avatar';
 import type { AvatarOwner } from './avatar';
@@ -141,4 +146,52 @@ export async function acceptConsent(
     created: result === 'created',
     response: { policyVersion: request.policyVersion },
   };
+}
+
+// Writes profile.avatar_key and nothing else: a profile photo is never a reference, so it creates no
+// subject and queues no job (D-141). False when the user has no profile row.
+export type SetAvatar = (userId: string, key: string) => Promise<boolean>;
+
+export function createSetAvatar(sql: Sql): SetAvatar {
+  return async (userId, key) => {
+    // One update by the primary key. profile_avatar_key_check refuses a key outside this user's
+    // folder, as a second guard behind avatarKey.
+    const rows = await sql`
+      update public.profile set avatar_key = ${key}
+      where user_id = ${userId}
+      returning user_id`;
+    return rows.length > 0;
+  };
+}
+
+// POST /profiles/me/avatar-upload. A presigned PUT for a new key in the caller's folder, and
+// nothing written: the avatar changes only when PUT /profiles/me/avatar finds the object.
+export async function startAvatarUpload(
+  presignPut: PresignPut,
+  userId: string,
+): Promise<CreateAvatarUploadResponse> {
+  const uploadId = randomUUID();
+  return { uploadId, uploadUrl: await presignPut(avatarKey(userId, uploadId), 'image/jpeg') };
+}
+
+// PUT /profiles/me/avatar. The key is built from the caller and the uploadId, never read from the
+// client (root invariant 12), so another user's uploadId names an object in the caller's own
+// folder, which is not there. The replaced photo's object stays in R2, as a replaced cover's does.
+export async function setOwnAvatar(
+  setAvatar: SetAvatar,
+  objectExists: ObjectExists,
+  presignGet: PresignGet,
+  userId: string,
+  uploadId: string,
+): Promise<SetAvatarResponse> {
+  const key = avatarKey(userId, uploadId);
+  if (!(await objectExists(key))) {
+    throw new ApiError('upload_missing', 'No profile photo has been uploaded for this uploadId');
+  }
+  if (!(await setAvatar(userId, key))) {
+    // As GET /profiles/me does for an account deleted within the token's hour.
+    throw new ApiError('no_session', 'No profile for this account');
+  }
+  // The caller is the owner, so Do Not Publish never hides their own photo from them (D-109).
+  return { avatar: { url: await presignGet(key), cacheKey: key } };
 }

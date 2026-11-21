@@ -3,15 +3,23 @@ import type { Request, Response } from 'express';
 import {
   AcceptConsentRequest,
   AcceptConsentResponse,
+  CreateAvatarUploadResponse,
   ProfileResponse,
+  SetAvatarRequest,
+  SetAvatarResponse,
 } from '@momentlens/shared-types';
 
-import type { PresignGet } from '../lib/r2';
+import type { ObjectExists, PresignGet, PresignPut } from '../lib/r2';
 import { authenticatedUser } from '../middleware/auth';
 import { parseInput } from '../middleware/body';
 import { ApiError } from '../middleware/errors';
-import { acceptConsent, getOwnProfile } from '../services/profiles';
-import type { ConsentStore, FindProfile } from '../services/profiles';
+import {
+  acceptConsent,
+  getOwnProfile,
+  setOwnAvatar,
+  startAvatarUpload,
+} from '../services/profiles';
+import type { ConsentStore, FindProfile, SetAvatar } from '../services/profiles';
 
 // GET /profiles/me. The user comes from the verified token and nothing else, so no request can
 // name another user's profile (D-109).
@@ -50,5 +58,28 @@ export function acceptConsentController(consent: ConsentStore) {
       .status(created ? 201 : 200)
       .set('Cache-Control', 'no-store')
       .json(AcceptConsentResponse.parse(response));
+  };
+}
+
+// POST /profiles/me/avatar-upload. The request has no body, and the user comes from the token.
+export function createAvatarUploadController(presignPut: PresignPut) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const upload = await startAvatarUpload(presignPut, id);
+    res.set('Cache-Control', 'no-store').json(CreateAvatarUploadResponse.parse(upload));
+  };
+}
+
+// PUT /profiles/me/avatar, once the upload has reached R2.
+export function setAvatarController(
+  setAvatar: SetAvatar,
+  objectExists: ObjectExists,
+  presignGet: PresignGet,
+) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const { uploadId } = parseInput(SetAvatarRequest, req.body);
+    const result = await setOwnAvatar(setAvatar, objectExists, presignGet, id, uploadId);
+    res.set('Cache-Control', 'no-store').json(SetAvatarResponse.parse(result));
   };
 }
