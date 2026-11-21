@@ -1,10 +1,10 @@
 // The API's upload key builders (root invariant 12, arch §3). S-02 adds the event cover's, S-12 the
-// photo's and its client thumbnail's.
+// photo's and its client thumbnail's, S-20 the profile photo's and the reference photo's.
 import { randomUUID } from 'node:crypto';
 
 import { describe, expect, it } from '@jest/globals';
 
-import { coverKey, uploadKeys } from '../../src/lib/keys';
+import { avatarKey, coverKey, referenceKey, uploadKeys } from '../../src/lib/keys';
 
 const EVENT = randomUUID();
 const UPLOAD = randomUUID();
@@ -57,5 +57,52 @@ describe('uploadKeys', () => {
     ['an event cover prefix', `events/${MEDIA}`],
   ])('refuses %s, so no key leaves its family', (_case, bad) => {
     expect(() => uploadKeys(bad)).toThrow();
+  });
+});
+
+describe('avatarKey', () => {
+  const USER = randomUUID();
+
+  it('builds users/{user_id}/avatar_{upload_id}.jpg, which profile_avatar_key_check accepts', () => {
+    expect(avatarKey(USER, UPLOAD)).toBe(`users/${USER}/avatar_${UPLOAD}.jpg`);
+  });
+
+  it('lowercases both ids, so the key matches the CHECK that compares it with user_id::text', () => {
+    expect(avatarKey(USER.toUpperCase(), UPLOAD.toUpperCase())).toBe(avatarKey(USER, UPLOAD));
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a path', `../${USER}`],
+    ['a slash', `${USER}/x`],
+  ])('refuses %s for either id, so no key leaves its family', (_case, bad) => {
+    expect(() => avatarKey(bad, UPLOAD)).toThrow();
+    expect(() => avatarKey(USER, bad)).toThrow();
+  });
+});
+
+describe('referenceKey', () => {
+  const USER = randomUUID();
+
+  it('builds users/{user_id}/events/{event_id}/reference_{upload_id}.jpg (D-141)', () => {
+    expect(referenceKey(USER, EVENT, UPLOAD)).toBe(
+      `users/${USER}/events/${EVENT}/reference_${UPLOAD}.jpg`,
+    );
+  });
+
+  it('lowercases every id, so the key matches face_reference_photo_key_check', () => {
+    expect(referenceKey(USER.toUpperCase(), EVENT.toUpperCase(), UPLOAD.toUpperCase())).toBe(
+      referenceKey(USER, EVENT, UPLOAD),
+    );
+  });
+
+  it.each([
+    ['an empty string', ''],
+    ['a path', `../${USER}`],
+    ['a slash', `${USER}/x`],
+  ])('refuses %s for any id, so no key leaves its family', (_case, bad) => {
+    expect(() => referenceKey(bad, EVENT, UPLOAD)).toThrow();
+    expect(() => referenceKey(USER, bad, UPLOAD)).toThrow();
+    expect(() => referenceKey(USER, EVENT, bad)).toThrow();
   });
 });
