@@ -69,6 +69,8 @@ export default function AppLayout() {
       <Stack.Screen name="scan-result/[eventId]" options={sheet} />
       <Stack.Screen name="venue-qr/[eventId]/[venueId]" />
       <Stack.Screen name="join/pending/[eventId]" />
+      {/* S-20's Reference Photos, a dev route until S-29 moves it into Event Preferences. */}
+      <Stack.Screen name="references/[eventId]" />
       {/* Sheets that fit their content, over the whole Event shell. A formSheet draws inside the
           navigator that presents it, so from a tab's Stack the Android scrim stopped at the Event
           header and left the tab bar lit (D-125). iOS draws the grabber; Android takes Material 3's
