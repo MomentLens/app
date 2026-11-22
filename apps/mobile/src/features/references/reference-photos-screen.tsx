@@ -153,7 +153,9 @@ export function ReferencePhotosScreen({ eventId }: { eventId: string }) {
   const references = query.data?.references ?? [];
   const summary = summarize(references);
   const size = Math.floor((width - MARGIN * 2 - GAP * (COLUMNS - 1)) / COLUMNS);
-  const canAdd = query.isSuccess && summary.canAdd && !adding;
+  // A cached list keeps Add working after a failed background refetch, which TanStack Query
+  // reports as an error with the data kept; POST still refuses a sixth with 422.
+  const canAdd = query.data !== undefined && summary.canAdd && !adding;
   const eventName = event.data?.event.name;
 
   async function add(source: PhotoSource) {
