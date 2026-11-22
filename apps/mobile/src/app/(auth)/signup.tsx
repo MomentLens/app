@@ -10,13 +10,19 @@ import { TextField } from '@/components/ui/text-field';
 import { TextLink } from '@/components/ui/text-link';
 import { AuthScreen, Inset } from '@/features/auth/auth-screen';
 import { authErrorMessage } from '@/features/auth/messages';
+import {
+  SignupPhoto,
+  uploadSignupPhoto,
+  type SignupPhotoDraft,
+} from '@/features/auth/signup-photo';
 import { PASSWORD_MIN, signupFieldErrors } from '@/features/auth/validation';
 import { JoinBanner } from '@/features/join/join-banner';
 import { byPlatform } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
-// Create Account (spec §2.1.1): name, email, password, laid out as the Figma CreateAccount frame.
-// The frame's optional profile photo is S-20's, and consent is S-31's gate (D-109). Email
+// Create Account (spec §2.1.1): an optional profile photo, name, email, password, laid out as the
+// Figma CreateAccount frame, with the photo S-20 adds above the fields. Consent is S-31's gate
+// (D-109). The photo uploads once signUp returns the account's id (signup-photo.tsx). Email
 // confirmation is off, so signUp returns a session straight away, and SIGNED_IN takes the app to
 // Home. An invite link opened signed out lands here, and the banner names the event and role
 // before the account exists (spec §2.3.1).
@@ -27,6 +33,7 @@ export default function SignupScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [photo, setPhoto] = useState<SignupPhotoDraft | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +63,10 @@ export default function SignupScreen() {
         setError(authErrorMessage(authError, 'signup'));
         setBusy(false);
         return;
+      }
+      if (data.session !== null && photo !== null) {
+        // Not awaited: SIGNED_IN replaces this screen at once, and the upload carries on.
+        void uploadSignupPhoto(data.session.user.id, photo);
       }
       if (data.session === null) {
         // Only possible if a project turned email confirmation back on, against arch §7.
@@ -97,6 +108,7 @@ export default function SignupScreen() {
         </>
       }>
       <JoinBanner />
+      <SignupPhoto photo={photo} onChange={setPhoto} disabled={busy} />
       <FieldGroup footer={`At least ${PASSWORD_MIN} characters.`}>
         <TextField
           label="Full name"
