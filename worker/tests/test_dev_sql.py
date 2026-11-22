@@ -206,10 +206,12 @@ def publish(conn, media_id, version=1):
 
 
 def add_region(conn, media_id, x, y, width, height):
+    # clock_timestamp(), not the column's default now(): the fixture holds one transaction, where
+    # now() never moves, so two regions would tie on created_at and sort by their random ids.
     conn.execute(
         "insert into public.manual_blur_region"
-        " (id, media_id, drawn_by_user_id, x, y, width, height)"
-        " select gen_random_uuid(), id, uploader_user_id, %s, %s, %s, %s"
+        " (id, media_id, drawn_by_user_id, x, y, width, height, created_at)"
+        " select gen_random_uuid(), id, uploader_user_id, %s, %s, %s, %s, clock_timestamp()"
         " from public.media where id = %s",
         (x, y, width, height, media_id),
     )
