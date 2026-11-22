@@ -4,11 +4,14 @@ import {
   ApproveRequestsResponse,
   BlockRequestResponse,
   ListPendingRequestsResponse,
+  ListReferencesResponse,
   RejectRequestsResponse,
   BlockAttendeeResponse,
   CancelJoinRequestResponse,
   ChangeAttendeeRoleResponse,
+  CreateAvatarUploadResponse,
   CreateCoverUploadResponse,
+  CreateReferenceUploadResponse,
   CreateEventResponse,
   ErrorResponse,
   GetEventResponse,
@@ -34,6 +37,7 @@ import {
   ResolveInviteResponse,
   RemoveAttendeeResponse,
   SetAlbumResponse,
+  SetAvatarResponse,
   SetEventCoverResponse,
   UpdateEventSettingsResponse,
   type AcceptConsentRequest,
@@ -417,6 +421,35 @@ export async function getMyProfile(signal?: AbortSignal): Promise<ProfileRespons
     throw await errorFrom('GET /profiles/me', response);
   }
   return parseBody('GET /profiles/me', response, ProfileResponse);
+}
+
+// A presigned PUT for a new profile photo. The API builds the key from the caller and the
+// uploadId; the app never sees or sends one (root invariant 12). With an owner, only under that
+// account's session, so a photo picked by one account never becomes another's avatar.
+export async function createAvatarUpload(owner: string): Promise<CreateAvatarUploadResponse> {
+  const response = await authenticatedRequest(
+    '/profiles/me/avatar-upload',
+    { method: 'POST' },
+    owner,
+  );
+  if (response.status !== 200) {
+    throw await errorFrom('POST /profiles/me/avatar-upload', response);
+  }
+  return parseBody('POST /profiles/me/avatar-upload', response, CreateAvatarUploadResponse);
+}
+
+// Sets the profile photo once its upload is in R2. It writes avatar_key and nothing else: no face
+// check, no subject, no job (D-141). 409 upload_missing when the object is not there.
+export async function setAvatar(owner: string, uploadId: string): Promise<SetAvatarResponse> {
+  const response = await authenticatedRequest(
+    '/profiles/me/avatar',
+    { method: 'PUT', body: { uploadId } },
+    owner,
+  );
+  if (response.status !== 200) {
+    throw await errorFrom('PUT /profiles/me/avatar', response);
+  }
+  return parseBody('PUT /profiles/me/avatar', response, SetAvatarResponse);
 }
 
 // Records that `owner` accepted the consent text's current version (D-161). A 201 recorded it and a
@@ -973,4 +1006,68 @@ export async function removeBlurRegion(regionId: string): Promise<ListBlurRegion
     throw await errorFrom('DELETE /blur-regions/{regionId}', response);
   }
   return parseBody('DELETE /blur-regions/{regionId}', response, ListBlurRegionsResponse);
+}
+
+// The caller's own reference photos in one event, any status (D-141). Nobody else's rows ever come
+// back, the Admin's included. Owner-bound, because each one is presigned for its owner alone.
+export async function listReferences(
+  owner: string,
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<ListReferencesResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/references`;
+  const response = await authenticatedRequest(path, { signal }, owner);
+  if (response.status !== 200) throw await errorFrom('GET /events/{eventId}/references', response);
+  return parseBody('GET /events/{eventId}/references', response, ListReferencesResponse);
+}
+
+// A presigned PUT for a new reference. 422 too_many_references at five that are not rejected.
+export async function createReferenceUpload(
+  owner: string,
+  eventId: string,
+): Promise<CreateReferenceUploadResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/references/upload`;
+  const response = await authenticatedRequest(path, { method: 'POST' }, owner);
+  if (response.status !== 200) {
+    throw await errorFrom('POST /events/{eventId}/references/upload', response);
+  }
+  return parseBody(
+    'POST /events/{eventId}/references/upload',
+    response,
+    CreateReferenceUploadResponse,
+  );
+}
+
+// Adds the uploaded reference as pending and queues the worker's one-face check. 201 for a new
+// row, 200 for a resend of one already added, both with the list after the write.
+export async function addReference(
+  owner: string,
+  eventId: string,
+  uploadId: string,
+): Promise<ListReferencesResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/references/${encodeURIComponent(uploadId)}`;
+  const response = await authenticatedRequest(path, { method: 'PUT' }, owner);
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('PUT /events/{eventId}/references/{uploadId}', response);
+  }
+  return parseBody('PUT /events/{eventId}/references/{uploadId}', response, ListReferencesResponse);
+}
+
+// Deletes one reference, its embedding and its object. A 404 means it is already gone, which a
+// resend of a delete that landed also gets, so the caller treats it as done.
+export async function deleteReference(
+  owner: string,
+  eventId: string,
+  referenceId: string,
+): Promise<ListReferencesResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/references/${encodeURIComponent(referenceId)}`;
+  const response = await authenticatedRequest(path, { method: 'DELETE' }, owner);
+  if (response.status !== 200) {
+    throw await errorFrom('DELETE /events/{eventId}/references/{referenceId}', response);
+  }
+  return parseBody(
+    'DELETE /events/{eventId}/references/{referenceId}',
+    response,
+    ListReferencesResponse,
+  );
 }
