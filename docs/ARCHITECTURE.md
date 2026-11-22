@@ -75,9 +75,13 @@ The identity that reference photos attach to, split from the account in S-01's m
 - RLS and grants the same as `profile`
 
 ### `face_reference`
-One reference photo, for one person in one event (D-141).
-- `subject_id`, `event_id`, `photo_key`. `event_id` is `ON DELETE CASCADE` to `event`. The profile photo is never a reference, so there is no `source`
-- `status` (`pending`, `accepted`, `rejected`), `reject_reason` (`no_face`, `multiple_faces`, `failed`), `embedding vector(512)`, null until accepted (D-91)
+One reference photo, for one person in one event (D-141). Migration `supabase/migrations/20261120161531_face_reference_and_face.sql`, which also creates `face` and the `vector` extension in the `extensions` schema.
+- `id` has no default: it is the `uploadId` the API made at `POST /events/{eventId}/references/upload`, so a resent completion finds its own row
+- `subject_id`, `event_id`, `photo_key`. `subject_id` and `event_id` are both `ON DELETE CASCADE`. The profile photo is never a reference, so there is no `source`
+- `face_reference_photo_key_check` accepts only `users/<uuid>/events/{event_id}/reference_{id}.jpg` for the row's own event and id, and `photo_key` is unique. The user id in the key is the subject's, which a check cannot read, so the API writes it from the caller and `add_face_reference` refuses any other
+- `status` (`pending`, `accepted`, `rejected`), `reject_reason` (`no_face`, `multiple_faces`, `failed`), `embedding vector(512)`, null until accepted (D-91). Two checks pin the pairs: `reject_reason` is set exactly when the row is rejected, and `embedding` exactly when it is accepted, so every stored row parses as the `Reference` contract and every accepted row can be matched
+- Two SQL functions write it, `add_face_reference` and `delete_face_reference` in `supabase/migrations/20261121175630_reference_functions.sql`. Each takes the event row `FOR SHARE` first, so a membership change waits for it. `add_face_reference` then takes the caller's `subject` row `FOR NO KEY UPDATE`, creating the subject on first use, counts the 5 under that lock, inserts the row and sends the `reference_process` message in one transaction (D-95). Both run as `security definer`, because `pgmq.send` writes to the `pgmq` schema, and `execute` is granted to `service_role` only
+- RLS is on with no policy, the same as `face`. `anon` and `authenticated` keep `SELECT` and read no rows (§1). `apps/api/tests/integration/rls.test.ts` checks it
 - The API inserts the row as `pending` when the photo is uploaded. `reference_process` sets `accepted` with the embedding when it finds exactly one face, and `rejected` with the reason otherwise. When the job fails for good, the worker sets `rejected` with `failed` in the archive's transaction, so the app stops waiting (D-172). Only `accepted` rows are matched against or counted (D-87, D-91)
 - At most 5 rows per subject and event that are not rejected (spec §4.2). Matching in an event reads only that event's rows
 - Only an active member of the event adds one, from Event Preferences. Remove from Event leaves the rows, so a rejoin matches them again (D-84)
@@ -214,11 +218,13 @@ Migration `supabase/migrations/20261002121238_media_upload.sql`, which also inst
 
 ### `face`
 One row per detected face, written only by the worker.
-- `media_id`, `bbox` as fractions of the stored image, which Stage 1 already turned upright (D-99), `embedding vector(512)`
-- `matched_subject_id` (nullable), `similarity` (D-74)
-- `cluster_id`, the Unknown identity for an unmatched face (§4.11). Null while §6 has no clustering threshold (D-104, D-172)
-- S-20 writes the table and the worker's detect, embed, match and cluster functions. S-21 registers `face_process`, which writes the rows (D-172)
-- `reprocess` re-blurs from the stored `bbox` and never detects again (D-30, D-66)
+- `media_id`, `ON DELETE CASCADE`, and `embedding vector(512)`
+- The box is four columns, `x`, `y`, `width`, `height`, the detector's box before the blur expands it, as fractions of the stored image, which Stage 1 already turned upright (D-99). `face_box_check` keeps it inside 0..1, the same shape and check as `manual_blur_region`. The worker clamps a box that runs past an edge
+- `matched_subject_id` (nullable, `ON DELETE SET NULL`), `similarity`, the cosine similarity to that subject's closest reference (D-74). `face_similarity_check`: a match always carries a similarity, in -1..1
+- `cluster_id`, the Unknown identity for an unmatched face (§4.11). No table; the id only groups faces. Null while §6 has no clustering threshold (D-104, D-172). `face_cluster_check`: a matched face has no cluster
+- S-20 writes the table and the worker's detect, embed, match and cluster functions in `worker/app/ai/faces.py` and `worker/app/ai/matching.py`. The two thresholds there are `None` constants that point at §6, never environment variables. S-21 registers `face_process`, which writes the rows (D-172)
+- `reprocess` re-blurs from the stored box and never detects again (D-30, D-66)
+- RLS on with no policy and the same grants as `face_reference`
 
 ### `dnp_subject`
 A Do Not Publish subject found in a photo, with that subject's personalized files. Written only by the worker.
