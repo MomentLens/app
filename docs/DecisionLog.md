@@ -742,6 +742,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Rejected.** A provisional number, however low, which nobody remembers to replace.
 **Cost.** Until S-26, Find My Photos returns nothing and no subject sees their own face clear, so the self-visible marker cannot be shown on real data before then.
 **Amended (see D-172).** Fail-closed covers Unknown clustering too: `cluster_id` stays null until `docs/ARCHITECTURE.md` §6 records a clustering threshold.
+**Amended (see D-173).** One match threshold serves Do Not Publish blurring and recognition, thresholds live as constants in `worker/app/ai/matching.py` checked against `docs/ARCHITECTURE.md` §6 by a test (never environment variables), and S-26's calibration rules apply.
 
 ### D-105: Smaller build rulings from the pre-feature audit
 **Decision.** Each of these was a fact an agent would otherwise have guessed.
@@ -1864,6 +1865,21 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** The dev project loses its photos once more. A photo uploaded to the dev project before S-26 and kept would stay fully blurred until a region is drawn on it.
 **Reopen if.** Photos written before the threshold have to survive, for example if S-26 slips past the first real event.
 
+### D-173: One match threshold, measured by S-26's rules
+**Decision.** Amends D-104. Ukasha ruled on these on 2026-11-23, at S-26's read-back.
+- One match threshold serves Do Not Publish blurring, Find My Photos, and the Recognized Faces strip.
+- Both the match threshold and the Unknown clustering threshold are constants in `worker/app/ai/matching.py`, never environment variables, and a test in `worker/tests/test_matching.py` parses `docs/ARCHITECTURE.md` §6 to keep the constants equal to the table.
+- The match threshold is the highest two-decimal value at which every team face in the event-style photos still matches its own person with only 1 reference. `worker/bench/calibrate.py` reports the false-match rate against the bench faces and team cross pairs at that value, and Ukasha picks if that rate looks too high.
+- S-26 measures the Unknown clustering threshold now, as the lowest two-decimal value above every different-person face-to-face pair.
+- The 17 wedding photos in `worker/bench/photos.sha256` serve as impostors, and any two faces in the same photo always count as different people.
+- `worker/bench/calibrate.py` and `worker/bench/calibration.sha256` are committed to the repo. The team calibration photos stay out of git, on Ukasha's machine, with B and C's OK.
+- Keep `reference_process`'s detection score at 0.5 unless a team face scores under 0.5 or a non-face scores at or over 0.5; any change amends D-172.
+- `docs/ARCHITECTURE.md` §6 records the OpenCV, onnxruntime, and model versions alongside `worker/bench/calibration.sha256` so D-169's upgrade recheck can run against the same baseline.
+**Why.** A `face` row holds one `matched_subject_id`, and D-74 keeps every comparison in the worker, so a second threshold has nowhere to store its result. A missed match is the costly failure (spec §5.5). Three team members give only 3 different-person identity pairs, which cannot test stranger separation. Production compares each face against a subject's closest reference, not all pairs.
+**Rejected.** A lower match threshold solely for Do Not Publish, which would need a second column on `face` and rework in S-21, S-23, and S-25. Leaving Unknown clustering unmeasured for the demo. Using a one-off script that cannot be rerun for D-169's OpenCV recheck.
+**Cost.** A relative above the low threshold is named as the subject in the Recognized Faces strip and appears in their Find My Photos. One unregistered person may split into several Unknown clusters. The calibration photos of B and C live on Ukasha's machine.
+**Reopen if.** The measurements show genuine and impostor scores overlapping at 1 reference, so that no value meets the zero-miss rule.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -1875,5 +1891,4 @@ These are not settled and should not be treated as though they are.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
 - **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
 - **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
-- **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
