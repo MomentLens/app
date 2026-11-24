@@ -1,16 +1,20 @@
-"""Matching and Unknown clustering (D-74, D-104, D-141, D-172).
+"""Matching and Unknown clustering (D-74, D-104, D-141, D-172, D-173).
 
 Every threshold here is this file's own (D-104). The worker's are None until arch §6 records a
-measured value.
+measured value, and a test here reads arch §6 to keep the constants equal to it (D-173).
 """
 
+import re
+from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
 import pytest
 
-from app.ai import matching
+from app.ai import faces, matching
 from app.ai.matching import Reference
+
+ARCHITECTURE = Path(__file__).resolve().parents[2] / "docs" / "ARCHITECTURE.md"
 
 # A test's own thresholds, never the worker's (D-104).
 MATCH_AT = 0.6
@@ -25,9 +29,54 @@ def unit(*pairs):
     return v / np.linalg.norm(v)
 
 
-def test_the_worker_has_no_threshold_until_arch_6_records_one():
-    assert matching.MATCH_THRESHOLD is None
-    assert matching.CLUSTER_THRESHOLD is None
+def arch_6_values() -> dict[str, str]:
+    """The Value cell of each row in arch §6's table, keyed by its Threshold cell."""
+    text = ARCHITECTURE.read_text(encoding="utf-8")
+    heading = re.search(r"^## 6\. Similarity thresholds$", text, re.MULTILINE)
+    assert heading, "arch §6 has no '## 6. Similarity thresholds' heading"
+    section = text[heading.end() :]
+    following = re.search(r"^## ", section, re.MULTILINE)
+    section = section[: following.start()] if following else section
+    rows = {}
+    for line in section.splitlines():
+        if not line.startswith("| ") or line.startswith("|---"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        rows[cells[0]] = cells[2]
+    return rows
+
+
+def arch_6_number(cell: str) -> float | None:
+    """None for "not measured", otherwise the number the cell opens with."""
+    if cell.startswith("not measured"):
+        return None
+    number = re.match(r"-?\d+(\.\d+)?", cell)
+    assert number, f"arch §6 value {cell!r} is neither 'not measured' nor a number"
+    return float(number.group())
+
+
+def arch_6_value(row_starts_with: str) -> float | None:
+    rows = arch_6_values()
+    (cell,) = [value for name, value in rows.items() if name.startswith(row_starts_with)]
+    return arch_6_number(cell)
+
+
+def test_the_constants_equal_arch_6():
+    assert arch_6_value("Match") == matching.MATCH_THRESHOLD
+    assert arch_6_value("Unknown clustering") == matching.CLUSTER_THRESHOLD
+    assert arch_6_value("Face detection score") == faces.DETECTION_SCORE
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        ("not measured", None),
+        ("0.43", 0.43),
+        ("0.5, SCRFD's default, with no minimum face size", 0.5),
+    ],
+)
+def test_an_arch_6_cell_reads_as_none_or_its_number(cell, expected):
+    assert arch_6_number(cell) == expected
 
 
 def test_no_threshold_means_no_match_even_for_the_same_face():
@@ -41,10 +90,35 @@ def test_no_threshold_means_no_cluster():
     assert matching.cluster(faces, [], threshold=None) == [None, None]
 
 
-def test_the_worker_defaults_match_nothing():
-    face = unit((0, 1))
-    assert matching.match([face], [Reference(uuid4(), face)], matching.MATCH_THRESHOLD) == [None]
-    assert matching.cluster([face], [], matching.CLUSTER_THRESHOLD) == [None]
+def at_cosine(cosine: float) -> np.ndarray:
+    """A unit vector at `cosine` to unit((0, 1))."""
+    return unit((0, cosine), (1, float(np.sqrt(1 - cosine**2))))
+
+
+def test_the_worker_match_threshold_fails_closed_or_holds_at_its_value():
+    subject = uuid4()
+    reference = [Reference(subject, unit((0, 1)))]
+    threshold = matching.MATCH_THRESHOLD
+    if threshold is None:
+        # Even an identical face matches nobody (D-104).
+        assert matching.match([unit((0, 1))], reference, threshold) == [None]
+        return
+    above, below = at_cosine(threshold + 0.001), at_cosine(threshold - 0.001)
+    over, under = matching.match([above, below], reference, threshold)
+    assert over is not None and over.subject_id == subject
+    assert under is None
+
+
+def test_the_worker_cluster_threshold_fails_closed_or_holds_at_its_value():
+    cluster_id = uuid4()
+    existing = [matching.ClusterFace(cluster_id, unit((0, 1)))]
+    threshold = matching.CLUSTER_THRESHOLD
+    if threshold is None:
+        # Even an identical face gets no cluster (D-172).
+        assert matching.cluster([unit((0, 1))], existing, threshold) == [None]
+        return
+    assert matching.cluster([at_cosine(threshold + 0.001)], existing, threshold) == [cluster_id]
+    assert matching.cluster([at_cosine(threshold - 0.001)], existing, threshold) != [cluster_id]
 
 
 def test_a_face_matches_the_subject_with_the_closest_reference():

@@ -1,9 +1,10 @@
 """Every similarity comparison in the system: matching to references, and Unknown clusters (D-74).
 
-Both thresholds mirror arch §6, which says "not measured". While a threshold is None the worker
-fails closed: nothing matches and nothing is clustered, and S-21's face_process blurs every
-detected face (D-104, D-172). Never put an example number here. S-26 measures them and records
-them in arch §6 first. A test passes its own threshold, never these (D-104).
+Both thresholds mirror arch §6, and tests/test_matching.py reads arch §6 to keep them equal
+(D-173). While a threshold is None the worker fails closed: nothing matches and nothing is
+clustered, and S-21's face_process blurs every detected face (D-104, D-172). Never put an example
+number here. The values come from `python -m bench.calibrate` on the team's photos, and arch §6
+changes in the same commit. A test passes its own threshold, never these (D-104).
 
 Matching in an event reads only the accepted references active members added to that event
 (D-141). The caller picks those rows; these functions compare whatever they are given.
