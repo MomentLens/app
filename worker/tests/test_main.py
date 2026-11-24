@@ -1,18 +1,23 @@
 """main(): Sentry from WORKER_SENTRY_DSN only, one event per archived message, and the start
 order that keeps /health at 503 until the model is loaded and warm (D-123, D-169)."""
 
+import os
 import signal
+import subprocess
+import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 from uuid import uuid4
 
+import numpy as np
 import pytest
 import sentry_sdk
 from insightface.model_zoo import model_zoo
 from insightface.utils import storage
 
 from app import config, loop, main
-from app.images import DecodeError
+from app.images import MAX_EDGE, DecodeError, cv2
 
 SETTINGS = {
     "database_url": "postgresql://user@host:5432/postgres",
@@ -246,3 +251,36 @@ def test_a_model_file_that_does_not_open_exits_1(start, monkeypatch, caplog):
     assert any(
         r.levelname == "ERROR" and r.getMessage().startswith("cannot start") for r in caplog.records
     )
+
+
+def test_the_pixel_cap_applies_in_a_worker_started_from_app_main(tmp_path):
+    """conftest imports app.images first, which hides the order app.main loads modules in, so a
+    fresh interpreter imports app.main alone. insightface loads cv2, and OpenCV reads its pixel cap
+    only on that first load: if app.ai comes first, an oversized PNG decodes in full and fails
+    only on the edge check, after the memory is spent."""
+    ok, buffer = cv2.imencode(".png", np.zeros((MAX_EDGE + 1, MAX_EDGE + 1, 3), np.uint8))
+    assert ok
+    over = tmp_path / "over.png"
+    over.write_bytes(buffer.tobytes())
+    script = (
+        "import sys\n"
+        "import app.main\n"
+        "from app.images import DecodeError, decode\n"
+        "try:\n"
+        "    decode(open(sys.argv[1], 'rb').read())\n"
+        "except DecodeError as error:\n"
+        "    print(error)\n"
+    )
+    # app.images set the cap in this process's environment; the child must not inherit it.
+    env = {k: v for k, v in os.environ.items() if k != "OPENCV_IO_MAX_IMAGE_PIXELS"}
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(over)],
+        cwd=Path(__file__).resolve().parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+
+    assert result.stdout.startswith("OpenCV refused the file"), result.stdout

@@ -21,6 +21,9 @@ import sentry_sdk
 import uvicorn
 from fastapi import FastAPI, Response
 
+# First of the app imports: app.images sets OpenCV's pixel cap before cv2 loads, and app.ai loads
+# cv2 through insightface. OpenCV reads the cap only on that first load.
+import app.images  # noqa: F401
 from app import config
 from app.ai import model
 from app.db import Store
