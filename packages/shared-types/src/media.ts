@@ -170,19 +170,36 @@ export type MediaImageSize = z.infer<typeof MediaImageSize>;
  *   every sub-event's section.
  * - `uploaderId` filters to one uploader. The Uploader sheet sends it. Without it every uploader
  *   contributes.
- * - Both stack: an active chip plus an active uploader filter gives "Sarah's photos from the
- *   reception" (spec §2.5.2).
+ * - `personId` filters to photos with a face matched to that user. Find My Photos sends the
+ *   caller's own user id; the People sheet and a named face in the strip send someone else's. The
+ *   API takes the viewer from the session. A person hidden from this viewer by Do Not Publish
+ *   gets the same empty page as an id with no match, so the answer never says who turned it on
+ *   (spec §4.11.3, D-46, D-176).
+ * - `clusterId` filters to photos with a face in that Unknown cluster. Only an Unknown face in
+ *   the strip sends it (spec §2.5.2).
+ * - `personId` and `clusterId` are exclusive. Each stacks with `subEventId` and `uploaderId`: an
+ *   active chip plus an active uploader filter gives "Sarah's photos from the reception" (spec
+ *   §2.5.2).
  * - `cursor` is the opaque keyset cursor the previous page returned. The first request leaves it
- *   out. The API validates its encoding; a tampered or stale cursor is 400 `invalid_request`.
+ *   out. The API validates its encoding; a tampered or stale cursor is 400 `invalid_request`, and
+ *   so is a cursor from another set of filters.
  *
  * Refusals, in order: 401 `no_session`; 404 `not_found` for an unknown or deleted event; 403
- * `not_member` for a non-active member; 403 `wrong_role` for a Photographer (D-148).
+ * `not_member` for a non-active member; 403 `wrong_role` for a Photographer (D-148). 400
+ * `invalid_request` for both `personId` and `clusterId`.
  */
-export const ListAlbumRequest = z.strictObject({
-  subEventId: z.uuid().optional(),
-  uploaderId: z.uuid().optional(),
-  cursor: z.string().min(1).optional(),
-});
+export const ListAlbumRequest = z
+  .strictObject({
+    subEventId: z.uuid().optional(),
+    uploaderId: z.uuid().optional(),
+    personId: z.uuid().optional(),
+    clusterId: z.uuid().optional(),
+    cursor: z.string().min(1).optional(),
+  })
+  .refine((r) => r.personId === undefined || r.clusterId === undefined, {
+    message: 'personId and clusterId are exclusive',
+    path: ['clusterId'],
+  });
 export type ListAlbumRequest = z.infer<typeof ListAlbumRequest>;
 
 /**
@@ -392,3 +409,65 @@ export const DeleteMediaResponse = z.object({
   deletedAt: Timestamp,
 });
 export type DeleteMediaResponse = z.infer<typeof DeleteMediaResponse>;
+
+/**
+ * One person in the People half of the filter sheet: an active member of this event with a face
+ * matched in at least one of its published photos, and how many of those photos there are.
+ *
+ * A person with Do Not Publish on in this event is listed to themselves and to nobody else (spec
+ * §4.11.3, D-46, D-176). A removed or blocked member is left off, as on the Uploader list (D-148).
+ * `avatar` is null for everyone until S-29 (D-143).
+ */
+export const Person = z.object({
+  userId: z.uuid(),
+  fullName: FullName,
+  photoCount: z.int().positive(),
+  avatar: PresignedImage.nullable(),
+});
+export type Person = z.infer<typeof Person>;
+
+/**
+ * GET /events/{eventId}/media/people, for every active role except Photographer (spec §2.5.2,
+ * D-176). No body and no query parameters. Sorted by `photoCount` descending, then name, then
+ * user id. The app searches it client-side, as it does the Uploader list. Unknown clusters are not
+ * on it; a face in the strip is the only way to reach one.
+ *
+ * Refusals, in order: 401 `no_session`; 404 `not_found` for an unknown or deleted event; 403
+ * `not_member` for a non-active member; 403 `wrong_role` for a Photographer.
+ */
+export const ListPeopleResponse = z.object({
+  people: z.array(Person),
+});
+export type ListPeopleResponse = z.infer<typeof ListPeopleResponse>;
+
+/**
+ * One identity in the Recognized Faces strip of one photo: a named person, or an Unknown cluster
+ * (spec §2.5.6, §4.11.3). Each identity appears once, however many of its faces the photo holds.
+ * No face box and no crop: the strip is a row of name chips (D-176).
+ *
+ * Tapping a `person` filters the album with `personId`, and tapping an `unknown` with `clusterId`.
+ */
+export const PhotoFace = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('person'), userId: z.uuid(), fullName: FullName }),
+  z.object({ kind: z.literal('unknown'), clusterId: z.uuid() }),
+]);
+export type PhotoFace = z.infer<typeof PhotoFace>;
+
+/**
+ * GET /events/{eventId}/media/{mediaId}/faces, for every active role except Photographer (spec
+ * §2.5.6, D-176). No body and no query parameters. `faces` reads the photo left to right.
+ *
+ * Left off: a face matched to someone with Do Not Publish on in this event, for every viewer but
+ * that person; a face matched to a removed or blocked member; and a face with neither a match nor
+ * a cluster, which every face is until arch §6 records thresholds (D-172). So `faces` can be empty.
+ * The app opens the strip with a fresh request each time, because a match can change without a
+ * `variant_version` bump (D-176).
+ *
+ * Refusals, in order: 401 `no_session`; 404 `not_found` for an unknown or deleted event; 403
+ * `not_member` for a non-active member; 403 `wrong_role` for a Photographer; 404 `not_found` for
+ * a photo that is not a published, undeleted photo of this event.
+ */
+export const ListPhotoFacesResponse = z.object({
+  faces: z.array(PhotoFace),
+});
+export type ListPhotoFacesResponse = z.infer<typeof ListPhotoFacesResponse>;
