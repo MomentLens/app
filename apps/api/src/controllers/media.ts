@@ -6,6 +6,8 @@ import {
   FlagPhotoResponse,
   ListAlbumRequest,
   ListAlbumResponse,
+  ListPeopleResponse,
+  ListPhotoFacesResponse,
   ListUploadersResponse,
   MediaDetailResponse,
   MediaImagesRequest,
@@ -21,6 +23,8 @@ import { parseInput, PathId } from '../middleware/body';
 import { listAlbum, listUploaders } from '../services/album';
 import type { AlbumStore } from '../services/album';
 import type { EventStore } from '../services/events';
+import { listPeople, listPhotoFaces } from '../services/faces';
+import type { FaceStore } from '../services/faces';
 import { serveMediaImages } from '../services/media-images';
 import type { ServeImagesDeps } from '../services/media-images';
 import {
@@ -90,6 +94,28 @@ export function listUploadersController(events: EventStore, album: AlbumStore) {
     const eventId = parseInput(PathId, req.params.eventId);
     const answer = await listUploaders(events, album, eventId, id);
     res.set('Cache-Control', 'no-store').json(ListUploadersResponse.parse(answer));
+  };
+}
+
+// GET /events/{eventId}/media/people. The viewer is the session's user; the query is not read.
+export function listPeopleController(events: EventStore, faces: FaceStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const answer = await listPeople(events, faces, eventId, id);
+    res.set('Cache-Control', 'no-store').json(ListPeopleResponse.parse(answer));
+  };
+}
+
+// GET /events/{eventId}/media/{mediaId}/faces. No cache may keep it: a match can change without a
+// variant_version bump, so the app asks again each time the strip opens (D-176).
+export function listPhotoFacesController(events: EventStore, faces: FaceStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const eventId = parseInput(PathId, req.params.eventId);
+    const mediaId = parseInput(PathId, req.params.mediaId);
+    const answer = await listPhotoFaces(events, faces, eventId, mediaId, id);
+    res.set('Cache-Control', 'no-store').json(ListPhotoFacesResponse.parse(answer));
   };
 }
 
