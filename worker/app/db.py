@@ -1,9 +1,9 @@
 """Postgres for the worker: one connection, the queue lock, reconnects and transactions.
 
 The worker connects with DATABASE_URL as the postgres role, so RLS does not apply. Every query
-here names one media row or one face_reference row by its primary key, or that photo's blur
-regions, so none reaches into another event (worker/AGENTS.md asks for every query to be scoped to
-its event).
+here names one media row or one face_reference row by its primary key, that photo's own rows, or
+one event's references and faces by the event's id, so none reaches into another event
+(worker/AGENTS.md asks for every query to be scoped to its event).
 
 The connection runs in autocommit, so a statement outside `transaction()` commits on its own.
 That is what makes a pgmq read count as a try when the process dies before the job's own
@@ -25,6 +25,7 @@ import numpy as np
 import psycopg
 
 from app import queue
+from app.ai.matching import ClusterFace, Reference
 from app.queue import Message
 
 log = logging.getLogger("momentlens.worker.db")
@@ -41,6 +42,8 @@ class DatabaseUnavailable(Exception):
 @dataclass(frozen=True)
 class MediaRow:
     id: UUID
+    # Matching and blurring read only this event's references (D-141).
+    event_id: UUID
     upload_key: str
     upload_thumb_key: str
     # None until a job first writes the row.
@@ -59,6 +62,44 @@ class BlurRegion:
     y: float
     width: float
     height: float
+
+
+@dataclass(frozen=True)
+class StoredFace:
+    """One face row as blur_region and reprocess read it: the detector's box as fractions of the
+    stored image, and its embedding, so nothing detects again (D-66, root invariant 10)."""
+
+    id: UUID
+    x: float
+    y: float
+    width: float
+    height: float
+    embedding: np.ndarray
+
+
+@dataclass(frozen=True)
+class NewFace:
+    """A face row face_process inserts: the detector's box, its embedding, its recognition match
+    among the event's active members and its Unknown cluster (D-74, arch:face)."""
+
+    x: float
+    y: float
+    width: float
+    height: float
+    embedding: np.ndarray
+    matched_subject_id: UUID | None
+    similarity: float | None
+    cluster_id: UUID | None
+
+
+@dataclass(frozen=True)
+class DnpSubject:
+    """One dnp_subject row: a Do Not Publish subject in a photo and the keys of their own file
+    and thumbnail, at the media row's variant_version (arch:dnp_subject)."""
+
+    subject_id: UUID
+    variant_key: str
+    variant_thumb_key: str
 
 
 @dataclass(frozen=True)
@@ -156,34 +197,83 @@ class Tx:
         )
         return self._cur.rowcount == 1
 
-    def finish_thumbnail_dims(self, media_id: UUID, width: int, height: int) -> bool:
-        """Publishes a row no job has written yet, in one update. False when no row matched.
+    def finish_face_process(
+        self,
+        media_id: UUID,
+        width: int,
+        height: int,
+        public_key: str,
+        public_thumb_key: str,
+        faces: list[NewFace],
+        subjects: list[DnpSubject],
+    ) -> bool:
+        """Publishes a row no job has written yet with its faces and subjects. False when no row
+        matched, and then nothing is written.
 
-        The public keys are copied from the row's own upload keys, which the API built, so this
-        builds no key (root invariant 12, arch §3). variant_version goes from 0 to 1 (root
-        invariant 2) and processed_at is set in the same statement, so Realtime never sends a
-        row that has one without the others (root invariant 1, D-55).
+        The media update runs first and matches only variant_version 0, so a message re-sent from
+        the archive never adds a second set of face rows (D-123). It takes variant_version to 1
+        (root invariant 2) and sets processed_at in the same statement. Every file the keys name
+        is already in R2 and the whole write commits at once, so no reader sees the row published
+        before its faces and subjects exist (root invariant 1, D-55).
         """
         self._cur.execute(
             "update public.media"
             " set width = %(width)s, height = %(height)s,"
-            " public_key = upload_key, public_thumb_key = upload_thumb_key,"
+            " public_key = %(public)s, public_thumb_key = %(thumb)s,"
             " variant_version = variant_version + 1, processed_at = now()"
             " where id = %(id)s and variant_version = 0",
-            {"id": media_id, "width": width, "height": height},
+            {
+                "id": media_id,
+                "width": width,
+                "height": height,
+                "public": public_key,
+                "thumb": public_thumb_key,
+            },
         )
-        return self._cur.rowcount == 1
+        if self._cur.rowcount != 1:
+            return False
+        if faces:
+            self._cur.executemany(
+                "insert into public.face"
+                " (media_id, x, y, width, height, embedding, matched_subject_id, similarity,"
+                " cluster_id)"
+                " values (%s, %s, %s, %s, %s, %s::extensions.vector, %s, %s, %s)",
+                [
+                    (
+                        media_id,
+                        f.x,
+                        f.y,
+                        f.width,
+                        f.height,
+                        vector_literal(f.embedding),
+                        f.matched_subject_id,
+                        f.similarity,
+                        f.cluster_id,
+                    )
+                    for f in faces
+                ],
+            )
+        self._insert_subjects(media_id, subjects)
+        return True
 
     def finish_blur_region(
-        self, media_id: UUID, read_version: int, public_key: str, public_thumb_key: str
+        self,
+        media_id: UUID,
+        read_version: int,
+        public_key: str,
+        public_thumb_key: str,
+        subjects: list[DnpSubject],
     ) -> bool:
-        """Points the row at a blur_region's files, in one update. False when no row matched.
+        """Points the row and its subjects at a regeneration's files. False when no row matched,
+        and then nothing is written.
 
         Matches only while variant_version is still the one the job read, so nothing another
         write changed is overwritten, and a retry after a failure rebuilds the same keys.
         processed_at is set when it is null and kept when it is not, so a message re-sent from the
-        archive republishes the photo (D-171). Every file the keys name already applies every
-        stored region, so publishing in this statement is safe (root invariant 1, D-55).
+        archive republishes the photo (D-171). The photo's dnp_subject rows are replaced by
+        `subjects` in the same transaction, so a subject never holds a key from another version.
+        Every file the keys name already applies every stored region, so publishing in this
+        statement is safe (root invariant 1, D-55).
         """
         self._cur.execute(
             "update public.media"
@@ -198,7 +288,19 @@ class Tx:
                 "thumb": public_thumb_key,
             },
         )
-        return self._cur.rowcount == 1
+        if self._cur.rowcount != 1:
+            return False
+        self._cur.execute("delete from public.dnp_subject where media_id = %s", (media_id,))
+        self._insert_subjects(media_id, subjects)
+        return True
+
+    def _insert_subjects(self, media_id: UUID, subjects: list[DnpSubject]) -> None:
+        if subjects:
+            self._cur.executemany(
+                "insert into public.dnp_subject"
+                " (media_id, subject_id, variant_key, variant_thumb_key) values (%s, %s, %s, %s)",
+                [(media_id, s.subject_id, s.variant_key, s.variant_thumb_key) for s in subjects],
+            )
 
 
 def _connect(conninfo: str) -> psycopg.Connection[Any]:
@@ -332,7 +434,7 @@ class Store:
         can restore a deleted photo, so S-22a makes every job but media_delete skip one (D-130)."""
         with self._statement() as cur:
             cur.execute(
-                "select id, upload_key, upload_thumb_key, public_key, public_thumb_key,"
+                "select id, event_id, upload_key, upload_thumb_key, public_key, public_thumb_key,"
                 " variant_version, processed_at is not null"
                 " from public.media where id = %s",
                 (media_id,),
@@ -342,12 +444,13 @@ class Store:
             return None
         return MediaRow(
             id=row[0],
-            upload_key=row[1],
-            upload_thumb_key=row[2],
-            public_key=row[3],
-            public_thumb_key=row[4],
-            variant_version=row[5],
-            published=bool(row[6]),
+            event_id=row[1],
+            upload_key=row[2],
+            upload_thumb_key=row[3],
+            public_key=row[4],
+            public_thumb_key=row[5],
+            variant_version=row[6],
+            published=bool(row[7]),
         )
 
     def blur_regions(self, media_id: UUID) -> list[BlurRegion]:
@@ -362,7 +465,73 @@ class Store:
             rows = cur.fetchall()
         return [BlurRegion(x=r[0], y=r[1], width=r[2], height=r[3]) for r in rows]
 
+    def faces(self, media_id: UUID) -> list[StoredFace]:
+        """The photo's face rows as face_process stored them, through face_media_idx."""
+        with self._statement() as cur:
+            cur.execute(
+                "select id, x, y, width, height, embedding::text from public.face"
+                " where media_id = %s order by created_at, id",
+                (media_id,),
+            )
+            rows = cur.fetchall()
+        return [
+            StoredFace(
+                id=r[0], x=r[1], y=r[2], width=r[3], height=r[4], embedding=parse_vector(r[5])
+            )
+            for r in rows
+        ]
+
+    def dnp_subjects(self, media_id: UUID) -> list[DnpSubject]:
+        """The photo's dnp_subject rows, so a regeneration can delete the files they replace."""
+        with self._statement() as cur:
+            cur.execute(
+                "select subject_id, variant_key, variant_thumb_key from public.dnp_subject"
+                " where media_id = %s order by subject_id",
+                (media_id,),
+            )
+            rows = cur.fetchall()
+        return [DnpSubject(subject_id=r[0], variant_key=r[1], variant_thumb_key=r[2]) for r in rows]
+
+    def clustered_faces(self, event_id: UUID) -> list[ClusterFace]:
+        """Every unmatched face already in an Unknown cluster in the event, for clustering a new
+        photo's faces (D-74). Deleted photos are left out (D-130)."""
+        with self._statement() as cur:
+            cur.execute(
+                "select f.cluster_id, f.embedding::text from public.face f"
+                " join public.media m on m.id = f.media_id"
+                " where m.event_id = %s and m.deleted_at is null and f.cluster_id is not null"
+                " order by f.created_at, f.id",
+                (event_id,),
+            )
+            rows = cur.fetchall()
+        return [ClusterFace(cluster_id=r[0], embedding=parse_vector(r[1])) for r in rows]
+
     # --- face_reference ---------------------------------------------------------------------
+
+    def active_references(self, event_id: UUID) -> list[Reference]:
+        """Accepted references added to this event by subjects who are active members of it, for
+        recognition: Find My Photos and Unknown clusters (D-141, D-175)."""
+        return self._references(event_id, "m.status = 'active'")
+
+    def flagged_references(self, event_id: UUID) -> list[Reference]:
+        """Accepted references added to this event by subjects whose membership in it has Do Not
+        Publish on, whatever its status, for blurring. A removed or blocked subject stays blurred
+        in new photos (D-129, D-175)."""
+        return self._references(event_id, "m.dnp_activated_at is not null")
+
+    def _references(self, event_id: UUID, condition: str) -> list[Reference]:
+        # `condition` is one of the two literals above, never input.
+        with self._statement() as cur:
+            cur.execute(
+                "select r.subject_id, r.embedding::text from public.face_reference r"
+                " join public.subject s on s.id = r.subject_id"
+                " join public.membership m on m.user_id = s.user_id and m.event_id = r.event_id"
+                f" where r.event_id = %s and r.status = 'accepted' and {condition}"
+                " order by r.subject_id, r.created_at, r.id",
+                (event_id,),
+            )
+            rows = cur.fetchall()
+        return [Reference(subject_id=r[0], embedding=parse_vector(r[1])) for r in rows]
 
     def reference_for_job(self, reference_id: UUID) -> ReferenceRow | None:
         """The reference reference_process decides, or None when the API deleted it (D-172)."""
@@ -405,6 +574,11 @@ def vector_literal(embedding: np.ndarray) -> str:
     """pgvector's text form, `[v1,v2,...]`, which a `::extensions.vector` cast reads. Nine
     significant digits bring a float32 back exactly, so no Python pgvector package is needed."""
     return "[" + ",".join(format(float(v), ".9g") for v in np.ravel(embedding)) + "]"
+
+
+def parse_vector(text: str) -> np.ndarray:
+    """A pgvector value read as `::text`, `[v1,v2,...]`, as float32."""
+    return np.array(text.strip("[]").split(","), dtype=np.float32)
 
 
 def _first_line(error: BaseException) -> str:
