@@ -12,6 +12,8 @@ export interface MediaHandlers {
   flag: RequestHandler;
   listAlbum: RequestHandler;
   listUploaders: RequestHandler;
+  listPeople: RequestHandler;
+  listPhotoFaces: RequestHandler;
   serveImages: RequestHandler;
 }
 
@@ -21,6 +23,8 @@ export interface MediaHandlers {
 export function mediaRouter(auth: RequestHandler, handlers: MediaHandlers): Router {
   const router = Router();
   router.get('/events/:eventId/media/uploaders', auth, handlers.listUploaders);
+  router.get('/events/:eventId/media/people', auth, handlers.listPeople);
+  router.get('/events/:eventId/media/:mediaId/faces', auth, handlers.listPhotoFaces);
   router.get('/events/:eventId/media', auth, handlers.listAlbum);
   router.post('/events/:eventId/media/images', auth, jsonBody, handlers.serveImages);
   router.post('/events/:eventId/media/status', auth, jsonBody, handlers.status);

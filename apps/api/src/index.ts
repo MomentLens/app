@@ -10,6 +10,7 @@ import { createAlbumStore } from './services/album';
 import { createAttendeeStore } from './services/attendees';
 import { createBlurRegionStore } from './services/blur-regions';
 import { createEventStore } from './services/events';
+import { createFaceStore } from './services/faces';
 import { createDatabaseCheck } from './services/health';
 import { createInviteManagementStore, createInviteStore } from './services/invites';
 import { createJoinRequestStore } from './services/join-requests';
@@ -77,6 +78,7 @@ createApp({
   subEvents: createSubEventStore(sql),
   media: createMediaStore(sql),
   album: createAlbumStore(sql),
+  faces: createFaceStore(sql),
   mediaImages: createMediaImagesStore(sql),
   photoFlags: createPhotoFlagStore(sql),
   blurRegions: createBlurRegionStore(sql),
