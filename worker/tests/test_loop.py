@@ -7,17 +7,21 @@ import pytest
 from fakes import Crash, FakeStorage, FakeStore, drain, jpeg, make_worker
 
 from app.db import DatabaseUnavailable
-from app.jobs import REGISTRY, thumbnail_dims
+from app.jobs import REGISTRY, blur_region
 from app.jobs.base import Job
 from app.storage import StorageUnavailable
 
 
 def photo(store, storage, data=None, **row):
+    """A published photo at variant_version 1 with one blur region, so its blur_region message
+    reads the upload and writes a version 2."""
+    row = {"variant_version": 1, "processed_at": "earlier"} | row
     media_id = store.add_media(**row)
+    store.add_region(media_id, 0.25, 0.25, 0.5, 0.5)
     storage.objects[store.state.media[media_id]["upload_key"]] = (
         jpeg(400, 300) if data is None else data
     )
-    msg_id = store.send({"job": "thumbnail_dims", "media_id": str(media_id)})
+    msg_id = store.send({"job": "blur_region", "media_id": str(media_id)})
     return media_id, msg_id
 
 
@@ -30,8 +34,8 @@ def test_a_failed_message_runs_again_before_a_newer_one():
 
     key = {m: store.state.media[m]["upload_key"] for m in (first, second)}
     assert storage.reads == [key[first], key[first], key[second]]
-    assert store.state.media[first]["variant_version"] == 1
-    assert store.state.media[second]["variant_version"] == 1
+    assert store.state.media[first]["variant_version"] == 2
+    assert store.state.media[second]["variant_version"] == 2
 
 
 def test_a_crash_counts_as_a_try():
@@ -48,7 +52,7 @@ def test_a_crash_counts_as_a_try():
     restarted = FakeStore(shared=store)
     drain(make_worker(restarted, storage))
 
-    assert store.state.media[media_id]["variant_version"] == 1
+    assert store.state.media[media_id]["variant_version"] == 2
     assert msg_id not in store.state.messages
     assert len(storage.reads) == 2
 
@@ -56,9 +60,7 @@ def test_a_crash_counts_as_a_try():
 def test_a_message_three_crashes_hid_is_archived_without_running():
     store, storage = FakeStore(), FakeStorage()
     media_id = store.add_media(processed_at="earlier")
-    msg_id = store.send(
-        {"job": "thumbnail_dims", "media_id": str(media_id)}, read_ct=3, hidden=True
-    )
+    msg_id = store.send({"job": "blur_region", "media_id": str(media_id)}, read_ct=3, hidden=True)
     worker = make_worker(store, storage)
 
     drain(worker)
@@ -71,7 +73,7 @@ def test_a_message_three_crashes_hid_is_archived_without_running():
 
 def test_startup_leaves_a_delayed_message_hidden():
     store = FakeStore()
-    msg_id = store.send({"job": "thumbnail_dims", "media_id": str(uuid4())}, hidden=True)
+    msg_id = store.send({"job": "blur_region", "media_id": str(uuid4())}, hidden=True)
 
     drain(make_worker(store))
 
@@ -112,7 +114,7 @@ def test_a_lost_connection_reconnects_takes_the_lock_and_counts_the_try():
     drain(worker)
 
     assert store.connects == 2
-    assert store.state.media[media_id]["variant_version"] == 1
+    assert store.state.media[media_id]["variant_version"] == 2
     assert len(storage.reads) == 1  # the first try died before it read R2
 
 
@@ -140,10 +142,10 @@ def test_an_r2_outage_costs_one_try_and_holds_the_queue_until_r2_answers():
     assert storage.probes == 3
     message = store.state.messages[msg_id]
     assert message.read_ct == 1 and not message.hidden
-    assert store.state.media[media_id]["variant_version"] == 0
+    assert store.state.media[media_id]["variant_version"] == 1
 
     drain(worker)
-    assert store.state.media[media_id]["variant_version"] == 1
+    assert store.state.media[media_id]["variant_version"] == 2
     assert store.state.archived == {}
 
 
@@ -169,12 +171,12 @@ def test_stop_lets_the_job_in_progress_finish_and_reads_nothing_more():
 
     def stop_midway(ctx, message):
         stop.set()  # SIGTERM arrives while this job runs
-        thumbnail_dims.run(ctx, message)
+        blur_region.run(ctx, message)
 
-    jobs = {"thumbnail_dims": Job("thumbnail_dims", thumbnail_dims.Message, stop_midway)}
+    jobs = {"blur_region": Job("blur_region", blur_region.Message, stop_midway)}
     make_worker(store, storage, jobs=jobs, stop=stop).run()
 
-    assert store.state.media[first]["variant_version"] == 1
+    assert store.state.media[first]["variant_version"] == 2
     assert first_msg not in store.state.messages
     assert store.state.messages[second_msg].read_ct == 0
 
@@ -186,8 +188,8 @@ def test_stop_lets_the_job_in_progress_finish_and_reads_nothing_more():
         ["a", "list"],
         {"media_id": "4b3c1d7e-2f7a-4f43-8d1b-0a8b6c5e9f10"},
         {"job": 7},
-        {"job": "thumbnail_dims", "media_id": "not-a-uuid"},
-        {"job": "thumbnail_dims"},
+        {"job": "blur_region", "media_id": "not-a-uuid"},
+        {"job": "blur_region"},
     ],
 )
 def test_a_message_that_does_not_parse_is_archived_on_the_first_try(body):
@@ -216,7 +218,7 @@ def test_a_message_that_does_not_parse_but_names_a_photo_unpublishes_it():
 def test_an_unknown_job_is_archived_on_the_first_try_and_unpublishes_its_photo():
     store = FakeStore()
     media_id = store.add_media(processed_at="earlier")
-    msg_id = store.send({"job": "face_process", "media_id": str(media_id)})
+    msg_id = store.send({"job": "thumbnail_dims", "media_id": str(media_id)})
     worker = make_worker(store)
 
     drain(worker)
@@ -228,7 +230,7 @@ def test_an_unknown_job_is_archived_on_the_first_try_and_unpublishes_its_photo()
 
 def test_an_unknown_job_is_archived_even_when_its_row_is_gone():
     store = FakeStore()
-    msg_id = store.send({"job": "face_process", "media_id": str(uuid4())})
+    msg_id = store.send({"job": "thumbnail_dims", "media_id": str(uuid4())})
 
     drain(make_worker(store))
 
@@ -236,7 +238,7 @@ def test_an_unknown_job_is_archived_even_when_its_row_is_gone():
 
 
 def test_registry_names_match_their_message_models():
-    assert "thumbnail_dims" in REGISTRY
+    assert "blur_region" in REGISTRY
     for name, job in REGISTRY.items():
         assert job.name == name
         # Each message names its row by its own field; the extra one is ignored.
