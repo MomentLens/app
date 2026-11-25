@@ -19,10 +19,14 @@ import type { EventStore } from './events';
 // two pages, and a sub-event starting part-way through one would restart its section.
 const PgTimestamp = z.iso.datetime({ offset: true });
 
+// The cursor names the filters its page was made under, and a request with other filters is 400
+// invalid_request. The viewer is not in it: every page takes the viewer from the session.
 export const CursorPayload = z.strictObject({
   eventId: z.uuid(),
   subEventId: z.uuid().nullable(),
   uploaderId: z.uuid().nullable(),
+  personId: z.uuid().nullable(),
+  clusterId: z.uuid().nullable(),
   startsAt: PgTimestamp,
   subEventIdRow: z.uuid(),
   capturedAt: PgTimestamp,
@@ -77,16 +81,21 @@ export interface AlbumCursor {
   mediaId: string;
 }
 
+// viewerId is the caller from the session, never a value from the request. list_album hides a
+// Do Not Publish subject from every viewer but that subject, so the person filter's answer depends
+// on it (D-46, D-176). personId and clusterId are exclusive; list_album refuses both.
+export interface AlbumQueryOptions {
+  viewerId: string;
+  subEventId?: string;
+  uploaderId?: string;
+  personId?: string;
+  clusterId?: string;
+  cursor?: AlbumCursor;
+  limit: number;
+}
+
 export interface AlbumStore {
-  query(
-    eventId: string,
-    options: {
-      subEventId?: string;
-      uploaderId?: string;
-      cursor?: AlbumCursor;
-      limit: number;
-    },
-  ): Promise<AlbumQueryResult>;
+  query(eventId: string, options: AlbumQueryOptions): Promise<AlbumQueryResult>;
 
   uploaders(eventId: string): Promise<UploaderRecord[]>;
 }
@@ -139,7 +148,10 @@ export function createAlbumStore(sql: Sql): AlbumStore {
           p_after_sub_event_id => ${options.cursor?.subEventIdRow ?? null},
           p_after_captured_at => ${options.cursor?.capturedAt ?? null},
           p_after_media_id => ${options.cursor?.mediaId ?? null},
-          p_limit => ${options.limit}
+          p_limit => ${options.limit},
+          p_viewer_id => ${options.viewerId},
+          p_person_id => ${options.personId ?? null},
+          p_cluster_id => ${options.clusterId ?? null}
         ) as result`;
       const parsed = ListAlbumRpcResult.parse(row?.result);
       return {
@@ -195,15 +207,20 @@ export async function listAlbum(
     if (
       cursorPayload.eventId !== eventId ||
       cursorPayload.subEventId !== (request.subEventId ?? null) ||
-      cursorPayload.uploaderId !== (request.uploaderId ?? null)
+      cursorPayload.uploaderId !== (request.uploaderId ?? null) ||
+      cursorPayload.personId !== (request.personId ?? null) ||
+      cursorPayload.clusterId !== (request.clusterId ?? null)
     ) {
       throw new ApiError('invalid_request', 'Cursor filters mismatch');
     }
   }
 
   const result = await store.query(eventId, {
+    viewerId: userId,
     subEventId: request.subEventId,
     uploaderId: request.uploaderId,
+    personId: request.personId,
+    clusterId: request.clusterId,
     cursor: cursorPayload
       ? {
           startsAt: cursorPayload.startsAt,
@@ -225,6 +242,8 @@ export async function listAlbum(
       eventId,
       subEventId: request.subEventId ?? null,
       uploaderId: request.uploaderId ?? null,
+      personId: request.personId ?? null,
+      clusterId: request.clusterId ?? null,
       startsAt: lastItem.startsAt,
       subEventIdRow: lastItem.subEventId,
       capturedAt: lastItem.capturedAt,
