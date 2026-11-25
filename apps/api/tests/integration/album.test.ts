@@ -1,4 +1,5 @@
-// GET /events/{eventId}/media and GET /events/{eventId}/media/uploaders (D-147, D-148, spec §2.5.2, §4.9).
+// GET /events/{eventId}/media and GET /events/{eventId}/media/uploaders (D-147, D-148, spec §2.5.2, §4.9),
+// and the person and cluster filters S-23 adds to the album (D-176).
 // In-memory fakes for event store and album store.
 import { randomUUID } from 'node:crypto';
 
@@ -13,6 +14,7 @@ import type { EventStore, MemberAccess } from '../../src/services/events';
 import type {
   AlbumCursor,
   AlbumMediaRow,
+  AlbumQueryOptions,
   AlbumQueryResult,
   AlbumStore,
   UploaderRecord,
@@ -93,16 +95,12 @@ class FakeAlbumStore implements AlbumStore {
   // The cursor each query received, in order, so a test can read what the API decoded.
   cursors: (AlbumCursor | undefined)[] = [];
 
-  query(
-    eventId: string,
-    options: {
-      subEventId?: string;
-      uploaderId?: string;
-      cursor?: AlbumCursor;
-      limit: number;
-    },
-  ): Promise<AlbumQueryResult> {
+  // Every query's options, in order, so a test can read the viewer and filters the API passed.
+  queries: AlbumQueryOptions[] = [];
+
+  query(eventId: string, options: AlbumQueryOptions): Promise<AlbumQueryResult> {
     this.cursors.push(options.cursor);
+    this.queries.push(options);
     // Filter only published, non-deleted rows for this event
     const visible = this.rows.filter(
       (r) =>
@@ -191,6 +189,7 @@ beforeEach(() => {
   albumStore.rows = [];
   albumStore.uploadersList = [];
   albumStore.cursors = [];
+  albumStore.queries = [];
 
   eventId = randomUUID();
   otherEventId = randomUUID();
@@ -513,5 +512,123 @@ describe('GET /events/:eventId/media/uploaders', () => {
         avatar: null,
       },
     ]);
+  });
+});
+
+// The person and cluster filters (S-23, D-176). Who is hidden is decided in SQL and tested against
+// the dev project in rls.test.ts; these check what the API sends it and what it refuses.
+describe('GET /events/:eventId/media with personId or clusterId', () => {
+  const PERSON = randomUUID();
+  const CLUSTER = randomUUID();
+
+  // 51 published rows, so the first page carries a cursor.
+  function fullPage(): void {
+    albumStore.rows = Array.from({ length: 51 }, (_, i) => ({
+      id: randomUUID(),
+      eventId,
+      subEventId: subEventId1,
+      uploaderUserId: GUEST,
+      uploaderRole: 'guest' as const,
+      capturedAt: `2026-10-06T11:${String(59 - i).padStart(2, '0')}:00+00:00`,
+      startsAt: '2026-10-06T09:00:00+00:00',
+      width: 1920,
+      height: 1080,
+      variantVersion: 1,
+      uploadedAt: '2026-10-06T12:00:00+00:00',
+      processedAt: '2026-10-06T12:01:00+00:00',
+      deletedAt: null,
+    }));
+  }
+
+  async function get(query: string, token = 'token-guest'): Promise<Response> {
+    return fetch(`${app.baseUrl}/events/${eventId}/media${query}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  }
+
+  it('passes the caller from the session as the viewer, with the person filter', async () => {
+    const res = await get(`?personId=${PERSON}&subEventId=${subEventId1}&uploaderId=${ADMIN}`);
+    expect(res.status).toBe(200);
+    expect(albumStore.queries).toEqual([
+      expect.objectContaining({
+        viewerId: GUEST,
+        personId: PERSON,
+        clusterId: undefined,
+        subEventId: subEventId1,
+        uploaderId: ADMIN,
+      }),
+    ]);
+  });
+
+  it('passes the Admin as the viewer, with the cluster filter', async () => {
+    const res = await get(`?clusterId=${CLUSTER}`, 'token-admin');
+    expect(res.status).toBe(200);
+    expect(albumStore.queries).toEqual([
+      expect.objectContaining({ viewerId: ADMIN, personId: undefined, clusterId: CLUSTER }),
+    ]);
+  });
+
+  it('passes the viewer on an unfiltered album too', async () => {
+    const res = await get('');
+    expect(res.status).toBe(200);
+    expect(albumStore.queries).toEqual([expect.objectContaining({ viewerId: GUEST })]);
+  });
+
+  it('refuses a viewer named in the query with 400, and queries nothing', async () => {
+    const res = await get(`?personId=${PERSON}&viewerId=${ADMIN}`);
+    expect(res.status).toBe(400);
+    expect(ErrorResponse.parse(await res.json()).error.code).toBe('invalid_request');
+    expect(albumStore.queries).toEqual([]);
+  });
+
+  it('refuses personId and clusterId together with 400', async () => {
+    const res = await get(`?personId=${PERSON}&clusterId=${CLUSTER}`);
+    expect(res.status).toBe(400);
+    expect(ErrorResponse.parse(await res.json()).error.code).toBe('invalid_request');
+    expect(albumStore.queries).toEqual([]);
+  });
+
+  it('refuses a Photographer with 403 wrong_role before any filter runs', async () => {
+    const res = await get(`?personId=${PHOTOGRAPHER}`, 'token-photographer');
+    expect(res.status).toBe(403);
+    expect(ErrorResponse.parse(await res.json()).error.code).toBe('wrong_role');
+    expect(albumStore.queries).toEqual([]);
+  });
+
+  for (const [who, token] of NOT_MEMBERS) {
+    it(`refuses ${who} filtering by a person with 403 not_member`, async () => {
+      const res = await get(`?personId=${GUEST}`, token);
+      expect(res.status).toBe(403);
+      expect(ErrorResponse.parse(await res.json()).error.code).toBe('not_member');
+      expect(albumStore.queries).toEqual([]);
+    });
+  }
+
+  it('binds the cursor to the person filter it was made under', async () => {
+    fullPage();
+    const first = await get(`?personId=${PERSON}`);
+    const page = ListAlbumResponse.parse(await first.json());
+    expect(page.nextCursor).not.toBeNull();
+    const cursor = encodeURIComponent(page.nextCursor!);
+
+    expect((await get(`?personId=${PERSON}&cursor=${cursor}`)).status).toBe(200);
+    for (const other of [`?personId=${randomUUID()}&`, '?', `?clusterId=${CLUSTER}&`]) {
+      const res = await get(`${other}cursor=${cursor}`);
+      expect(res.status).toBe(400);
+      expect(ErrorResponse.parse(await res.json()).error.code).toBe('invalid_request');
+    }
+  });
+
+  it('binds the cursor to the cluster filter it was made under', async () => {
+    fullPage();
+    const first = await get(`?clusterId=${CLUSTER}`);
+    const page = ListAlbumResponse.parse(await first.json());
+    const cursor = encodeURIComponent(page.nextCursor!);
+
+    expect((await get(`?clusterId=${CLUSTER}&cursor=${cursor}`)).status).toBe(200);
+    for (const other of [`?clusterId=${randomUUID()}&`, '?', `?personId=${PERSON}&`]) {
+      const res = await get(`${other}cursor=${cursor}`);
+      expect(res.status).toBe(400);
+    }
   });
 });
