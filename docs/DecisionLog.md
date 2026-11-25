@@ -1320,6 +1320,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** One reference set for the account, spec v11's design. An account set with extra photos per event, which brings back the stale look. The profile photo as a reference.
 **Cost.** People add references in each event, and Find My Photos and Do Not Publish do nothing for them in an event until they do. More reference photos stored per person. The `face_reference` migration, still unwritten, takes the new columns; S-20 writes it.
 **Reopen if.** S-26's measurements show one set of references matching as well across events as per-event ones.
+**Amended (see D-175).** For blurring, the references of every member with Do Not Publish on in the event count whatever their status. Recognition and Find My Photos still use active members' only.
 
 ### D-142: Event Settings has its own endpoints, and switching to auto admits the pending requests
 **Decision.** Amends D-110 and spec §2.5.7. Ukasha ruled on 2026-10-04, at S-07a's read-back.
@@ -1813,6 +1814,19 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Why.** S-20 comes before the jobs it would hand work to. The worker archives a message naming a job it does not have and reports it to Sentry, and without S-21's blur pipeline `face_process` could not publish a photo. Until S-26 nothing matches, so `reprocess` would change nothing, and nobody can turn Do Not Publish on before S-29. A reference left `pending` after a final failure keeps the app polling forever. The worker reads pixels as stored (D-99), so a reference with an orientation tag would be detected sideways.
 **Rejected.** Registering a `reprocess` that does nothing, which hides a missing job behind a passing one. A minimum face size, which is a number nobody has measured. Leaving a failed reference `pending` with a client-side timeout.
 **Cost.** S-20 can test detection only through `reference_process` and unit tests. A selfie with a stranger in the background is rejected as `multiple_faces`. The Unknown strip is empty until S-26.
+**Amended (see D-174).** S-21's migration adds the membership column the guard reads. The guard itself still lands in S-29.
+
+### D-174: S-21 adds the Do Not Publish column on `membership`
+**Decision.** Amends D-172, and changes the slice plan for S-21 and S-29. Ukasha ruled on it on 2026-11-25, at S-21's read-back. S-21's migration creates `dnp_subject` and adds `membership.dnp_activated_at`, the column only. S-29 keeps the activation function that sets it and enqueues `reprocess`, the drop of `subject.dnp_activated_at`, the Cancel Request change and the last-reference guard. Until S-29, S-21's tests set the column directly and nothing in the app sets it.
+**Why.** `face_process` writes a subject's file only when that subject's membership in the event has Do Not Publish on (D-129). S-29 depended on S-25, which depends on S-21, so the worker had no column to read, and no slice created `dnp_subject`.
+**Rejected.** Reading `subject.dnp_activated_at`, the account-wide flag D-129 replaced. Building the N+1 path with an empty subject set and letting S-29 wire it, which leaves the most sensitive path untested until a later slice by another developer.
+**Cost.** S-21's schema stage grows by one column. The column exists for some weeks with nothing in the app able to set it.
+
+### D-175: A Do Not Publish subject stays blurred after leaving the event
+**Decision.** Amends D-141 and spec §4.11.4.5. Ukasha ruled on it on 2026-11-25, at S-21's read-back. For blurring, the worker matches the accepted references of every member whose Do Not Publish is on in the photo's event, whatever their membership's `status`. Recognition, Find My Photos and Unknown clusters still match only active members' references (D-141). One worker function decides which faces each file blurs, and `face_process`, `blur_region` and `reprocess` all call it (`docs/ARCHITECTURE.md` §5).
+**Why.** D-129 makes Do Not Publish permanent within its event. Matching only active members kept a removed or blocked subject blurred in the photos taken before they left and showed their face in every photo after.
+**Rejected.** Matching only active members for both, which is what D-141 said and costs nothing to build, and accepts that leaving an event turns the protection off for new photos.
+**Cost.** One more clause in the query that picks the event's references, which S-25's `reprocess` must use too.
 
 ## Open items that are not decisions yet
 
