@@ -3,7 +3,8 @@
 --
 -- Schema only. The worker's face_process and blur_region write dnp_subject in S-21's worker build,
 -- and the image-serving endpoint reads it in S-21's api build. The swap of complete_upload to
--- face_process is a migration of its own, 20261125080148_complete_upload_face_process.sql.
+-- face_process is a migration of its own on S-21's worker branch, so this one could reach main
+-- before the worker does (S-21 row).
 --
 -- RLS is on with no policy (root invariant 14). The API reads dnp_subject as service_role and makes
 -- every decision about it in its service layer. No Realtime publishes it: a subject's new file
