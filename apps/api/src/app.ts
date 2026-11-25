@@ -44,6 +44,8 @@ import {
   flagPhotoController,
   getMediaDetailController,
   listAlbumController,
+  listPeopleController,
+  listPhotoFacesController,
   listUploadersController,
   mediaImagesController,
   mediaStatusController,
@@ -87,6 +89,7 @@ import type { AlbumStore } from './services/album';
 import type { AttendeeStore } from './services/attendees';
 import type { BlurRegionStore } from './services/blur-regions';
 import type { EventStore } from './services/events';
+import type { FaceStore } from './services/faces';
 import type { DatabaseCheck } from './services/health';
 import type { InviteManagementStore, InviteStore } from './services/invites';
 import type { JoinRequestStore } from './services/join-requests';
@@ -116,6 +119,7 @@ export interface AppDeps {
   subEvents: SubEventStore;
   media: MediaStore;
   album: AlbumStore;
+  faces: FaceStore;
   mediaImages: MediaImagesStore;
   photoFlags: PhotoFlagStore;
   blurRegions: BlurRegionStore;
@@ -205,6 +209,8 @@ export function createApp(deps: AppDeps): Express {
       flag: flagPhotoController(deps.photoFlags),
       listAlbum: listAlbumController(deps.events, deps.album),
       listUploaders: listUploadersController(deps.events, deps.album),
+      listPeople: listPeopleController(deps.events, deps.faces),
+      listPhotoFaces: listPhotoFacesController(deps.events, deps.faces),
       serveImages: mediaImagesController(serveImagesDeps),
     }),
   );

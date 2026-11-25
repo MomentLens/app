@@ -9,6 +9,7 @@ import { createR2 } from '../../src/lib/r2';
 import type { AlbumStore } from '../../src/services/album';
 import type { BlurRegionStore } from '../../src/services/blur-regions';
 import type { EventStore } from '../../src/services/events';
+import type { FaceStore } from '../../src/services/faces';
 import type { InviteStore } from '../../src/services/invites';
 import type { MediaStore } from '../../src/services/media';
 import type { MediaImagesStore } from '../../src/services/media-images';
@@ -69,6 +70,11 @@ const noMedia: MediaStore = {
 const noAlbum: AlbumStore = {
   query: () => Promise.reject(new Error('no album store in this test')),
   uploaders: () => Promise.reject(new Error('no album store in this test')),
+};
+
+const noFaces: FaceStore = {
+  people: () => Promise.reject(new Error('no face store in this test')),
+  photoFaces: () => Promise.reject(new Error('no face store in this test')),
 };
 
 const noMediaImages: MediaImagesStore = {
@@ -132,6 +138,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     subEvents: noSubEvents,
     media: noMedia,
     album: noAlbum,
+    faces: noFaces,
     mediaImages: noMediaImages,
     photoFlags: noPhotoFlags,
     blurRegions: noBlurRegions,
