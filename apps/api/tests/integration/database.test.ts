@@ -258,7 +258,7 @@ describeDb('the API stores against Postgres', () => {
     const albums = createAlbumStore(sql);
     expect((await albums.query(eventId, { limit: 50 })).media).toEqual([]);
 
-    // What the worker's thumbnail_dims job writes, processed_at in the same update (D-123).
+    // What the worker's face_process job writes for a photo with no face, processed_at last (D-55).
     await admin`
       update public.media
       set width = 4000, height = 3000, public_key = upload_key,
@@ -275,11 +275,50 @@ describeDb('the API stores against Postgres', () => {
     const uploaders = await albums.uploaders(eventId);
     expect(uploaders.map((uploader) => uploader.userId)).toEqual([guestId]);
 
-    const served = await createMediaImagesStore(sql).findForServing(eventId, [mediaId]);
+    const served = await createMediaImagesStore(sql).findForServing(eventId, [mediaId], guestId);
     expect(served).toEqual([
-      expect.objectContaining({ id: mediaId, publicKey: uploadKeys(mediaId).photo }),
+      expect.objectContaining({
+        id: mediaId,
+        publicKey: uploadKeys(mediaId).photo,
+        variantKey: null,
+        variantThumbKey: null,
+      }),
     ]);
     expect(served[0]?.processedAt).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+\+00:00$/);
+  });
+
+  // The serving read's subject join on the real schema (hb §5.2, D-63). Two subjects in one photo,
+  // each matched through subject.user_id; nobody else joins a row.
+  it("joins a subject's own dnp_subject row for that subject alone", async () => {
+    const b = await makeUser(admin, 'Subject B');
+    const c = await makeUser(admin, 'Subject C');
+    const subjects = await admin<{ id: string; user_id: string }[]>`
+      insert into public.subject (user_id) values (${b}), (${c}) returning id, user_id`;
+    const subjectOf = (userId: string) => subjects.find((s) => s.user_id === userId)!.id;
+    const files = (userId: string) => ({
+      variantKey: `${mediaId}/${subjectOf(userId)}_v1.jpg`,
+      variantThumbKey: `${mediaId}/${subjectOf(userId)}_thumb_v1.webp`,
+    });
+    for (const userId of [b, c]) {
+      const f = files(userId);
+      await admin`
+        insert into public.dnp_subject (media_id, subject_id, variant_key, variant_thumb_key)
+        values (${mediaId}, ${subjectOf(userId)}, ${f.variantKey}, ${f.variantThumbKey})`;
+    }
+
+    const store = createMediaImagesStore(sql);
+    for (const userId of [b, c]) {
+      expect(await store.findForServing(eventId, [mediaId], userId)).toEqual([
+        expect.objectContaining({ id: mediaId, ...files(userId) }),
+      ]);
+    }
+    for (const userId of [guestId, adminId]) {
+      expect(await store.findForServing(eventId, [mediaId], userId)).toEqual([
+        expect.objectContaining({ id: mediaId, variantKey: null, variantThumbKey: null }),
+      ]);
+    }
+
+    await admin`delete from public.dnp_subject where media_id = ${mediaId}`;
   });
 
   it('keeps the venue codes to the admin', async () => {
