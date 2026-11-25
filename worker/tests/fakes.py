@@ -17,8 +17,9 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
+from app.ai.matching import ClusterFace, Reference
 from app.ai.model import FaceModel
-from app.db import BlurRegion, MediaRow, ReferenceRow, Store
+from app.db import BlurRegion, DnpSubject, MediaRow, NewFace, ReferenceRow, Store, StoredFace
 from app.images import cv2
 from app.queue import Message
 from app.storage import ObjectMissing
@@ -44,8 +45,15 @@ class State:
     # A photo's manual_blur_region rows, oldest first, as BlurRegion.
     regions: dict[UUID, list[BlurRegion]] = field(default_factory=dict)
     # face_reference rows by id: status, reject_reason, embedding (a list of floats or None),
-    # photo_key and event_id.
+    # photo_key, event_id and subject_id.
     references: dict[UUID, dict[str, Any]] = field(default_factory=dict)
+    # A membership seen through its subject: event_id, subject_id, status and dnp (Do Not
+    # Publish on in that event).
+    members: list[dict[str, Any]] = field(default_factory=list)
+    # A photo's face rows, as NewFace plus their id, in insert order.
+    faces: dict[UUID, list[dict[str, Any]]] = field(default_factory=dict)
+    # A photo's dnp_subject rows.
+    subjects: dict[UUID, list[DnpSubject]] = field(default_factory=dict)
 
 
 class FakeTx:
@@ -73,23 +81,42 @@ class FakeTx:
     def unpublish(self, media_id: UUID) -> None:
         self._state.media[media_id]["processed_at"] = None
 
-    def finish_thumbnail_dims(self, media_id: UUID, width: int, height: int) -> bool:
-        self._store.fault("finish_thumbnail_dims")
+    def finish_face_process(
+        self,
+        media_id: UUID,
+        width: int,
+        height: int,
+        public_key: str,
+        public_thumb_key: str,
+        faces: list[NewFace],
+        subjects: list[DnpSubject],
+    ) -> bool:
+        self._store.fault("finish_face_process")
         row = self._state.media.get(media_id)
         if row is None or row["variant_version"] != 0:
             return False
         row.update(
             width=width,
             height=height,
-            public_key=row["upload_key"],
-            public_thumb_key=row["upload_thumb_key"],
-            variant_version=row["variant_version"] + 1,
+            public_key=public_key,
+            public_thumb_key=public_thumb_key,
+            variant_version=1,
             processed_at="now",
         )
+        self._state.faces[media_id] = [
+            {"id": uuid4(), **f.__dict__, "embedding": np.asarray(f.embedding, np.float32)}
+            for f in faces
+        ]
+        self._state.subjects[media_id] = list(subjects)
         return True
 
     def finish_blur_region(
-        self, media_id: UUID, read_version: int, public_key: str, public_thumb_key: str
+        self,
+        media_id: UUID,
+        read_version: int,
+        public_key: str,
+        public_thumb_key: str,
+        subjects: list[DnpSubject],
     ) -> bool:
         self._store.fault("finish_blur_region")
         row = self._state.media.get(media_id)
@@ -101,6 +128,7 @@ class FakeTx:
             variant_version=read_version + 1,
             processed_at=row["processed_at"] or "now",
         )
+        self._state.subjects[media_id] = list(subjects)
         return True
 
     def lock_reference(self, reference_id: UUID) -> str | None:
@@ -159,6 +187,7 @@ class FakeStore:
     def add_media(self, media_id: UUID | None = None, **overrides: Any) -> UUID:
         media_id = media_id or uuid4()
         self.state.media[media_id] = {
+            "event_id": uuid4(),
             "upload_key": f"{media_id}/upload.jpg",
             "upload_thumb_key": f"{media_id}/upload_thumb.webp",
             "public_key": None,
@@ -183,12 +212,53 @@ class FakeStore:
         event_id = overrides.pop("event_id", uuid4())
         self.state.references[reference_id] = {
             "event_id": event_id,
+            "subject_id": uuid4(),
             "photo_key": f"users/{uuid4()}/events/{event_id}/reference_{reference_id}.jpg",
             "status": "pending",
             "reject_reason": None,
             "embedding": None,
         } | overrides
         return reference_id
+
+    def add_member(
+        self,
+        event_id: UUID,
+        embedding: Any,
+        *,
+        status: str = "active",
+        dnp: bool = False,
+        subject_id: UUID | None = None,
+    ) -> UUID:
+        """A member of the event with one accepted reference there. Returns their subject_id."""
+        subject_id = subject_id or uuid4()
+        self.state.members.append(
+            {"event_id": event_id, "subject_id": subject_id, "status": status, "dnp": dnp}
+        )
+        self.add_reference(
+            event_id=event_id,
+            subject_id=subject_id,
+            status="accepted",
+            embedding=[float(v) for v in embedding],
+        )
+        return subject_id
+
+    def add_face(
+        self, media_id: UUID, x: float, y: float, width: float, height: float, embedding: Any
+    ) -> None:
+        """A stored face row, as face_process would have left it."""
+        self.state.faces.setdefault(media_id, []).append(
+            {
+                "id": uuid4(),
+                "x": x,
+                "y": y,
+                "width": width,
+                "height": height,
+                "embedding": np.asarray(embedding, np.float32),
+                "matched_subject_id": None,
+                "similarity": None,
+                "cluster_id": None,
+            }
+        )
 
     # --- the Store interface ----------------------------------------------------------------
 
@@ -256,6 +326,7 @@ class FakeStore:
             return None
         return MediaRow(
             id=media_id,
+            event_id=row["event_id"],
             upload_key=row["upload_key"],
             upload_thumb_key=row["upload_thumb_key"],
             public_key=row["public_key"],
@@ -279,6 +350,48 @@ class FakeStore:
     def blur_regions(self, media_id: UUID) -> list[BlurRegion]:
         self.fault("blur_regions")
         return list(self.state.regions.get(media_id, []))
+
+    def faces(self, media_id: UUID) -> list[StoredFace]:
+        self.fault("faces")
+        return [
+            StoredFace(
+                id=f["id"],
+                x=f["x"],
+                y=f["y"],
+                width=f["width"],
+                height=f["height"],
+                embedding=f["embedding"],
+            )
+            for f in self.state.faces.get(media_id, [])
+        ]
+
+    def dnp_subjects(self, media_id: UUID) -> list[DnpSubject]:
+        return list(self.state.subjects.get(media_id, []))
+
+    def clustered_faces(self, event_id: UUID) -> list[ClusterFace]:
+        return [
+            ClusterFace(f["cluster_id"], f["embedding"])
+            for media_id, faces in self.state.faces.items()
+            if self.state.media.get(media_id, {}).get("event_id") == event_id
+            for f in faces
+            if f["cluster_id"] is not None
+        ]
+
+    def active_references(self, event_id: UUID) -> list[Reference]:
+        return self._references(event_id, lambda m: m["status"] == "active")
+
+    def flagged_references(self, event_id: UUID) -> list[Reference]:
+        return self._references(event_id, lambda m: m["dnp"])
+
+    def _references(self, event_id: UUID, keep: Any) -> list[Reference]:
+        chosen = {
+            m["subject_id"] for m in self.state.members if m["event_id"] == event_id and keep(m)
+        }
+        return [
+            Reference(r["subject_id"], np.asarray(r["embedding"], np.float32))
+            for r in self.state.references.values()
+            if r["event_id"] == event_id and r["status"] == "accepted" and r["subject_id"] in chosen
+        ]
 
 
 class FakeStorage:
