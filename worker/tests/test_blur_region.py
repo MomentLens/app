@@ -3,9 +3,11 @@
 from uuid import uuid4
 
 import numpy as np
-from fakes import FakeStorage, FakeStore, drain, make_worker, noise_jpeg
+from fakes import FakeStorage, FakeStore, drain, face_model, make_worker, noise_jpeg
 
 from app import blur, images
+from app.ai import matching, model
+from app.db import DnpSubject
 from app.jobs import REGISTRY
 from app.storage import StorageUnavailable
 
@@ -284,3 +286,133 @@ def test_a_failed_delete_after_the_commit_is_logged_and_the_job_is_done(caplog):
     assert store.state.archived == {} and worker.report.calls == []
     assert len(storage.deletes) == 2
     assert any("could not delete" in r.getMessage() for r in caplog.records)
+
+
+# --- S-21: subjects' files, and faces from the stored rows (D-57, D-66, D-83) ------------------
+
+# Two stored faces as fractions of 640x512, far apart: pixels 48..128 and 496..576 across, 64..176
+# down. Their cores sit inside each grown ellipse and clear of RECT.
+FACES = [(48 / 640, 64 / 512, 80 / 640, 112 / 512), (496 / 640, 64 / 512, 80 / 640, 112 / 512)]
+FACE_CORES = [(100, 140, 68, 108), (100, 140, 516, 556)]
+
+
+def unit(i):
+    row = np.zeros(512, np.float32)
+    row[i], row[511] = 0.6, 0.8
+    return row
+
+
+def with_faces(store, media_id):
+    for i, box in enumerate(FACES):
+        store.add_face(media_id, *box, embedding=unit(i))
+
+
+def core_changed(out, ref, core):
+    y0, y1, x0, x1 = core
+    return np.abs(out[y0:y1, x0:x1] - ref[y0:y1, x0:x1]).mean()
+
+
+def test_subjects_files_are_rebuilt_with_every_region_and_their_own_face_clear(monkeypatch):
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", 0.9)
+    store, storage = FakeStore(), FakeStorage()
+    media_id, _ = photo(store, storage, version=1)
+    with_faces(store, media_id)
+    event_id = store.state.media[media_id]["event_id"]
+    a = store.add_member(event_id, unit(0), dnp=True)
+    b = store.add_member(event_id, unit(1), dnp=True)
+    upload = storage.objects[f"{media_id}/upload.jpg"]
+
+    drain(make_worker(store, storage))
+
+    row = store.state.media[media_id]
+    assert row["variant_version"] == 2
+    subjects = {s.subject_id: s for s in store.state.subjects[media_id]}
+    assert set(subjects) == {a, b}
+    assert subjects[a].variant_key == f"{media_id}/{a}_v2.jpg"
+    assert subjects[b].variant_thumb_key == f"{media_id}/{b}_thumb_v2.webp"
+    assert len(storage.puts) == 6
+
+    ref = decoded(blur.encode_full(images.decode(upload)))
+    thumb_ref = decoded(blur.thumbnail(images.decode(upload)))
+    files = {
+        "public": (row["public_key"], row["public_thumb_key"], {0, 1}),
+        "a": (subjects[a].variant_key, subjects[a].variant_thumb_key, {1}),
+        "b": (subjects[b].variant_key, subjects[b].variant_thumb_key, {0}),
+    }
+    for name, (key, thumb_key, hidden) in files.items():
+        out = decoded(storage.objects[key])
+        assert core_changed(out, ref, (128, 256, 160, 320)) > 40, f"{name}: region"
+        thumb = decoded(storage.objects[thumb_key])
+        assert core_changed(thumb, thumb_ref, (64, 116, 79, 146)) > 10, f"{name}: thumb region"
+        for i, core in enumerate(FACE_CORES):
+            diff = core_changed(out, ref, core)
+            assert (diff > 40) if i in hidden else (diff < 3), f"{name}: face {i} at {diff}"
+
+
+def test_the_last_region_deleted_on_a_fail_closed_photo_keeps_its_faces_blurred():
+    assert matching.MATCH_THRESHOLD is None, "arch §6 has a value now; update this test"
+    store, storage = FakeStore(), FakeStorage()
+    media_id, msg_id = photo(store, storage, version=2, regions=())
+    old = (f"{media_id}/public_v2.jpg", f"{media_id}/public_thumb_v2.webp")
+    store.state.media[media_id].update(public_key=old[0], public_thumb_key=old[1])
+    with_faces(store, media_id)
+    upload = storage.objects[f"{media_id}/upload.jpg"]
+
+    drain(make_worker(store, storage))
+
+    row = store.state.media[media_id]
+    assert row["public_key"] == f"{media_id}/public_v3.jpg"
+    assert row["public_key"] != row["upload_key"]
+    assert row["public_thumb_key"] == f"{media_id}/public_thumb_v3.webp"
+    out = decoded(storage.objects[row["public_key"]])
+    ref = decoded(blur.encode_full(images.decode(upload)))
+    for core in FACE_CORES:
+        assert core_changed(out, ref, core) > 40
+    assert storage.deletes == list(old)
+    assert msg_id not in store.state.messages
+
+
+def test_the_replaced_subject_files_are_deleted_after_the_commit(monkeypatch):
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", 0.9)
+    store, storage = FakeStore(), FakeStorage()
+    media_id, _ = photo(store, storage, version=4)
+    with_faces(store, media_id)
+    a = store.add_member(store.state.media[media_id]["event_id"], unit(0), dnp=True)
+    old = DnpSubject(a, f"{media_id}/{a}_v4.jpg", f"{media_id}/{a}_thumb_v4.webp")
+    store.state.subjects[media_id] = [old]
+    storage.objects[old.variant_key] = b"old"
+    storage.objects[old.variant_thumb_key] = b"old"
+
+    drain(make_worker(store, storage))
+
+    (new,) = store.state.subjects[media_id]
+    assert new.variant_key == f"{media_id}/{a}_v5.jpg"
+    assert old.variant_key in storage.deletes and old.variant_thumb_key in storage.deletes
+    assert f"{media_id}/upload.jpg" not in storage.deletes
+
+
+def test_a_subject_who_is_no_longer_in_the_photo_loses_their_row_and_files(monkeypatch):
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", 0.9)
+    store, storage = FakeStore(), FakeStorage()
+    media_id, _ = photo(store, storage, version=4)
+    gone = uuid4()
+    old = DnpSubject(gone, f"{media_id}/{gone}_v4.jpg", f"{media_id}/{gone}_thumb_v4.webp")
+    store.state.subjects[media_id] = [old]
+
+    drain(make_worker(store, storage))
+
+    assert store.state.subjects[media_id] == []
+    assert old.variant_key in storage.deletes and old.variant_thumb_key in storage.deletes
+
+
+def test_blur_region_never_detects(monkeypatch):
+    loaded = face_model([[48, 64, 128, 176, 0.9]])
+    monkeypatch.setattr(model, "_loaded", loaded)
+    store, storage = FakeStore(), FakeStorage()
+    media_id, _ = photo(store, storage)
+    with_faces(store, media_id)
+
+    drain(make_worker(store, storage))
+
+    assert loaded.detector.calls == 0
+    assert store.state.media[media_id]["variant_version"] == 2
