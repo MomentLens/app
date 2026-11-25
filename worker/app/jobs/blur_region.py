@@ -1,21 +1,21 @@
-"""blur_region: rebuild a photo's public file and thumbnail with every stored region (D-83).
+"""blur_region: rebuild a photo's files with every stored region (D-83).
 
-A manual_blur_region row added or deleted sends this message (arch:manual_blur_region). No ML.
-The job reads the photo's regions as they are now, so two quick draws run twice and the second
-run carries both.
+A manual_blur_region row added or deleted sends this message (arch:manual_blur_region). No ML: the
+faces are the rows face_process stored, and matching compares their stored embeddings, so nothing
+detects again (D-66, root invariant 10). The job reads the photo's regions as they are now, so two
+quick draws run twice and the second run carries both.
 
-- With regions, it blurs the upload, writes the public file and thumbnail at the next version's
-  keys, then points the row at them. A retry before the commit rewrites the same keys, which no
-  row points at yet (D-103).
-- With none left, it points the public keys back at the upload keys and writes no object (arch §3,
-  root invariant 13).
+- app/variants.py decides which faces the public file and each Do Not Publish subject's file blur,
+  the same function face_process uses, against the event's flagged references as they are now.
+- With a face to blur or a region, it writes the public file and every subject's file, each with
+  its thumbnail, at the next version's keys, then points the row and the subject rows at them. A
+  retry before the commit rewrites the same keys, which no row points at yet (D-103).
+- With neither, it points the public keys back at the upload keys, keeps no subject and writes no
+  object (arch §3, root invariant 13). While arch §6 has no match threshold every face is one to
+  blur, so a photo with a face never points back at the upload.
 - Either way the update bumps variant_version (root invariant 2) and sets processed_at when it is
   null, so a message re-sent from the archive republishes the photo (D-171).
-- After the commit it deletes the files the row stopped pointing at, never an upload key.
-
-Before S-21 no photo has a Do Not Publish file, so N is 0 and this writes 1 file and 1 thumbnail
-(root invariant 11). S-21 adds the subjects' files, and the no-region case then also needs no
-subject file before it points back at the upload.
+- After the commit it deletes the files the rows stopped pointing at, never an upload key.
 """
 
 from __future__ import annotations
@@ -23,7 +23,8 @@ from __future__ import annotations
 import logging
 from typing import Literal
 
-from app import blur, images, storage
+from app import images, variants
+from app.ai import matching
 from app.db import Tx
 from app.jobs.base import Job, JobContext, MediaMessage
 
@@ -53,22 +54,37 @@ def run(ctx: JobContext, message: Message) -> None:
         return
 
     regions = ctx.store.blur_regions(media_id)
+    stored = ctx.store.faces(media_id)
+    old_subjects = ctx.store.dnp_subjects(media_id)
+    # Read at call time, so a test's own threshold reaches it (D-104).
+    threshold = matching.MATCH_THRESHOLD
+    flagged = ctx.store.flagged_references(row.event_id) if stored and threshold is not None else []
+    chosen = variants.plan(stored, flagged, threshold)
     version = row.variant_version + 1
-    if regions:
-        # The upload key comes from the row, which the API wrote (root invariant 12).
-        blurred = blur.apply_regions(images.decode(ctx.storage.read(row.upload_key)), regions)
-        full_key = storage.public_key(media_id, version)
-        thumb_key = storage.public_thumb_key(media_id, version)
-        ctx.storage.put(full_key, blur.encode_full(blurred), "image/jpeg")
-        ctx.storage.put(thumb_key, blur.thumbnail(blurred), "image/webp")
-    else:
-        full_key, thumb_key = row.upload_key, row.upload_thumb_key
+    # The upload key comes from the row, which the API wrote (root invariant 12).
+    files = variants.write(
+        ctx.storage,
+        media_id,
+        version,
+        row.upload_key,
+        row.upload_thumb_key,
+        lambda: images.decode(ctx.storage.read(row.upload_key)),
+        stored,
+        chosen,
+        regions,
+    )
 
     written = False
 
     def write(tx: Tx) -> None:
         nonlocal written
-        written = tx.finish_blur_region(media_id, row.variant_version, full_key, thumb_key)
+        written = tx.finish_blur_region(
+            media_id,
+            row.variant_version,
+            files.public_key,
+            files.public_thumb_key,
+            files.subjects,
+        )
 
     ctx.commit(write)
     if not written:
@@ -82,22 +98,28 @@ def run(ctx: JobContext, message: Message) -> None:
         return
 
     log.info(
-        "%s %s with %d region(s) at variant_version=%s%s",
+        "%s %s with %d face(s) blurred in the public file, %d Do Not Publish subject(s) and %d"
+        " region(s) at variant_version=%s%s",
         where,
-        "blurred" if regions else "pointed back at the upload",
+        "pointed back at the upload" if files.public_key == row.upload_key else "rebuilt",
+        len(chosen.public),
+        len(files.subjects),
         len(regions),
         version,
         "" if row.published else ", republished (D-171)",
     )
 
-    keep = {row.upload_key, row.upload_thumb_key, full_key, thumb_key}
-    for old in (row.public_key, row.public_thumb_key):
+    keep = {row.upload_key, row.upload_thumb_key, files.public_key, files.public_thumb_key}
+    keep.update(k for s in files.subjects for k in (s.variant_key, s.variant_thumb_key))
+    replaced = [row.public_key, row.public_thumb_key]
+    replaced += [k for s in old_subjects for k in (s.variant_key, s.variant_thumb_key)]
+    for old in replaced:
         if old is None or old in keep:
             continue
         try:
             ctx.storage.delete(old)
         except Exception:
-            # The row already points at the new files. The old one stays until media_delete.
+            # The rows already point at the new files. The old one stays until media_delete.
             log.warning("%s could not delete the replaced %s", where, old, exc_info=True)
 
 
