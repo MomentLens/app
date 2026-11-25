@@ -9,8 +9,8 @@
 // event_settings and update_event_settings through the API's event store (D-142), the attendee
 // functions through the API's attendee store (D-143), the Pending Approvals functions through
 // the API's join request store (D-144), and S-31's event policy, its Realtime delivery,
-// album_status, the album write and the consent table through the API's stores (D-161). It needs a
-// real project, so it reads five settings for the dev project from the environment:
+// album_status, the album write and the consent table through the API's stores (D-161), and S-23's
+// face reads through the API's album and face stores (D-176). It needs a real project, so it reads five settings for the dev project from the environment:
 //
 // - SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY, the anon JWT, for Auth and Realtime, as the app uses
 //   them.
@@ -61,6 +61,7 @@ import { avatarKey, uploadKeys } from '../../src/lib/keys';
 import { createTokenVerifier } from '../../src/middleware/auth';
 import { createAlbumStore, listAlbum } from '../../src/services/album';
 import { createBlurRegionStore } from '../../src/services/blur-regions';
+import { createFaceStore } from '../../src/services/faces';
 import { createReferenceStore } from '../../src/services/references';
 import {
   createEventParams,
@@ -5903,7 +5904,7 @@ if (project === null) {
       it('executes list_album and list_uploaders via the service role', async () => {
         const a = await createNamedUser('Admin');
         const event = await createdEvent(a.id);
-        const albumResult = await albumStore.query(event.id, { limit: 50 });
+        const albumResult = await albumStore.query(event.id, { viewerId: a.id, limit: 50 });
         expect(albumResult.media).toEqual([]);
         expect(albumResult.sectionCounts).toEqual([]);
         const uploadersResult = await albumStore.uploaders(event.id);
@@ -6870,6 +6871,341 @@ if (project === null) {
         const subjects = await owner`select id from public.subject where user_id = ${a.id}`;
         expect(subjects).toEqual([]);
       });
+    });
+
+    // S-23's reads of matched faces, all through face_hidden (D-46, D-176, spec §4.11.3). The
+    // subject has Do Not Publish on in one event and off in another. face rows are written here as
+    // the worker writes them from S-21 on, since nothing matches before S-26 (D-176).
+    describe('S-23 face_hidden, the person and cluster filters, list_people and list_photo_faces (D-46, D-176)', () => {
+      const subEvents = createSubEventStore(db);
+      const albumStore = createAlbumStore(db);
+      const faceStore = createFaceStore(db);
+      const IdRow = z.object({ id: z.uuid() });
+
+      async function subjectOf(userId: string): Promise<string> {
+        const [row] =
+          await owner`insert into public.subject (user_id) values (${userId}) returning id`;
+        return IdRow.parse(row).id;
+      }
+
+      async function setDnp(eventId: string, userId: string): Promise<void> {
+        const result = await admin
+          .from('membership')
+          .update({ dnp_activated_at: new Date().toISOString() })
+          .eq('event_id', eventId)
+          .eq('user_id', userId);
+        expect(result.error).toBeNull();
+      }
+
+      async function firstSubEvent(eventId: string): Promise<string> {
+        const id = ((await subEvents.schedule(eventId)) ?? [])[0]?.id;
+        if (id === undefined) throw new Error('no sub-event found');
+        return id;
+      }
+
+      // A media row uploaded by the event's Admin: published unless told otherwise. The fixture
+      // inserts every row in one call, because the dev project is a round trip away.
+      function photo(
+        eventId: string,
+        subEventId: string,
+        uploader: string,
+        state: { processed?: boolean; deleted?: boolean } = {},
+      ) {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const processed = state.processed ?? true;
+        return {
+          id,
+          event_id: eventId,
+          sub_event_id: subEventId,
+          uploader_user_id: uploader,
+          uploader_role_at_upload: 'admin',
+          captured_at: now,
+          content_hash: randomBytes(32).toString('hex'),
+          size_bytes: 100,
+          upload_key: `${id}/upload.jpg`,
+          upload_thumb_key: `${id}/upload_thumb.webp`,
+          uploaded_at: now,
+          public_key: processed ? `${id}/public_v1.jpg` : null,
+          public_thumb_key: processed ? `${id}/public_thumb_v1.webp` : null,
+          variant_version: processed ? 1 : 0,
+          processed_at: processed ? now : null,
+          deleted_at: state.deleted ? now : null,
+        };
+      }
+
+      interface FaceSeed {
+        mediaId: string;
+        x: number;
+        subjectId?: string;
+        clusterId?: string;
+      }
+
+      // Face rows as the worker writes them, in one statement: a match carries its similarity.
+      async function faces(seeds: FaceSeed[]): Promise<void> {
+        const rows = seeds.map((f) => ({
+          media_id: f.mediaId,
+          x: f.x,
+          matched_subject_id: f.subjectId ?? null,
+          similarity: f.subjectId === undefined ? null : 0.9,
+          cluster_id: f.clusterId ?? null,
+        }));
+        await owner`
+          insert into public.face
+            (media_id, x, y, width, height, embedding, matched_subject_id, similarity, cluster_id)
+          select r.media_id, r.x, 0.1, 0.05, 0.05,
+            array_fill(0.01::real, array[512])::extensions.vector,
+            r.matched_subject_id, r.similarity, r.cluster_id
+          from jsonb_to_recordset(${owner.json(rows)}) as r(
+            media_id uuid, x double precision, matched_subject_id uuid,
+            similarity double precision, cluster_id uuid)`;
+      }
+
+      // One event where the subject has Do Not Publish on, with every case the card names, and
+      // another event where the same subject has it off.
+      async function fixture() {
+        const [a, s, g, rem, blk, out] = await Promise.all([
+          createNamedUser('Faces Admin'),
+          createNamedUser('Faces Subject'),
+          createNamedUser('Faces Guest'),
+          createNamedUser('Faces Removed'),
+          createNamedUser('Faces Blocked'),
+          createNamedUser('Faces Stranger'),
+        ]);
+        const [event, other] = await Promise.all([createdEvent(a.id), createdEvent(a.id)]);
+        const members = await admin.from('membership').insert([
+          { event_id: event.id, user_id: s.id, role: 'guest', status: 'active' },
+          { event_id: event.id, user_id: g.id, role: 'guest', status: 'active' },
+          { event_id: event.id, user_id: rem.id, role: 'guest', status: 'removed' },
+          { event_id: event.id, user_id: blk.id, role: 'guest', status: 'blocked' },
+          { event_id: other.id, user_id: s.id, role: 'guest', status: 'active' },
+        ]);
+        expect(members.error).toBeNull();
+        const [[sSub, gSub, remSub, blkSub], subEventId, otherSubEventId] = await Promise.all([
+          Promise.all([s, g, rem, blk, out].map((u) => subjectOf(u.id))),
+          firstSubEvent(event.id),
+          firstSubEvent(other.id),
+          setDnp(event.id, s.id),
+        ]);
+        const cluster = randomUUID();
+
+        // m1: the guest at 0.1, an Unknown at 0.3, the subject at 0.5 and again at 0.7.
+        // m2: the subject alone.
+        // m3: the guest, the removed and the blocked member, and a face with no match and no
+        // cluster.
+        // m4 unprocessed and m5 deleted, each with the subject, the guest and the Unknown.
+        // o1: the other event, where the subject has Do Not Publish off.
+        const rows = [
+          photo(event.id, subEventId, a.id),
+          photo(event.id, subEventId, a.id),
+          photo(event.id, subEventId, a.id),
+          photo(event.id, subEventId, a.id, { processed: false }),
+          photo(event.id, subEventId, a.id, { deleted: true }),
+          photo(other.id, otherSubEventId, a.id),
+        ];
+        const media = await admin.from('media').insert(rows);
+        expect(media.error).toBeNull();
+        const [m1, m2, m3, m4, m5, o1] = rows.map((r) => r.id) as [
+          string,
+          string,
+          string,
+          string,
+          string,
+          string,
+        ];
+        await faces([
+          { mediaId: m1, x: 0.5, subjectId: sSub },
+          { mediaId: m1, x: 0.1, subjectId: gSub },
+          { mediaId: m1, x: 0.3, clusterId: cluster },
+          { mediaId: m1, x: 0.7, subjectId: sSub },
+          { mediaId: m2, x: 0.4, subjectId: sSub },
+          { mediaId: m3, x: 0.6, subjectId: gSub },
+          { mediaId: m3, x: 0.2, subjectId: remSub },
+          { mediaId: m3, x: 0.4, subjectId: blkSub },
+          { mediaId: m3, x: 0.05 },
+          ...[m4, m5].flatMap((m) => [
+            { mediaId: m, x: 0.1, subjectId: sSub },
+            { mediaId: m, x: 0.3, subjectId: gSub },
+            { mediaId: m, x: 0.5, clusterId: cluster },
+          ]),
+          { mediaId: o1, x: 0.2, subjectId: sSub },
+        ]);
+
+        return {
+          a,
+          s,
+          g,
+          rem,
+          blk,
+          out,
+          event,
+          other,
+          subEventId,
+          cluster,
+          m1,
+          m2,
+          m3,
+          m4,
+          m5,
+          o1,
+        };
+      }
+
+      const ids = (page: { media: { id: string }[] }) => page.media.map((m) => m.id).sort();
+      const person = (userId: string, fullName: string) => ({ kind: 'person', userId, fullName });
+
+      it("returns the subject their own photos, and everyone else the page a stranger's id gets", async () => {
+        const f = await fixture();
+        const query = (viewerId: string, personId: string, extra = {}) =>
+          albumStore.query(f.event.id, { viewerId, personId, limit: 50, ...extra });
+
+        // Find My Photos: the subject's published photos only (D-46).
+        const mine = await query(f.s.id, f.s.id);
+        expect(ids(mine)).toEqual([f.m1, f.m2].sort());
+        expect(mine.sectionCounts).toEqual([{ subEventId: f.subEventId, count: 2 }]);
+
+        // The Admin and another Guest: identical to a stranger with a subject and no face, and to
+        // an id that names nobody, so the answer never says who turned Do Not Publish on (D-176).
+        for (const viewer of [f.a.id, f.g.id]) {
+          const hidden = await query(viewer, f.s.id);
+          expect(hidden).toEqual({ media: [], sectionCounts: [] });
+          expect(await query(viewer, f.out.id)).toEqual(hidden);
+          expect(await query(viewer, randomUUID())).toEqual(hidden);
+          expect(
+            await query(viewer, f.s.id, { subEventId: f.subEventId, uploaderId: f.a.id }),
+          ).toEqual(hidden);
+        }
+
+        // A person nobody hides is found by every viewer, stacked with the uploader filter.
+        for (const viewer of [f.a.id, f.g.id, f.s.id]) {
+          expect(ids(await query(viewer, f.g.id, { uploaderId: f.a.id }))).toEqual(
+            [f.m1, f.m3].sort(),
+          );
+        }
+        // A removed member's photos stay findable by person, as by uploader (D-148).
+        expect(ids(await query(f.a.id, f.rem.id))).toEqual([f.m3]);
+
+        // The rule is per event: in the other event the subject has it off, so the Admin finds
+        // them, and the subject's photos there never leak into this event.
+        const elsewhere = await albumStore.query(f.other.id, {
+          viewerId: f.a.id,
+          personId: f.s.id,
+          limit: 50,
+        });
+        expect(ids(elsewhere)).toEqual([f.o1]);
+      }, 120_000);
+
+      it('names the subject in the strip to the subject only, left to right, each identity once', async () => {
+        const f = await fixture();
+        const unknown = { kind: 'unknown', clusterId: f.cluster };
+        const guest = person(f.g.id, 'Faces Guest');
+
+        expect(await faceStore.photoFaces(f.event.id, f.m1, f.s.id)).toEqual([
+          guest,
+          unknown,
+          person(f.s.id, 'Faces Subject'),
+        ]);
+        for (const viewer of [f.a.id, f.g.id]) {
+          expect(await faceStore.photoFaces(f.event.id, f.m1, viewer)).toEqual([guest, unknown]);
+          expect(await faceStore.photoFaces(f.event.id, f.m2, viewer)).toEqual([]);
+        }
+
+        // m3: the removed and the blocked member, and the face with neither a match nor a cluster,
+        // are left off for every viewer, the Admin included (D-176).
+        for (const viewer of [f.a.id, f.g.id, f.s.id]) {
+          expect(await faceStore.photoFaces(f.event.id, f.m3, viewer)).toEqual([guest]);
+        }
+
+        // In the other event Do Not Publish is off, so the Admin sees the subject named.
+        expect(await faceStore.photoFaces(f.other.id, f.o1, f.a.id)).toEqual([
+          person(f.s.id, 'Faces Subject'),
+        ]);
+      }, 120_000);
+
+      it('answers null for a photo that is not a published, undeleted photo of this event', async () => {
+        const f = await fixture();
+        for (const mediaId of [f.m4, f.m5, f.o1, randomUUID()]) {
+          for (const viewer of [f.a.id, f.s.id]) {
+            await expect(faceStore.photoFaces(f.event.id, mediaId, viewer)).resolves.toBeNull();
+          }
+        }
+        // This event's photo asked for under the other event is null too.
+        await expect(faceStore.photoFaces(f.other.id, f.m1, f.a.id)).resolves.toBeNull();
+      }, 120_000);
+
+      it('lists the subject in People to the subject only, and never a removed or blocked member', async () => {
+        const f = await fixture();
+        const guest = { userId: f.g.id, fullName: 'Faces Guest', photoCount: 2 };
+        const subject = { userId: f.s.id, fullName: 'Faces Subject', photoCount: 2 };
+
+        // Both have two published photos; the tie sorts by name.
+        expect(await faceStore.people(f.event.id, f.s.id)).toEqual([guest, subject]);
+        for (const viewer of [f.a.id, f.g.id]) {
+          expect(await faceStore.people(f.event.id, viewer)).toEqual([guest]);
+        }
+        expect(await faceStore.people(f.other.id, f.a.id)).toEqual([{ ...subject, photoCount: 1 }]);
+      }, 120_000);
+
+      it('finds an Unknown cluster only in published photos, and never through a matched face', async () => {
+        const f = await fixture();
+        for (const viewer of [f.a.id, f.g.id, f.s.id]) {
+          const page = await albumStore.query(f.event.id, {
+            viewerId: viewer,
+            clusterId: f.cluster,
+            limit: 50,
+          });
+          expect(ids(page)).toEqual([f.m1]);
+          const none = await albumStore.query(f.event.id, {
+            viewerId: viewer,
+            clusterId: randomUUID(),
+            limit: 50,
+          });
+          expect(none).toEqual({ media: [], sectionCounts: [] });
+        }
+        // A matched face cannot carry a cluster, so a cluster never leads to a named person.
+        const sSub = IdRow.parse(
+          (await owner`select id from public.subject where user_id = ${f.s.id}`)[0],
+        ).id;
+        await expect(
+          faces([{ mediaId: f.m2, x: 0.8, subjectId: sSub, clusterId: f.cluster }]),
+        ).rejects.toMatchObject({ code: '23514', constraint_name: 'face_cluster_check' });
+        // Both filters at once is refused in the database too, not only by the contract.
+        await expect(
+          albumStore.query(f.event.id, {
+            viewerId: f.a.id,
+            personId: f.g.id,
+            clusterId: f.cluster,
+            limit: 50,
+          }),
+        ).rejects.toMatchObject({ code: '22023' });
+      }, 120_000);
+
+      it('keeps the new functions from the publishable key and signed-in clients', async () => {
+        const f = await fixture();
+        for (const client of [anon, await signedInClient(f.s)]) {
+          const calls = [
+            client.rpc('face_hidden', {
+              p_subject_id: randomUUID(),
+              p_event_id: f.event.id,
+              p_viewer_id: f.s.id,
+            }),
+            client.rpc('list_people', { p_event_id: f.event.id, p_viewer_id: f.s.id }),
+            client.rpc('list_photo_faces', {
+              p_event_id: f.event.id,
+              p_media_id: f.m1,
+              p_viewer_id: f.s.id,
+            }),
+            client.rpc('list_album', {
+              p_event_id: f.event.id,
+              p_viewer_id: f.s.id,
+              p_person_id: f.s.id,
+            }),
+          ];
+          for (const result of await Promise.all(calls)) {
+            expect(result.error).not.toBeNull();
+          }
+        }
+      }, 120_000);
     });
 
     describe('S-31: the event policy, Realtime on event, the album state and consent', () => {
