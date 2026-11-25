@@ -261,7 +261,7 @@ Infrastructure, not a feature table. Migration `supabase/migrations/202609161542
 
 ## 3. R2 object keys
 
-Two buckets, `momentlens-dev` and `momentlens-stable`, one per Supabase project, so no row ever points at another environment's files. Both are private. Presigned GET URLs live one hour (§4.13) and presigned PUT URLs 15 minutes (D-105). Each key family has one builder (D-70). No object a row points at is overwritten (D-60). A resumed upload re-PUTs its own upload keys, which nobody can read before `uploaded_at` is set (D-82), and a retried job may rewrite a versioned key no row points at yet (D-103).
+Two buckets, `momentlens-dev-apac` and `momentlens-stable`, one per Supabase project, so no row ever points at another environment's files. Both are private. Presigned GET URLs live one hour (§4.13) and presigned PUT URLs 15 minutes (D-105). Each key family has one builder (D-70). No object a row points at is overwritten (D-60). A resumed upload re-PUTs its own upload keys, which nobody can read before `uploaded_at` is set (D-82), and a retried job may rewrite a versioned key no row points at yet (D-103).
 
 | File | Built by | Stored in | Key |
 |---|---|---|---|
