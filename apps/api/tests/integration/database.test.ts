@@ -256,7 +256,7 @@ describeDb('the API stores against Postgres', () => {
 
   it('shows a published photo in the album, its uploaders and the serving read', async () => {
     const albums = createAlbumStore(sql);
-    expect((await albums.query(eventId, { limit: 50 })).media).toEqual([]);
+    expect((await albums.query(eventId, { viewerId: adminId, limit: 50 })).media).toEqual([]);
 
     // What the worker's face_process job writes for a photo with no face, processed_at last (D-55).
     await admin`
@@ -265,7 +265,7 @@ describeDb('the API stores against Postgres', () => {
         public_thumb_key = upload_thumb_key, variant_version = 1, processed_at = now()
       where id = ${mediaId}`;
 
-    const album = await albums.query(eventId, { limit: 50 });
+    const album = await albums.query(eventId, { viewerId: adminId, limit: 50 });
     expect(album.media).toEqual([
       expect.objectContaining({ id: mediaId, width: 4000, height: 3000, variantVersion: 1 }),
     ]);
