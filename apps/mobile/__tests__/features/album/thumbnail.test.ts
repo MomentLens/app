@@ -12,6 +12,7 @@ describe('Album thumbnail loading and cache keys (D-60, D-86, D-148)', () => {
     const thumb: MediaImage = {
       url: 'https://r2.example.test/events/e1/media/public/m1_thumb.webp?sig=xyz',
       cacheKey: 'events/e1/media/public/m1_thumb.webp#v2',
+      isOwnVariant: false,
     };
 
     const source = presignedSource(thumb);
