@@ -155,8 +155,9 @@ export const MAX_ALBUM_PAGE = 50;
 
 /**
  * Whether the caller wants a thumbnail or the full display image (D-148). The serving endpoint
- * reads the corresponding column on the `media` row (`public_thumb_key` or `public_key`).
- * S-21 extends this to pick the subject's own variant when one exists.
+ * reads the matching column: `variant_thumb_key` or `variant_key` on the requester's own
+ * `dnp_subject` row for the photo when one exists, otherwise `public_thumb_key` or `public_key`
+ * on the `media` row (hb §5.2).
  */
 export const MediaImageSize = z.enum(['thumbnail', 'full']);
 export type MediaImageSize = z.infer<typeof MediaImageSize>;
@@ -249,9 +250,10 @@ export type ListAlbumResponse = z.infer<typeof ListAlbumResponse>;
  * Photographer included, who receives only their own photos (arch §1).
  * 400 `invalid_request` for a body that fails validation: empty, oversized, or repeated ids.
  *
- * S-21 adds the own-variant flag (`isOwnVariant`) to each entry, and picks the subject's file
- * when the requester is a Do Not Publish subject in that photo. Until then, every entry carries
- * the public file only.
+ * A requester who is a Do Not Publish subject in a photo gets their own file for it, with
+ * `isOwnVariant` true. Everyone else gets the public file, in which that subject's face is
+ * blurred (D-57). The server decides from the `dnp_subject` rows, never from anything in the body
+ * (root invariant 3).
  */
 export const MediaImagesRequest = z.strictObject({
   mediaIds: z
@@ -270,9 +272,13 @@ export type MediaImagesRequest = z.infer<typeof MediaImagesRequest>;
  * then `variant_version` (D-148, D-86, root invariant 2). The app caches under it, never under
  * `url`, which rotates hourly.
  *
- * S-21 adds `isOwnVariant: boolean` here. Until then every image is the public file.
+ * `isOwnVariant` is true when the file is the requester's own variant, in which their face is not
+ * blurred and other subjects' faces are. It drives the self-visible marker (spec §4.13, D-93). A
+ * Photographer who is a subject in their own upload gets it like anyone else (hb §5.2).
  */
-export const MediaImage = PresignedImage;
+export const MediaImage = PresignedImage.extend({
+  isOwnVariant: z.boolean(),
+});
 export type MediaImage = z.infer<typeof MediaImage>;
 
 /**

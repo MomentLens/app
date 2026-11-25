@@ -1879,6 +1879,7 @@ describe('POST /events/{eventId}/media/images', () => {
         [mediaId]: {
           url: 'https://r2.example.com/signed.webp',
           cacheKey: `${mediaId}/public_thumb_v1.webp#v1`,
+          isOwnVariant: false,
         },
       },
     };
