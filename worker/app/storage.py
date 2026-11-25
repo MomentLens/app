@@ -50,6 +50,16 @@ def public_thumb_key(media_id: UUID, version: int) -> str:
     return f"{media_id}/public_thumb_v{version}.webp"
 
 
+def subject_key(media_id: UUID, subject_id: UUID, version: int) -> str:
+    """A Do Not Publish subject's own file at a variant_version (arch §3, D-57, D-60)."""
+    return f"{media_id}/{subject_id}_v{version}.jpg"
+
+
+def subject_thumb_key(media_id: UUID, subject_id: UUID, version: int) -> str:
+    """That subject's own thumbnail at a variant_version (arch §3, D-69)."""
+    return f"{media_id}/{subject_id}_thumb_v{version}.webp"
+
+
 class ObjectMissing(Exception):
     """The key is not in the bucket."""
 

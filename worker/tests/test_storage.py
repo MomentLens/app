@@ -197,3 +197,13 @@ def test_the_worker_builds_its_keys_with_forward_slashes_on_every_platform():
     media_id = UUID("6f1c2a52-0d3e-4c55-9b51-0b8e9d1f2a33")
     assert storage_module.public_key(media_id, 4) == f"{media_id}/public_v4.jpg"
     assert storage_module.public_thumb_key(media_id, 4) == f"{media_id}/public_thumb_v4.webp"
+
+
+def test_subject_keys_carry_the_photo_the_subject_and_the_version():
+    media_id = UUID("6f1c2e9a-0b7d-4c3e-9a51-2d8e4f6a7b10")
+    subject_id = UUID("0d4e8b2a-7c1f-4a6e-b3d9-5e2f1a8c4b70")
+    assert storage_module.subject_key(media_id, subject_id, 3) == f"{media_id}/{subject_id}_v3.jpg"
+    assert (
+        storage_module.subject_thumb_key(media_id, subject_id, 3)
+        == f"{media_id}/{subject_id}_thumb_v3.webp"
+    )

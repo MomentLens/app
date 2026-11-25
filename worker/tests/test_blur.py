@@ -100,3 +100,69 @@ def test_the_thumbnail_is_a_webp_300_on_its_long_edge_and_never_enlarged(size, e
     assert data[:4] == b"RIFF" and data[8:12] == b"WEBP"
     decoded = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
     assert decoded.shape[1::-1] == expected
+
+
+# --- faces: the grown box and its ellipse (spec §4.11.4.3, arch §5) ----------------------------
+
+
+def ellipse_mask(width, height, cx, cy, rx, ry):
+    ys, xs = np.mgrid[0:height, 0:width]
+    return ((xs + 0.5 - cx) / rx) ** 2 + ((ys + 0.5 - cy) / ry) ** 2 <= 1
+
+
+def test_a_face_blurs_the_ellipse_in_its_box_grown_40_percent_and_nothing_else():
+    image = noise(200, 200)
+    # A 40px face at 80..120: grown to 56px about its centre, so the ellipse's radius is 28.
+    face = region(0.4, 0.4, 0.2, 0.2)
+
+    out = blur.apply(image, [face], [])
+
+    inside = ellipse_mask(200, 200, 100, 100, 28, 28)
+    differs = np.any(out != image, axis=2)
+    assert not differs[~inside].any()
+    assert differs[inside].mean() > 0.9
+    # Past the detector's box but inside the ellipse: the growth is what covers hair and jaw.
+    assert differs[100, 122:127].all()
+    # The grown box's corner is outside the ellipse, so it stays.
+    assert not differs[73:76, 73:76].any()
+
+
+def test_a_face_at_the_edge_is_covered_up_to_the_edge():
+    image = noise(200, 200)
+    # Cut off by the left edge: 0..20 across. Centred on the face, the ellipse runs past x=0.
+    face = region(0.0, 0.4, 0.1, 0.2)
+
+    out = blur.apply(image, [face], [])
+
+    differs = np.any(out != image, axis=2)
+    inside = ellipse_mask(200, 200, 10, 100, 14, 28)
+    assert not differs[~inside].any()
+    # The face's own edge column is blurred along most of its height.
+    assert differs[80:120, 0].mean() > 0.9
+
+
+def test_a_face_under_a_pixel_still_blurs_its_pixel():
+    image = np.zeros((100, 100, 3), np.uint8)
+    image[50, 50] = 200
+    # Centred on a pixel corner, the grown box is pixels 49..50 both ways: 2x2, under 8, so it
+    # becomes its average colour, 50. The ellipse holds no pixel centre, so its centre pixel is
+    # forced in.
+    out = blur.apply(image, [region(0.4995, 0.4995, 0.001, 0.001)], [])
+    assert out[50, 50].tolist() == [50, 50, 50]
+    others = np.ones((100, 100), bool)
+    others[50, 50] = False
+    assert np.array_equal(out[others], image[others])
+
+
+def test_regions_go_on_top_of_faces_and_the_input_is_kept():
+    image = noise(200, 200)
+    before = image.copy()
+    face, rect = region(0.4, 0.4, 0.2, 0.2), region(0.45, 0.45, 0.3, 0.3)
+
+    out = blur.apply(image, [face], [rect])
+
+    expected = image.copy()
+    blur.blur_face(expected, face)
+    blur.blur_area(expected, *blur.pixel_rect(rect, 200, 200))
+    assert np.array_equal(out, expected)
+    assert np.array_equal(image, before)
