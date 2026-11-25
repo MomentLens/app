@@ -6882,10 +6882,20 @@ if (project === null) {
       const faceStore = createFaceStore(db);
       const IdRow = z.object({ id: z.uuid() });
 
-      async function subjectOf(userId: string): Promise<string> {
-        const [row] =
-          await owner`insert into public.subject (user_id) values (${userId}) returning id`;
-        return IdRow.parse(row).id;
+      // One subject per user, in one statement, in the order given.
+      async function subjectsOf(userIds: string[]): Promise<string[]> {
+        const rows = await owner`
+          insert into public.subject (user_id)
+          select u.id from unnest(${userIds}::uuid[]) with ordinality as u(id, n)
+          order by u.n
+          returning id, user_id`;
+        const byUser = new Map(
+          z
+            .array(z.object({ id: z.uuid(), user_id: z.uuid() }))
+            .parse(rows)
+            .map((r) => [r.user_id, r.id]),
+        );
+        return userIds.map((u) => byUser.get(u)!);
       }
 
       async function setDnp(eventId: string, userId: string): Promise<void> {
@@ -6982,7 +6992,7 @@ if (project === null) {
         ]);
         expect(members.error).toBeNull();
         const [[sSub, gSub, remSub, blkSub], subEventId, otherSubEventId] = await Promise.all([
-          Promise.all([s, g, rem, blk, out].map((u) => subjectOf(u.id))),
+          subjectsOf([s, g, rem, blk, out].map((u) => u.id)),
           firstSubEvent(event.id),
           firstSubEvent(other.id),
           setDnp(event.id, s.id),
