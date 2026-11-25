@@ -1,10 +1,6 @@
 import { z } from 'zod';
 
-import type {
-  MediaImagesRequest,
-  MediaImagesResponse,
-  PresignedImage,
-} from '@momentlens/shared-types';
+import type { MediaImage, MediaImagesRequest, MediaImagesResponse } from '@momentlens/shared-types';
 
 import type { Sql } from '../db/sql';
 import type { PresignGet } from '../lib/r2';
@@ -91,7 +87,7 @@ export async function serveMediaImages(
 
   const rows = await deps.mediaImages.findForServing(eventId, request.mediaIds);
 
-  const images: Record<string, PresignedImage> = {};
+  const images: Record<string, MediaImage> = {};
 
   for (const row of rows) {
     if (row.processedAt === null || row.deletedAt !== null) {
@@ -111,9 +107,11 @@ export async function serveMediaImages(
     const url = await deps.presignGet(key);
     const cacheKey = `${key}#v${row.variantVersion}`;
 
+    // Always the public file until S-21's api build adds the subject's own (hb §5.2).
     images[row.id] = {
       url,
       cacheKey,
+      isOwnVariant: false,
     };
   }
 

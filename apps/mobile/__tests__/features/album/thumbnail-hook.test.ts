@@ -40,7 +40,11 @@ beforeEach(() => {
     images: Object.fromEntries(
       body.mediaIds.map((id) => [
         id,
-        { url: `https://example.test/${id}?signed=${Date.now()}`, cacheKey: `${id}#v1` },
+        {
+          url: `https://example.test/${id}?signed=${Date.now()}`,
+          cacheKey: `${id}#v1`,
+          isOwnVariant: false,
+        },
       ]),
     ),
   }));
