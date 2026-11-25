@@ -6554,7 +6554,7 @@ if (project === null) {
         };
       }
 
-      it('shows face_reference and face to neither anon nor a signed-in member, and refuses their writes', async () => {
+      it('shows face_reference, face and dnp_subject to neither anon nor a signed-in member, and refuses their writes', async () => {
         const f = await fixture();
         const id = randomUUID();
         const added = await references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
@@ -6587,10 +6587,18 @@ if (project === null) {
           insert into public.face (media_id, x, y, width, height, embedding)
           values (${mediaId}, 0.1, 0.1, 0.2, 0.2,
             array_fill(0.01::real, array[512])::extensions.vector)`;
+        // The guest's own subject file, as face_process writes one from S-21 (arch:dnp_subject).
+        // add_face_reference made the guest's subject row.
+        const [subject] = await owner`select id from public.subject where user_id = ${f.g.id}`;
+        const subjectId = subject?.id as string;
+        await owner`
+          insert into public.dnp_subject (media_id, subject_id, variant_key, variant_thumb_key)
+          values (${mediaId}, ${subjectId}, ${`${mediaId}/${subjectId}_v1.jpg`},
+            ${`${mediaId}/${subjectId}_thumb_v1.webp`})`;
 
         const guest = await signedInClient(f.g);
         for (const client of [anon, guest]) {
-          for (const table of ['face_reference', 'face']) {
+          for (const table of ['face_reference', 'face', 'dnp_subject']) {
             const read = await client.from(table).select('*');
             expect(read.error).toBeNull();
             expect(read.data).toEqual([]);
@@ -6598,6 +6606,11 @@ if (project === null) {
           await client.from('face_reference').update({ status: 'accepted' }).eq('id', id);
           await client.from('face_reference').delete().eq('id', id);
           await client.from('face').delete().eq('media_id', mediaId);
+          await client.from('dnp_subject').delete().eq('media_id', mediaId);
+          await client
+            .from('dnp_subject')
+            .update({ variant_key: `${mediaId}/upload.jpg` })
+            .eq('media_id', mediaId);
           const add = await client.rpc('add_face_reference', {
             p_reference_id: randomUUID(),
             p_event_id: f.event.id,
@@ -6616,6 +6629,9 @@ if (project === null) {
         expect(stored).toEqual({ status: 'pending' });
         const faces = await owner`select id from public.face where media_id = ${mediaId}`;
         expect(faces).toHaveLength(1);
+        const files = await owner`
+          select variant_key from public.dnp_subject where media_id = ${mediaId}`;
+        expect(files).toEqual([{ variant_key: `${mediaId}/${subjectId}_v1.jpg` }]);
       });
 
       it('refuses in the contract order and sends exactly one message per new reference', async () => {
