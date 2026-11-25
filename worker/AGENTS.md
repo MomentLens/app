@@ -31,8 +31,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 
 | Job | Trigger | Work |
 |---|---|---|
-| `thumbnail_dims` | Upload completion, from S-18a (Phase 3) until S-21 removes it (D-72) | No ML. Only on a row whose `variant_version` is 0, otherwise delete the message as done. Write `width`/`height` read as stored, point the public file and public thumbnail at the upload keys, bump version, then `processed_at`, in one update. Writes no object, since completion refuses a photo without its thumbnail (D-122, D-123) |
-| `face_process` | Upload completion, from S-21 | Detect once, store each face's box and embedding, match every face against the references active members added to this event, and no other event's (D-141), cluster the unmatched ones. If a matched subject's membership in this event has Do Not Publish on (D-129), write the public file, one variant per subject and a blurred thumbnail for each, at new versioned keys. Write dimensions. Then `processed_at` |
+| `face_process` | Upload completion, from S-21, which removed `thumbnail_dims` (D-72) | Only on a row whose `variant_version` is 0, otherwise delete the message as done (D-123). Detect once, store each face's box and embedding, match every face against the references active members added to this event, and no other event's (D-141), cluster the unmatched ones. Blur against the references of members whose membership in this event has Do Not Publish on, whatever its status (D-129, D-175): write the public file, one variant per subject and a blurred thumbnail for each, at new versioned keys. Until arch §6 has a match threshold, blur every face and write no variant. Write dimensions. Then `processed_at` |
 | `reference_process` | A reference photo added to an event (D-141) | Accept the photo with its embedding when it shows exactly one face, otherwise reject it as `no_face` or `multiple_faces` (D-91). From S-25, then enqueue `reprocess` for that subject; S-20 enqueues nothing (D-172). On a final failure, set the row `rejected` with `failed`. A removed reference never reaches this job, because the API deletes it (`docs/ARCHITECTURE.md` §5) |
 | `reprocess` | Always for one subject in one event: Do Not Publish turned on there (D-129), the subject's references there changed (D-141), or a subject with references there became active again (D-84) | **Match only.** Compare stored embeddings against the reference set, regenerate files and thumbnails for photos whose output changed with every stored blur region applied, bump version |
 | `blur_region` | A `manual_blur_region` row added or deleted | No ML. Regenerate that photo's public file, every subject's file and all their thumbnails with every stored region, at new versioned keys, bump version (D-83) |
@@ -47,7 +46,8 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 3. **Write the keys onto the rows as you upload them.** The API reads those columns. The worker builds every derived key and never an upload key; the API builds those (D-70).
 4. **N subjects → N+1 files and N+1 thumbnails, never 2^N.** No viewer needs two subjects unblurred at once. A photo with no Do Not Publish face and no blur region produces no extra files; its public keys point at the upload.
 5. **Never overwrite an object a row points at.** A regenerated file or thumbnail gets a new versioned key, or every client cache keeps the old one (D-60, D-69). A retry may rewrite a versioned key no row points at yet. Once the rows point at the new files, delete the objects they replaced, and never `upload_key` or `upload_thumb_key` (D-103).
-6. **`thumbnail_dims` and `face_process` never run on the same upload.** Once Do Not Publish users exist, `thumbnail_dims` publishes a photo nobody blurred, or points the public keys back at the unblurred upload after `face_process` finished (D-72). It acts only on a row whose `variant_version` is 0, so a message re-sent from the archive never undoes another job's files (D-123).
+6. **`thumbnail_dims` is gone and stays gone.** It published a photo nobody blurred (D-72). S-21 replaced it with `face_process`, which acts only on a row whose `variant_version` is 0, so a message re-sent from the archive never undoes another job's files (D-123). A `thumbnail_dims` message left in the queue is archived as a job the worker does not have.
+7. **One function decides which faces are blurred**: `plan` in `app/variants.py`, and `write` there turns a plan into the N+1 files. `face_process`, `blur_region` and `reprocess` all call both, so no job blurs a different set or forgets a region (arch §5).
 
 ---
 
@@ -68,7 +68,7 @@ Use InsightFace's `buffalo_l` pack, the ONNX models it ships, not the PyTorch ru
 
 Two lines that a panel will ask about, so they are specified rather than left open:
 
-- **Expand the detection box 30 to 40% and mask elliptically.** A tight InsightFace box leaves hair, ears, jawline and clothing visible, which at a wedding with a known guest list is still identifying.
+- **Expand the detection box 30 to 40% and mask elliptically.** A tight InsightFace box leaves hair, ears, jawline and clothing visible, which at a wedding with a known guest list is still identifying. The worker grows it 40% about its centre and blurs the ellipse inscribed in the grown box, cut off at the image's edge, so a face at the border is covered up to the edge (`app/blur.py`, Ukasha at S-21's build).
 - **Downsample then upsample, with a box blur on top.** A single light Gaussian pass is partially invertible; downsampling actually discards information.
 
 Thumbnails are cut from the blurred output, never blurred separately at 300px.
