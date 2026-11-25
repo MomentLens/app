@@ -76,12 +76,37 @@ class FakeEvents implements EventStore {
   }
 }
 
-class FakeMediaImagesStore implements MediaImagesStore {
-  records: MediaImagesRecord[] = [];
+type MediaRow = Omit<MediaImagesRecord, 'variantKey' | 'variantThumbKey'>;
 
-  findForServing(eventId: string, mediaIds: string[]): Promise<MediaImagesRecord[]> {
+// A dnp_subject row, keyed by the subject's user, the way the real store joins it through
+// subject.user_id (D-63).
+interface SubjectFile {
+  mediaId: string;
+  userId: string;
+  variantKey: string;
+  variantThumbKey: string;
+}
+
+class FakeMediaImagesStore implements MediaImagesStore {
+  records: MediaRow[] = [];
+  subjects: SubjectFile[] = [];
+
+  findForServing(
+    eventId: string,
+    mediaIds: string[],
+    userId: string,
+  ): Promise<MediaImagesRecord[]> {
     return Promise.resolve(
-      this.records.filter((r) => r.eventId === eventId && mediaIds.includes(r.id)),
+      this.records
+        .filter((r) => r.eventId === eventId && mediaIds.includes(r.id))
+        .map((r) => {
+          const own = this.subjects.find((s) => s.mediaId === r.id && s.userId === userId);
+          return {
+            ...r,
+            variantKey: own?.variantKey ?? null,
+            variantThumbKey: own?.variantThumbKey ?? null,
+          };
+        }),
     );
   }
 }
@@ -120,6 +145,7 @@ afterAll(async () => {
 beforeEach(() => {
   events.events.clear();
   mediaImagesStore.records = [];
+  mediaImagesStore.subjects = [];
   signedGets.length = 0;
 
   eventId = randomUUID();
@@ -418,5 +444,192 @@ describe('POST /events/:eventId/media/images', () => {
     expect(res.status).toBe(200);
     const body = MediaImagesResponse.parse(await res.json());
     expect(Object.keys(body.images)).toEqual([ownPhotoId]);
+  });
+});
+
+// S-21: the subject's own file (D-57, D-86, hb §5.2, hb §11.3). The worker has blurred every
+// Do Not Publish face into the public file and written one file per subject.
+describe('POST /events/:eventId/media/images, Do Not Publish subjects', () => {
+  function photo(uploader: string): MediaRow {
+    const id = randomUUID();
+    return {
+      id,
+      eventId,
+      uploaderUserId: uploader,
+      uploadKey: `${id}/upload.jpg`,
+      uploadThumbKey: `${id}/upload_thumb.webp`,
+      publicKey: `${id}/public_v1.jpg`,
+      publicThumbKey: `${id}/public_thumb_v1.webp`,
+      variantVersion: 1,
+      processedAt: '2026-11-25T10:00:00.000Z',
+      deletedAt: null,
+    };
+  }
+
+  function subjectIn(row: MediaRow, userId: string): SubjectFile {
+    const subjectId = randomUUID();
+    const file: SubjectFile = {
+      mediaId: row.id,
+      userId,
+      variantKey: `${row.id}/${subjectId}_v1.jpg`,
+      variantThumbKey: `${row.id}/${subjectId}_thumb_v1.webp`,
+    };
+    mediaImagesStore.subjects.push(file);
+    return file;
+  }
+
+  async function serve(token: string, mediaIds: string[], size: 'full' | 'thumbnail') {
+    const res = await fetch(`${app.baseUrl}/events/${eventId}/media/images`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mediaIds, size }),
+    });
+    const text = await res.text();
+    return {
+      status: res.status,
+      text,
+      body: res.status === 200 ? MediaImagesResponse.parse(JSON.parse(text)) : null,
+    };
+  }
+
+  it("gives A the public file of B's photo, and no response to A holds B's key", async () => {
+    const row = photo(ADMIN);
+    mediaImagesStore.records = [row];
+    const b = subjectIn(row, OTHER_GUEST);
+
+    for (const size of ['full', 'thumbnail'] as const) {
+      const { status, text, body } = await serve('token-guest', [row.id], size);
+      expect(status).toBe(200);
+      const key = size === 'full' ? row.publicKey : row.publicThumbKey;
+      expect(body?.images[row.id]).toEqual({
+        url: `https://r2.test/${key}?signed=true`,
+        cacheKey: `${key}#v1`,
+        isOwnVariant: false,
+      });
+      expect(text).not.toContain(b.variantKey);
+      expect(text).not.toContain(b.variantThumbKey);
+      expect(text).not.toContain(row.uploadKey);
+      expect(text).not.toContain(row.uploadThumbKey);
+    }
+    expect(signedGets).not.toContain(b.variantKey);
+    expect(signedGets).not.toContain(b.variantThumbKey);
+  });
+
+  it('gives B their own file and thumbnail, flagged as their own', async () => {
+    const row = photo(ADMIN);
+    mediaImagesStore.records = [row];
+    const b = subjectIn(row, OTHER_GUEST);
+
+    const full = await serve('token-other-guest', [row.id], 'full');
+    expect(full.body?.images[row.id]).toEqual({
+      url: `https://r2.test/${b.variantKey}?signed=true`,
+      cacheKey: `${b.variantKey}#v1`,
+      isOwnVariant: true,
+    });
+    const thumb = await serve('token-other-guest', [row.id], 'thumbnail');
+    expect(thumb.body?.images[row.id]).toEqual({
+      url: `https://r2.test/${b.variantThumbKey}?signed=true`,
+      cacheKey: `${b.variantThumbKey}#v1`,
+      isOwnVariant: true,
+    });
+    expect(full.text).not.toContain(row.publicKey);
+    expect(full.text).not.toContain(row.uploadKey);
+  });
+
+  it('gives each of two subjects only their own file', async () => {
+    const row = photo(ADMIN);
+    mediaImagesStore.records = [row];
+    const b = subjectIn(row, OTHER_GUEST);
+    const c = subjectIn(row, GUEST);
+
+    const forB = await serve('token-other-guest', [row.id], 'full');
+    expect(forB.body?.images[row.id]?.url).toBe(`https://r2.test/${b.variantKey}?signed=true`);
+    expect(forB.text).not.toContain(c.variantKey);
+
+    const forC = await serve('token-guest', [row.id], 'full');
+    expect(forC.body?.images[row.id]?.url).toBe(`https://r2.test/${c.variantKey}?signed=true`);
+    expect(forC.text).not.toContain(b.variantKey);
+  });
+
+  it("gives the Admin, a Guest and a Photographer the public file of someone else's subject photo", async () => {
+    const guestPhoto = photo(GUEST);
+    const photographerPhoto = photo(PHOTOGRAPHER);
+    mediaImagesStore.records = [guestPhoto, photographerPhoto];
+    const b1 = subjectIn(guestPhoto, OTHER_GUEST);
+    const b2 = subjectIn(photographerPhoto, OTHER_GUEST);
+
+    const cases = [
+      ['token-admin', [guestPhoto, photographerPhoto]],
+      ['token-guest', [guestPhoto, photographerPhoto]],
+      // A Photographer sees only their own uploads (arch §1, D-148).
+      ['token-photographer', [photographerPhoto]],
+    ] as const;
+    for (const [token, visible] of cases) {
+      const { body, text } = await serve(token, [guestPhoto.id, photographerPhoto.id], 'full');
+      expect(Object.keys(body?.images ?? {}).sort()).toEqual(visible.map((r) => r.id).sort());
+      for (const row of visible) {
+        expect(body?.images[row.id]).toEqual({
+          url: `https://r2.test/${row.publicKey}?signed=true`,
+          cacheKey: `${row.publicKey}#v1`,
+          isOwnVariant: false,
+        });
+      }
+      expect(text).not.toContain(b1.variantKey);
+      expect(text).not.toContain(b2.variantKey);
+    }
+  });
+
+  it('gives a Photographer who is a subject in their own upload their file and the flag', async () => {
+    const row = photo(PHOTOGRAPHER);
+    mediaImagesStore.records = [row];
+    const own = subjectIn(row, PHOTOGRAPHER);
+
+    const { body } = await serve('token-photographer', [row.id], 'full');
+    expect(body?.images[row.id]).toEqual({
+      url: `https://r2.test/${own.variantKey}?signed=true`,
+      cacheKey: `${own.variantKey}#v1`,
+      isOwnVariant: true,
+    });
+  });
+
+  it('signs nothing for a subject who is pending, blocked, removed or not a member', async () => {
+    const row = photo(ADMIN);
+    mediaImagesStore.records = [row];
+    const files = [PENDING, BLOCKED, REMOVED, OUTSIDER].map((user) => subjectIn(row, user));
+
+    for (const [, token] of NOT_MEMBERS) {
+      const { status, text } = await serve(token, [row.id], 'full');
+      expect(status).toBe(403);
+      for (const file of files) expect(text).not.toContain(file.variantKey);
+    }
+    expect(signedGets).toEqual([]);
+  });
+
+  it("signs nothing for B's file in another event's photo", async () => {
+    const row = { ...photo(ADMIN), eventId: otherEventId };
+    mediaImagesStore.records = [row];
+    subjectIn(row, OTHER_GUEST);
+
+    const { status, body } = await serve('token-other-guest', [row.id], 'full');
+    expect(status).toBe(200);
+    expect(body?.images).toEqual({});
+    expect(signedGets).toEqual([]);
+  });
+
+  it('serves the blurred public file of a fail-closed photo with faces, never an upload key', async () => {
+    // No threshold yet, so the worker blurred every face and matched no subject (arch §5, D-104).
+    const row = photo(ADMIN);
+    mediaImagesStore.records = [row];
+
+    for (const token of ['token-admin', 'token-guest', 'token-other-guest']) {
+      for (const size of ['full', 'thumbnail'] as const) {
+        const { body, text } = await serve(token, [row.id], size);
+        const key = size === 'full' ? row.publicKey : row.publicThumbKey;
+        expect(body?.images[row.id]?.url).toBe(`https://r2.test/${key}?signed=true`);
+        expect(text).not.toContain(row.uploadKey);
+        expect(text).not.toContain(row.uploadThumbKey);
+      }
+    }
+    expect(signedGets.some((k) => k.includes('upload'))).toBe(false);
   });
 });
