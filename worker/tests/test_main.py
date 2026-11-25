@@ -86,7 +86,7 @@ def report(**overrides):
     loop.report_archive(
         **{
             "kind": "failed",
-            "job": "thumbnail_dims",
+            "job": "blur_region",
             "msg_id": 7,
             "media_id": uuid4(),
             "read_ct": 3,
@@ -99,7 +99,7 @@ def report(**overrides):
 def test_an_archive_with_a_known_cause_is_one_message(sent):
     report(error=DecodeError("not an image"))
     assert len(sent) == 1 and sent[0][0] == "message"
-    assert "thumbnail_dims" in sent[0][1]
+    assert "blur_region" in sent[0][1]
 
 
 def test_an_archive_from_a_bug_carries_its_exception(sent):
