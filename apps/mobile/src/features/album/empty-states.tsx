@@ -52,6 +52,23 @@ export function UploaderEmpty({ uploaderName }: { uploaderName: string }) {
   );
 }
 
+// A People filter with no photos. A person hidden by Do Not Publish gets the same empty page from
+// the API as anyone with no match, and this wording is the same for both, so the screen never
+// says who turned it on (D-176).
+export function PeopleEmpty({ name }: { name: string | null }) {
+  return name === null ? (
+    <BaseEmpty
+      title="No photos of you yet"
+      body="Photos are checked for your face as they arrive."
+    />
+  ) : (
+    <BaseEmpty
+      title={`No photos of ${name} yet`}
+      body="Photos they appear in will show here once they're published."
+    />
+  );
+}
+
 // The album or the schedule its sections come from has never loaded, offline most often, since
 // the album is not saved across a restart (D-148). "No photos yet" there would be a wrong answer.
 export function AlbumLoadFailed({ retrying, onRetry }: { retrying: boolean; onRetry: () => void }) {
