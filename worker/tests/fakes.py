@@ -19,7 +19,16 @@ import numpy as np
 
 from app.ai.matching import ClusterFace, Reference
 from app.ai.model import FaceModel
-from app.db import BlurRegion, DnpSubject, MediaRow, NewFace, ReferenceRow, Store, StoredFace
+from app.db import (
+    BlurRegion,
+    DnpSubject,
+    LockedMedia,
+    MediaRow,
+    NewFace,
+    ReferenceRow,
+    Store,
+    StoredFace,
+)
 from app.images import cv2
 from app.queue import Message
 from app.storage import ObjectMissing
@@ -74,9 +83,22 @@ class FakeTx:
         if message is not None:
             self._state.archived[msg_id] = message
 
-    def lock_media(self, media_id: UUID) -> bool | None:
+    def lock_media(self, media_id: UUID) -> LockedMedia | None:
         row = self._state.media.get(media_id)
-        return None if row is None else row["processed_at"] is not None
+        if row is None:
+            return None
+        return LockedMedia(
+            published=row["processed_at"] is not None, deleted=row["deleted_at"] is not None
+        )
+
+    def delete_media_rows(self, media_id: UUID) -> tuple[int, int, int]:
+        self._store.fault("delete_media_rows")
+        state = self._state
+        return (
+            len(state.faces.pop(media_id, [])),
+            len(state.subjects.pop(media_id, [])),
+            len(state.regions.pop(media_id, [])),
+        )
 
     def unpublish(self, media_id: UUID) -> None:
         self._state.media[media_id]["processed_at"] = None
@@ -333,6 +355,7 @@ class FakeStore:
             public_thumb_key=row["public_thumb_key"],
             variant_version=row["variant_version"],
             published=row["processed_at"] is not None,
+            deleted=row["deleted_at"] is not None,
         )
 
     def reference_for_job(self, reference_id: UUID) -> ReferenceRow | None:
@@ -403,6 +426,8 @@ class FakeStorage:
         # Every PUT as (key, content type), and every DELETE by key, in order, failed ones included.
         self.puts: list[tuple[str, str]] = []
         self.deletes: list[str] = []
+        # Every prefix listed, in order.
+        self.lists: list[str] = []
         # Errors the next PUTs or DELETEs raise, in order.
         self.put_faults: list[Exception] = []
         self.delete_faults: list[Exception] = []
@@ -434,6 +459,10 @@ class FakeStorage:
         if self.delete_faults:
             raise self.delete_faults.pop(0)
         self.objects.pop(key, None)
+
+    def list(self, prefix: str) -> list[str]:
+        self.lists.append(prefix)
+        return sorted(k for k in self.objects if k.startswith(prefix))
 
     def reachable(self) -> bool:
         self.probes += 1

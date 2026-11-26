@@ -52,6 +52,17 @@ class MediaRow:
     variant_version: int
     # processed_at is set, so the photo is in the album.
     published: bool
+    # deleted_at is set. Nobody can restore the photo, so every job but media_delete skips it
+    # (D-130).
+    deleted: bool
+
+
+@dataclass(frozen=True)
+class LockedMedia:
+    """A media row as Store.archive sees it under its row lock."""
+
+    published: bool
+    deleted: bool
 
 
 @dataclass(frozen=True)
@@ -123,6 +134,9 @@ class Archive(Enum):
     # The photo's or the reference's row no longer exists, so the message was deleted as done
     # (arch §5).
     GONE = "gone"
+    # The photo is deleted and the job is not media_delete, so the message was deleted as done
+    # (D-130, D-177).
+    DELETED = "deleted"
 
 
 class Tx:
@@ -140,14 +154,26 @@ class Tx:
         if not queue.archive(self._cur, self._queue, msg_id):
             log.warning("msg_id=%s was already gone from the queue when it was archived", msg_id)
 
-    def lock_media(self, media_id: UUID) -> bool | None:
-        """Locks the row and says whether it is published, or returns None when it is gone."""
+    def lock_media(self, media_id: UUID) -> LockedMedia | None:
+        """Locks the row and says whether it is published and deleted, or None when it is gone."""
         self._cur.execute(
-            "select processed_at is not null from public.media where id = %s for update",
+            "select processed_at is not null, deleted_at is not null from public.media"
+            " where id = %s for update",
             (media_id,),
         )
         row = self._cur.fetchone()
-        return None if row is None else bool(row[0])
+        return None if row is None else LockedMedia(published=bool(row[0]), deleted=bool(row[1]))
+
+    def delete_media_rows(self, media_id: UUID) -> tuple[int, int, int]:
+        """Deletes a deleted photo's face, dnp_subject and manual_blur_region rows, through each
+        table's media_id index, and returns how many of each went. The media row stays, with
+        deleted_at and its hash (D-130). photo_flag rows stay too; S-24 filters them (D-177)."""
+        counts = []
+        for table in ("face", "dnp_subject", "manual_blur_region"):
+            # `table` is one of the three literals above, never input.
+            self._cur.execute(f"delete from public.{table} where media_id = %s", (media_id,))
+            counts.append(self._cur.rowcount)
+        return counts[0], counts[1], counts[2]
 
     def unpublish(self, media_id: UUID) -> None:
         """Takes the photo out of the album after a final failure (D-108)."""
@@ -401,23 +427,34 @@ class Store:
         *,
         gone_is_done: bool,
         reference_id: UUID | None = None,
+        deletes_media: bool = False,
     ) -> Archive:
         """A final failure. Archives the message and, in the same transaction, unpublishes the
         photo it names (D-108) or rejects the pending reference it names as `failed` (D-172).
 
-        When that row is gone and `gone_is_done` is set, the message is deleted as done instead,
-        with no archive (arch §5).
+        When `gone_is_done` is set, a message whose row is gone, or whose photo is deleted, is
+        deleted as done instead, with no archive (arch §5, D-130).
+
+        `deletes_media` is set for media_delete, which is archived either way: on a live row
+        that is a bug to look at, and on a deleted or gone row the files under its prefix are
+        still there, so the message is kept to send again. It never unpublishes: the job writes
+        no file a viewer could see wrong, and a live photo stays in the album (D-177).
         """
         with self.transaction() as tx:
-            published = None if media_id is None else tx.lock_media(media_id)
-            if media_id is not None and published is None and gone_is_done:
-                tx.delete_message(msg_id)
-                return Archive.GONE
+            locked = None if media_id is None else tx.lock_media(media_id)
+            if media_id is not None and gone_is_done and not deletes_media:
+                if locked is None:
+                    tx.delete_message(msg_id)
+                    return Archive.GONE
+                if locked.deleted:
+                    tx.delete_message(msg_id)
+                    return Archive.DELETED
             status = None if reference_id is None else tx.lock_reference(reference_id)
             if reference_id is not None and status is None and gone_is_done:
                 tx.delete_message(msg_id)
                 return Archive.GONE
-            if media_id is not None and published:
+            published = locked is not None and locked.published and not deletes_media
+            if published:
                 tx.unpublish(media_id)
             rejected = reference_id is not None and status == "pending"
             if rejected:
@@ -430,12 +467,12 @@ class Store:
     # --- media ------------------------------------------------------------------------------
 
     def media_for_job(self, media_id: UUID) -> MediaRow | None:
-        """The row a job works on. A soft-deleted row is returned like any other for now. Nobody
-        can restore a deleted photo, so S-22a makes every job but media_delete skip one (D-130)."""
+        """The row a job works on, deleted or not. Every job but media_delete skips a deleted one
+        (D-130)."""
         with self._statement() as cur:
             cur.execute(
                 "select id, event_id, upload_key, upload_thumb_key, public_key, public_thumb_key,"
-                " variant_version, processed_at is not null"
+                " variant_version, processed_at is not null, deleted_at is not null"
                 " from public.media where id = %s",
                 (media_id,),
             )
@@ -451,6 +488,7 @@ class Store:
             public_thumb_key=row[5],
             variant_version=row[6],
             published=bool(row[7]),
+            deleted=bool(row[8]),
         )
 
     def blur_regions(self, media_id: UUID) -> list[BlurRegion]:
