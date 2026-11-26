@@ -34,6 +34,15 @@ class ReferenceMessage(JobMessage):
     face_reference_id: UUID
 
 
+class ArchiveNow(Exception):
+    """A message a retry cannot help, which the loop archives on its first try and reports. `kind`
+    is the archive reason Sentry groups by."""
+
+    def __init__(self, kind: str, reason: str) -> None:
+        super().__init__(reason)
+        self.kind = kind
+
+
 @dataclass(frozen=True)
 class Job:
     name: str

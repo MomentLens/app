@@ -244,3 +244,30 @@ def test_registry_names_match_their_message_models():
         # Each message names its row by its own field; the extra one is ignored.
         body = {"job": name, "media_id": str(uuid4()), "face_reference_id": str(uuid4())}
         assert job.message.model_validate(body).job == name
+
+
+def test_a_deleted_photos_message_past_its_tries_is_done_without_an_archive_or_report():
+    store, storage = FakeStore(), FakeStorage()
+    media_id, msg_id = photo(store, storage, deleted_at="now")
+    store.state.messages[msg_id].read_ct = 3
+    worker = make_worker(store, storage)
+
+    drain(worker)
+
+    assert msg_id not in store.state.messages
+    assert store.state.archived == {}
+    assert worker.report.calls == []
+    assert storage.reads == []
+
+
+def test_media_delete_on_a_live_row_past_its_tries_is_archived_and_keeps_processed_at():
+    store = FakeStore()
+    media_id = store.add_media(variant_version=1, processed_at="earlier")
+    msg_id = store.send({"job": "media_delete", "media_id": str(media_id)}, read_ct=3)
+    worker = make_worker(store)
+
+    drain(worker)
+
+    assert msg_id in store.state.archived
+    assert store.state.media[media_id]["processed_at"] == "earlier"
+    assert [call["kind"] for call in worker.report.calls] == ["stopped"]
