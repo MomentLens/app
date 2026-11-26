@@ -186,9 +186,12 @@ export const ListAlbumRequest = z.strictObject({
 export type ListAlbumRequest = z.infer<typeof ListAlbumRequest>;
 
 /**
- * One photo in the album grid. The serving endpoint handles URLs; this carries only metadata
- * needed for layout, section headers and the tile.
+ * One photo in the album grid and the single photo view. The serving endpoint handles URLs; this
+ * carries only metadata needed for layout, section headers, the tile and the photo overlay.
  *
+ * - `uploaderUserId` and `uploaderName` come from joining `profile` in `list_album`, giving the
+ *   single photo view uploader metadata and Delete ownership without an extra request per swipe
+ *   (D-179).
  * - `uploaderRole` is `uploader_role_at_upload`, display and filter metadata only (spec §4.4).
  * - `width` and `height` are the photo's pixel dimensions, written by the worker (D-22). They
  *   are null until the worker finishes; the album query already filters on `processed_at`, so a
@@ -201,6 +204,8 @@ export const AlbumMediaItem = z.object({
   id: z.uuid(),
   subEventId: z.uuid(),
   capturedAt: Timestamp,
+  uploaderUserId: z.uuid(),
+  uploaderName: FullName,
   uploaderRole: MembershipRole,
   width: z.int().positive().nullable(),
   height: z.int().positive().nullable(),
@@ -319,3 +324,71 @@ export const ListUploadersResponse = z.object({
   uploaders: z.array(Uploader),
 });
 export type ListUploadersResponse = z.infer<typeof ListUploadersResponse>;
+
+/**
+ * GET /media/{mediaId}, for an active Guest or the event's Admin, with no body and no query
+ * parameters (spec §2.5.6, arch:media, D-179). Returns viewer-scoped blur and flag state for the
+ * single photo view without exposing subject ids, face boxes or blur-region boxes.
+ *
+ * - `hasPrivacyBlur` is true only when another Do Not Publish subject's face is blurred in the
+ *   file this viewer receives, so it is false when the viewer is the photo's sole Do Not Publish
+ *   subject.
+ * - `hasManualBlur` is true when the photo has at least one stored manual blur region.
+ * - `flaggedByMe` is true when this caller has already flagged the photo, in either `open` or
+ *   `kept` state.
+ * - Allowed while the album is closed or the event is archived.
+ *
+ * Refusals, in order (hb §5.3): 401 `no_session`; 400 `invalid_request` for a non-uuid path id;
+ * 404 `not_found` for an unknown, unprocessed or soft-deleted photo, or a soft-deleted event;
+ * 403 `not_member` for a non-active member of the photo's event; 403 `wrong_role` for a
+ * Photographer.
+ */
+export const MediaDetailResponse = z.object({
+  hasPrivacyBlur: z.boolean(),
+  hasManualBlur: z.boolean(),
+  flaggedByMe: z.boolean(),
+});
+export type MediaDetailResponse = z.infer<typeof MediaDetailResponse>;
+
+/**
+ * POST /media/{mediaId}/flags, for an active Guest only, with no body (spec §2.5.6,
+ * arch:photo_flag, D-179). Records one flag per Guest per photo, with no reason text and no
+ * unflag.
+ *
+ * - Answers 201 `{ flagged: true }` on the first flag and 200 `{ flagged: true }` on a repeat
+ *   without duplicating the row or reopening a `kept` flag.
+ * - Allowed while the album is closed or the event is archived.
+ *
+ * Refusals, in order (hb §5.3): 401 `no_session`; 400 `invalid_request` for a non-uuid path id;
+ * 404 `not_found` for an unknown, unprocessed or soft-deleted photo, or a soft-deleted event;
+ * 403 `not_member` for a non-active member of the photo's event; 403 `wrong_role` for the Admin
+ * or a Photographer.
+ */
+export const FlagPhotoResponse = z.object({
+  flagged: z.literal(true),
+});
+export type FlagPhotoResponse = z.infer<typeof FlagPhotoResponse>;
+
+/**
+ * DELETE /media/{mediaId}, for the photo's uploader or the event's Admin, with no body
+ * (spec §2.5.6, spec §4.21, arch:media, D-130, D-160, D-179). Permanent deletion: sets
+ * `deleted_at` and enqueues one `media_delete` job in one transaction through `delete_media`.
+ *
+ * - Answers 200 `{ mediaId, deletedAt }` on the first delete.
+ * - When `deleted_at` is already set, a repeat by either authorized deleter (the uploader or the
+ *   Admin) answers 200 with the existing `deletedAt` and enqueues no second `media_delete` job.
+ * - On an unfinished row (`uploaded_at` null), the Admin gets 404 `not_found`, while the uploader
+ *   may soft-delete it (D-122).
+ * - Allowed while the album is closed or the event is archived.
+ *
+ * Refusals, in order (hb §5.3): 401 `no_session`; 400 `invalid_request` for a non-uuid path id;
+ * 404 `not_found` for an unknown photo, a soft-deleted event, or an unfinished row when the
+ * caller is the Admin; 403 `not_member` for a non-active member of the photo's event; 403
+ * `not_uploader` for any other active member (such as another Guest, or a Photographer on someone
+ * else's photo), whether the photo is live or already deleted.
+ */
+export const DeleteMediaResponse = z.object({
+  mediaId: z.uuid(),
+  deletedAt: Timestamp,
+});
+export type DeleteMediaResponse = z.infer<typeof DeleteMediaResponse>;
