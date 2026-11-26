@@ -1084,6 +1084,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-149).** The SQL test runs in one CI job on every pull request, which runs it when `worker/`, `supabase/`, CI's workflow or `scripts/verify.mjs` changed and passes at once otherwise. That job is a required check on `main`, so a pgmq call or a media update the real database refuses blocks the merge.
 **Amended (see D-163).** `DATABASE_URL` is Postgres on the server's loopback, `127.0.0.1:5432`, which `infra/supabase/setup.sh` writes. It is still a session connection, as the lock needs. A laptop's worker reaches it through the SSH tunnel in hb §13.4. GitHub's runners cannot reach it, so where the SQL test's CI job runs is Open.
 **Amended (see D-169).** OpenCV stays on 4.x for the demo. S-18 measured 5.0 against it on 2026-11-18 and found no gain.
+**Amended (see D-177).** A `media_delete` message whose row is gone deletes the photo's R2 prefix before it is deleted as done. Every other job's message for a gone row is still deleted as done with nothing else.
 
 ### D-124: Each platform draws the controls, and the brand stays in the content
 **Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
@@ -1192,6 +1193,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Amended (see D-141).** The accepted reference that turns Do Not Publish on in an event is one the person added to that event, and matching there uses only that event's references.
 
 ### D-130: Only the uploader or the Admin deletes a photo, and nobody restores it
+**Amended (see D-177).** `media_delete` deletes the prefix even when the `media` row is gone, refuses a row with no `deleted_at`, and leaves `photo_flag` rows.
 **Amended (see D-160).** `DELETE /media/{mediaId}` answers a repeat by the same caller on a photo it already deleted as it answered the first call. My Media also calls it, for Delete and for Move to Local Only on this account's uploaded photos. The multi-select delete in My Media is not built.
 **Decision.** Amends D-42, D-96 and D-123, and spec §2.5.6, §2.5.7 and §4.21.
 - A photo is deleted by the person who uploaded it or by the event's Admin, and by nobody else. The API answers anyone else 403.
@@ -1827,6 +1829,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Why.** D-129 makes Do Not Publish permanent within its event. Matching only active members kept a removed or blocked subject blurred in the photos taken before they left and showed their face in every photo after.
 **Rejected.** Matching only active members for both, which is what D-141 said and costs nothing to build, and accepts that leaving an event turns the protection off for new photos.
 **Cost.** One more clause in the query that picks the event's references, which S-25's `reprocess` must use too.
+
+### D-177: `media_delete` on a gone row, a live row, a late upload and flags
+**Decision.** Amends D-123 and D-130. Ukasha ruled on each of these on 2026-11-26, at S-22a's read-back.
+- A `media_delete` message whose `media` row is gone deletes every object under `{media_id}/`, then is deleted as done, with no archive and no Sentry report. The other jobs keep D-123's rule for a gone row.
+- A `media_delete` message whose row has no `deleted_at` deletes nothing. The worker archives it on its first try and reports it to Sentry.
+- A message for a deleted photo that reaches its third read, for any job but `media_delete`, is deleted as done, with no archive and no Sentry report, as `docs/ARCHITECTURE.md` §5 already says for its first read.
+- An upload whose presigned PUT lands after `media_delete` has run leaves up to two objects under the prefix. Nothing serves them and nothing deletes them in demo scope.
+- `media_delete` leaves a deleted photo's `photo_flag` rows. The Review Queue leaves out a flag whose photo is deleted (S-24).
+**Why.** An event's hard delete removes the `media` rows before any job reads their messages, and the files under the prefix belong to nobody else, so a gone row is no reason to keep them. Only a bug or a hand-sent message names a live photo, and deleting its files breaks it in the album for every viewer. A flag holds no image and no face.
+**Rejected.** Deleting a gone row's message with nothing else, which leaves the files in R2 forever. Deleting a live photo's files as told, or deleting the message as done, which hides the bug. A cleanup job for late uploads, which no demo beat needs.
+**Cost.** One more archive kind in the worker. A late upload costs at most two objects of storage. S-24 filters flags on `deleted_at`.
+**Reopen if.** Retention deletion (spec §4.21) gets built, which can sweep orphaned prefixes too.
 
 ## Open items that are not decisions yet
 
