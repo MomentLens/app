@@ -272,7 +272,8 @@ export async function addReference(
 
 // DELETE /events/{eventId}/references/{referenceId}. The row goes first, with its embedding, so a
 // failed R2 delete leaves an object nothing points at rather than a row with no photo. The failure
-// is logged and changes nothing about the answer. Until S-25 no reprocess is sent, and until S-29
+// is logged and changes nothing about the answer. delete_face_reference sends reprocess when the
+// deleted reference was accepted, so the faces it matched are matched again (D-178). Until S-29
 // the last accepted reference is not refused (D-172).
 export async function removeReference(
   deps: ReferenceDeps,
