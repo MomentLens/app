@@ -9,12 +9,13 @@ import { EventTabScreen } from '@/features/event-shell/event-tab-screen';
 import { tabHref } from '@/features/event-shell/tabs';
 import { useEvent } from '@/features/event-shell/use-event';
 import { formatEventDates } from '@/features/events/format';
-import { ActiveFilterPill } from '@/features/album/active-filter-pill';
+import { ActiveFilterPill, ActiveFilterPills } from '@/features/album/active-filter-pill';
 import { AlbumBanner } from '@/features/album/album-banner';
 import { AlbumGrid } from '@/features/album/album-grid';
 import {
   AlbumLoadFailed,
   AllEmpty,
+  PeopleEmpty,
   SubEventEmpty,
   UploaderEmpty,
 } from '@/features/album/empty-states';
@@ -23,12 +24,14 @@ import { isPreEvent as beforeFirstStart, nextCountdownChange } from '@/features/
 import { PreEventView } from '@/features/album/pre-event-view';
 import { buildAlbumListItems } from '@/features/album/sections';
 import { SubEventChips } from '@/features/album/sub-event-chips';
-import { UploaderSheet, type UploaderFilter } from '@/features/album/uploader-sheet';
+import { peopleParams, useEventFilters, type PeopleFilter } from '@/features/album/filter-store';
+import { UploaderSheet } from '@/features/album/uploader-sheet';
 import { useAlbum, useUploaders } from '@/features/album/use-album';
 import { useThumbnailMap } from '@/features/album/use-album-images';
 import { nextStatusChange } from '@/features/schedule/schedule';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useNow } from '@/hooks/use-now';
+import { byPlatform } from '@/lib/copy';
 import { queryClient } from '@/lib/query-client';
 
 const EMPTY_SCHEDULE: SubEvent[] = [];
@@ -84,8 +87,20 @@ function HomeContent({
   const [selectedSubEventId, setSelectedSubEventId] = useState<string | null>(
     initialSubEventId ?? null,
   );
-  const [selectedUploader, setSelectedUploader] = useState<UploaderFilter | undefined>(undefined);
+  // People and Uploader live in the filter store, because the Recognized Faces strip sets the
+  // People filter from another screen (spec §2.5.6).
+  const {
+    owner,
+    people,
+    uploader: selectedUploader,
+    setPeople,
+    setUploader: setSelectedUploader,
+  } = useEventFilters(eventId);
   const selectedUploaderId = selectedUploader?.id;
+  const identityFilters = useMemo(
+    () => ({ uploaderId: selectedUploaderId, ...peopleParams(people, owner) }),
+    [selectedUploaderId, people, owner],
+  );
 
   // A tap on a tile opens the single photo view over the same filters, so its pager follows the
   // grid (spec §2.5.6).
@@ -110,7 +125,7 @@ function HomeContent({
   // Album query
   const albumQuery = useAlbum(eventId, {
     subEventId: selectedSubEventId ?? undefined,
-    uploaderId: selectedUploaderId,
+    ...identityFilters,
   });
   const uploadersQuery = useUploaders(eventId);
 
@@ -264,12 +279,23 @@ function HomeContent({
                   onOpenMore={() => setMoreSheetOpen(true)}
                 />
 
-                {/* Active uploader filter pill, shown for as long as the filter applies */}
-                {selectedUploader ? (
-                  <ActiveFilterPill
-                    label={`Uploader: ${selectedUploader.name}`}
-                    onClear={() => setSelectedUploader(undefined)}
-                  />
+                {/* One pill per active identity filter, each shown for as long as it applies */}
+                {people || selectedUploader ? (
+                  <ActiveFilterPills>
+                    {people ? (
+                      <ActiveFilterPill
+                        label={peopleLabel(people)}
+                        avatarName={people.kind === 'person' ? people.name : undefined}
+                        onClear={() => setPeople(undefined)}
+                      />
+                    ) : null}
+                    {selectedUploader ? (
+                      <ActiveFilterPill
+                        label={`Uploader: ${selectedUploader.name}`}
+                        onClear={() => setSelectedUploader(undefined)}
+                      />
+                    ) : null}
+                  </ActiveFilterPills>
                 ) : null}
               </View>
             }
@@ -281,6 +307,16 @@ function HomeContent({
                 <View className="py-20 items-center justify-center">
                   <ActivityIndicator className="text-textSecondary" />
                 </View>
+              ) : people ? (
+                <PeopleEmpty
+                  name={
+                    people.kind === 'me'
+                      ? null
+                      : people.kind === 'person'
+                        ? people.name
+                        : 'this person'
+                  }
+                />
               ) : selectedUploader ? (
                 <UploaderEmpty uploaderName={selectedUploader.name} />
               ) : selectedSubEvent ? (
@@ -296,8 +332,11 @@ function HomeContent({
       {/* Filter / Uploader sheet */}
       <UploaderSheet
         eventId={eventId}
+        eventName={event?.name ?? 'this event'}
         isOpen={filterSheetOpen}
+        people={people}
         selectedUploaderId={selectedUploaderId}
+        onSelectPeople={setPeople}
         onSelect={setSelectedUploader}
         onClose={() => setFilterSheetOpen(false)}
       />
@@ -307,7 +346,7 @@ function HomeContent({
         eventId={eventId}
         subEvents={subEvents}
         albumCounts={selectedSubEventId === null && albumQuery.data ? sectionCountsMap : null}
-        uploaderId={selectedUploaderId}
+        identityFilters={identityFilters}
         now={now}
         selectedId={selectedSubEventId}
         liveSubEventId={liveSubEvent?.id ?? null}
@@ -317,4 +356,16 @@ function HomeContent({
       />
     </>
   );
+}
+
+// The People pill's words. Find My Photos and an Unknown cluster have no name to show.
+function peopleLabel(people: PeopleFilter): string {
+  switch (people.kind) {
+    case 'me':
+      return byPlatform('Your Photos', 'Your photos');
+    case 'person':
+      return people.name;
+    case 'unknown':
+      return 'Unknown';
+  }
 }
