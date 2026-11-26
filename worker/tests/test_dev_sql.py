@@ -24,7 +24,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 
 from app import config, queue
-from app.db import Archive, DnpSubject, NewFace, Store, vector_literal
+from app.db import Archive, DnpSubject, FaceUpdate, NewFace, Store, vector_literal
 from app.jobs.base import JobContext
 from app.loop import LOCK_WAIT_S
 
@@ -1056,6 +1056,202 @@ def test_face_dnp_subject_id_is_set_null_with_its_subject(conn, media_id):
     assert conn.execute(
         "select dnp_subject_id from public.face where id = %s", (face_id,)
     ).fetchone() == (None,)
+
+
+# --- S-25: dnp_subject_id, reprocess's reads and writes, and its send (D-178) ----------------
+
+
+def new_subject(conn):
+    return conn.execute(
+        "insert into public.subject (user_id) values (null) returning id"
+    ).fetchone()[0]
+
+
+def face_columns(conn, media_id):
+    return conn.execute(
+        "select matched_subject_id, similarity, cluster_id, dnp_subject_id from public.face"
+        " where media_id = %s order by created_at, id",
+        (media_id,),
+    ).fetchall()
+
+
+def test_finish_face_process_stores_each_faces_dnp_subject(conn, store, media_id):
+    subject = new_subject(conn)
+    blurred = NewFace(**{**face(0).__dict__, "dnp_subject_id": subject})
+
+    with store.transaction() as tx:
+        assert tx.finish_face_process(
+            media_id,
+            640,
+            512,
+            f"{media_id}/public_v1.jpg",
+            f"{media_id}/public_thumb_v1.webp",
+            [blurred, face(1)],
+            [subject_row(media_id, subject, 1)],
+        )
+
+    assert [r[3] for r in face_columns(conn, media_id)] == [subject, None]
+    assert [f.dnp_subject_id for f in store.faces(media_id)] == [subject, None]
+
+
+def test_finish_blur_region_sets_each_faces_dnp_subject(conn, store, media_id):
+    publish(conn, media_id, version=1)
+    old, new = new_subject(conn), new_subject(conn)
+    conn.execute(
+        "insert into public.face (media_id, embedding, x, y, width, height, dnp_subject_id)"
+        " values (%s, %s::extensions.vector, 0.1, 0.1, 0.1, 0.1, %s)",
+        (media_id, vector_literal(unit(0)), old),
+    )
+    (stored,) = store.faces(media_id)
+
+    with store.transaction() as tx:
+        assert tx.finish_blur_region(
+            media_id,
+            1,
+            f"{media_id}/public_v2.jpg",
+            f"{media_id}/public_thumb_v2.webp",
+            [subject_row(media_id, new, 2)],
+            [(stored.id, new)],
+        )
+
+    assert [r[3] for r in face_columns(conn, media_id)] == [new]
+
+
+def test_finish_reprocess_points_at_new_files_rewrites_faces_and_keeps_processed_at(
+    conn, store, media_id
+):
+    publish(conn, media_id, version=1)
+    before = processed_at(conn, media_id)
+    subject = new_subject(conn)
+    cluster = uuid4()
+    conn.execute(
+        "insert into public.face (media_id, embedding, x, y, width, height, cluster_id)"
+        " values (%s, %s::extensions.vector, 0.1, 0.1, 0.1, 0.1, %s)",
+        (media_id, vector_literal(unit(0)), cluster),
+    )
+    (stored,) = store.faces(media_id)
+    assert stored.cluster_id == cluster
+
+    with store.transaction() as tx:
+        assert tx.finish_reprocess(
+            media_id,
+            1,
+            (
+                f"{media_id}/public_v2.jpg",
+                f"{media_id}/public_thumb_v2.webp",
+                [subject_row(media_id, subject, 2)],
+            ),
+            # Matched and leaving its cluster in one statement, as face_cluster_check needs.
+            [FaceUpdate(stored.id, subject, 0.97, None, subject)],
+        )
+
+    row = media_row(conn, media_id)
+    assert row[2:5] == (f"{media_id}/public_v2.jpg", f"{media_id}/public_thumb_v2.webp", 2)
+    assert processed_at(conn, media_id) == before
+    ((matched, similarity, cluster_id, dnp),) = face_columns(conn, media_id)
+    assert (matched, cluster_id, dnp) == (subject, None, subject)
+    assert similarity == pytest.approx(0.97)
+    assert dnp_rows(conn, media_id) == [
+        (subject, f"{media_id}/{subject}_v2.jpg", f"{media_id}/{subject}_thumb_v2.webp")
+    ]
+
+
+def test_finish_reprocess_with_no_files_rewrites_the_match_and_leaves_the_version(
+    conn, store, media_id
+):
+    publish(conn, media_id, version=3)
+    subject = new_subject(conn)
+    conn.execute(
+        "insert into public.face (media_id, embedding, x, y, width, height)"
+        " values (%s, %s::extensions.vector, 0.1, 0.1, 0.1, 0.1)",
+        (media_id, vector_literal(unit(0))),
+    )
+    (stored,) = store.faces(media_id)
+
+    with store.transaction() as tx:
+        assert tx.finish_reprocess(
+            media_id, 3, None, [FaceUpdate(stored.id, subject, 1.0, None, None)]
+        )
+
+    assert media_row(conn, media_id)[4] == 3
+    assert face_columns(conn, media_id)[0][0] == subject
+
+
+def test_finish_reprocess_refuses_a_changed_version_a_deleted_photo_and_version_0(
+    conn, store, media_id
+):
+    with store.transaction() as tx:
+        assert not tx.finish_reprocess(media_id, 0, None, [])
+    publish(conn, media_id, version=2)
+    with store.transaction() as tx:
+        assert not tx.finish_reprocess(media_id, 1, None, [])
+    conn.execute("update public.media set deleted_at = now() where id = %s", (media_id,))
+    with store.transaction() as tx:
+        assert not tx.finish_reprocess(media_id, 2, None, [])
+    assert media_row(conn, media_id)[4] == 2
+
+
+def test_event_photos_reads_the_events_written_live_photos_with_faces_only(conn, store, media_id):
+    event_id = conn.execute(
+        "select event_id from public.media where id = %s", (media_id,)
+    ).fetchone()[0]
+    publish(conn, media_id, version=1)
+    for i in range(2):
+        conn.execute(
+            "insert into public.face (media_id, embedding, x, y, width, height, created_at)"
+            " values (%s, %s::extensions.vector, 0.1, 0.1, 0.1, 0.1, clock_timestamp())",
+            (media_id, vector_literal(unit(i))),
+        )
+    # A written photo in the same event with no face cannot change, so it is left out.
+    publish(conn, neighbour_of(conn, media_id), version=1)
+    other_event = conn.execute(
+        "insert into public.event (name, type, create_request_id)"
+        " values ('Worker SQL test', 'other', gen_random_uuid()) returning id"
+    ).fetchone()[0]
+
+    (photo,) = store.event_photos(event_id)
+    assert photo.row.id == media_id and photo.row.variant_version == 1
+    assert [f.embedding[0] for f in photo.faces] == pytest.approx([0.6, 0.0])
+    assert store.event_photos(other_event) == []
+
+    conn.execute("update public.media set deleted_at = now() where id = %s", (media_id,))
+    assert store.event_photos(event_id) == []
+
+
+def test_enqueue_reprocess_sends_the_message_the_job_reads(conn, store, media_id):
+    event_id = conn.execute(
+        "select event_id from public.media where id = %s", (media_id,)
+    ).fetchone()[0]
+    subject = new_subject(conn)
+
+    with store.transaction() as tx:
+        tx.enqueue_reprocess(subject, event_id)
+
+    (body,) = reprocess_sent(conn, event_id)
+    assert body == {"job": "reprocess", "subject_id": str(subject), "event_id": str(event_id)}
+    from app.jobs import reprocess
+
+    assert reprocess.Message.model_validate(body).event_id == event_id
+
+
+def test_reference_for_job_reads_the_subject(conn, store, reference_id):
+    row = store.reference_for_job(reference_id)
+    expected = conn.execute(
+        "select subject_id from public.face_reference where id = %s", (reference_id,)
+    ).fetchone()[0]
+    assert row is not None and row.subject_id == expected
+
+
+def test_archive_unpublishes_the_photos_it_is_given(conn, store, media_id):
+    publish(conn, media_id, version=1)
+    msg_id = send(conn, store, {"job": "reprocess"})
+    store.read(30)
+
+    assert store.archive(msg_id, None, gone_is_done=True, unpublish=[media_id, uuid4()]) is (
+        Archive.UNPUBLISHED
+    )
+    assert media_row(conn, media_id)[5] is False
+    assert in_archive(conn, store, msg_id)
 
 
 def test_a_second_worker_cannot_take_the_lock(database_url):

@@ -432,3 +432,18 @@ def test_blur_region_never_detects(monkeypatch):
 
     assert loaded.detector.calls == 0
     assert store.state.media[media_id]["variant_version"] == 2
+
+
+def test_each_face_records_the_subject_the_rebuilt_files_blur_it_for(monkeypatch):
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", 0.9)
+    store, storage = FakeStore(), FakeStorage()
+    media_id, _ = photo(store, storage, version=1)
+    with_faces(store, media_id)
+    event_id = store.state.media[media_id]["event_id"]
+    b = store.add_member(event_id, unit(1), dnp=True)
+    # Face 0 was blurred for a subject whose Do Not Publish no longer reaches this plan.
+    store.state.faces[media_id][0]["dnp_subject_id"] = uuid4()
+
+    drain(make_worker(store, storage))
+
+    assert [f["dnp_subject_id"] for f in store.state.faces[media_id]] == [None, b]

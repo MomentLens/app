@@ -198,3 +198,47 @@ def test_a_message_that_does_not_parse_but_names_a_reference_rejects_it_as_faile
     row = store.state.references[reference_id]
     assert (row["status"], row["reject_reason"]) == ("rejected", "failed")
     assert msg_id in store.state.archived
+
+
+# --- S-25: an accepted reference sends reprocess (spec §4.11.4.5, D-141) -------------------
+
+
+def test_an_accepted_reference_sends_reprocess_for_its_subject_in_its_event(faces_found):
+    faces_found(ONE)
+    store, storage = FakeStore(), FakeStorage()
+    reference_id, _ = reference(store, storage)
+    row = store.state.references[reference_id]
+    worker = make_worker(store, storage, jobs={"reference_process": REGISTRY["reference_process"]})
+
+    worker.step()
+
+    (sent,) = store.state.messages.values()
+    assert sent.body == {
+        "job": "reprocess",
+        "subject_id": str(row["subject_id"]),
+        "event_id": str(row["event_id"]),
+    }
+
+
+@pytest.mark.parametrize("boxes", [[], TWO])
+def test_a_rejected_reference_sends_nothing(faces_found, boxes):
+    faces_found(boxes)
+    store, storage = FakeStore(), FakeStorage()
+    reference(store, storage)
+
+    drain(make_worker(store, storage))
+
+    assert store.state.messages == {} and store.state.archived == {}
+
+
+def test_a_failed_send_leaves_the_reference_pending(faces_found):
+    faces_found(ONE)
+    store, storage = FakeStore(), FakeStorage()
+    reference_id, msg_id = reference(store, storage)
+    store.faults["enqueue_reprocess"] = [RuntimeError("send failed")]
+
+    make_worker(store, storage).step()
+
+    # The decision and the send commit together, or neither does.
+    assert store.state.references[reference_id]["status"] == "pending"
+    assert list(store.state.messages) == [msg_id]
