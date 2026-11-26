@@ -248,3 +248,15 @@ def test_the_media_prefix_ends_at_the_photos_own_folder():
     # The slash keeps out every key of a photo whose id starts with this one's.
     media_id = UUID("6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e")
     assert media_prefix(media_id) == "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e/"
+
+
+def test_a_truncated_list_with_no_next_page_fails_the_try(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_response(
+        "list_objects_v2",
+        {"Contents": [{"Key": "a/upload.jpg"}], "IsTruncated": True},
+        {"Bucket": BUCKET, "Prefix": "a/"},
+    )
+    # A partial list would let media_delete finish and leave the rest of the prefix (D-177).
+    with pytest.raises(RuntimeError):
+        storage.list("a/")
