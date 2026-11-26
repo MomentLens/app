@@ -11,8 +11,9 @@ The rules are arch §5's, from D-103, D-108 and D-123:
   transaction, or rejects its pending reference as `failed` (D-172), then logs it and reports it
   to Sentry. A missing upload object, a message that does not parse and an unknown job are
   archived on their first try.
-- A message whose photo or reference row is gone is deleted as done, with no archive and no
-  report.
+- A message whose photo or reference row is gone, or whose photo is deleted, is deleted as done,
+  with no archive and no report. media_delete is the exception: it is archived either way, and
+  never unpublishes a photo (D-130, D-177).
 - A lost connection to Postgres or R2 is waited out here, never by exiting, because every exit
   costs the unit's 10-second RestartSec and a fresh start. R2 refusing the worker's key or
   bucket is waited out the same way.
@@ -33,7 +34,8 @@ from pydantic import ValidationError
 
 from app.db import Archive, DatabaseUnavailable, Store
 from app.images import DecodeError
-from app.jobs.base import Job, JobContext, JobMessage
+from app.jobs import media_delete
+from app.jobs.base import ArchiveNow, Job, JobContext, JobMessage
 from app.queue import Message
 from app.storage import ObjectMissing, Storage, StorageUnavailable
 
@@ -196,6 +198,8 @@ class Worker:
             self._final(
                 message, job.name, ids, kind="missing_object", known=True, reason=str(error)
             )
+        except ArchiveNow as error:
+            self._final(message, job.name, ids, kind=error.kind, known=True, reason=str(error))
         except StorageUnavailable as error:
             self._failed_try(message, job.name, ids, error)
             self._wait_for_storage()
@@ -276,13 +280,21 @@ class Worker:
         reason: str,
         error: Exception | None = None,
     ) -> None:
-        """Archives the message, or deletes it as done when its known job's row is gone."""
+        """Archives the message, or deletes it as done when its known job's row is gone or its
+        photo is deleted."""
         where = _where(job, message, ids)
         result = self.store.archive(
-            message.msg_id, ids.media_id, gone_is_done=known, reference_id=ids.reference_id
+            message.msg_id,
+            ids.media_id,
+            gone_is_done=known,
+            reference_id=ids.reference_id,
+            deletes_media=job == media_delete.NAME,
         )
         if result is Archive.GONE:
             log.info("%s the row is gone, so the message is done (arch §5)", where)
+            return
+        if result is Archive.DELETED:
+            log.info("%s the photo is deleted, so the message is done (D-130)", where)
             return
         if result is Archive.UNPUBLISHED:
             unpublished = " Cleared processed_at, so the photo left the album (D-108)."
