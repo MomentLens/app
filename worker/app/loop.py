@@ -171,7 +171,14 @@ class Worker:
         if parsed is None:
             return
         job, body = parsed
-        ids = Ids(getattr(body, "media_id", None), getattr(body, "face_reference_id", None))
+        ids = Ids(
+            getattr(body, "media_id", None),
+            getattr(body, "face_reference_id", None),
+            getattr(body, "event_id", None),
+            unpublish=None
+            if job.unpublish_on_failure is None
+            else lambda: job.unpublish_on_failure(self.store, body),
+        )
         where = _where(job.name, message, ids)
 
         if message.read_ct > MAX_TRIES:
@@ -289,6 +296,7 @@ class Worker:
             gone_is_done=known,
             reference_id=ids.reference_id,
             deletes_media=job == media_delete.NAME,
+            unpublish=self._to_unpublish(where, ids),
         )
         if result is Archive.GONE:
             log.info("%s the row is gone, so the message is done (arch §5)", where)
@@ -323,6 +331,30 @@ class Worker:
             reference_id=ids.reference_id,
         )
 
+    def _to_unpublish(self, where: str, ids: Ids) -> list[UUID]:
+        """The photos a final failure of a message that names no one photo takes out of the
+        album (D-178). A lost connection propagates, so the message is read again after the
+        reconnect and archived then."""
+        if ids.unpublish is None:
+            return []
+        try:
+            return list(ids.unpublish())
+        except DatabaseUnavailable:
+            raise
+        except Exception:
+            # The job's own reading of what changed failed too. Archiving without unpublishing
+            # could leave a photo up with a face it should now blur, and raising would restart
+            # the worker onto the same message. So it fails closed: every photo with a face in
+            # the event leaves the album until the message is sent again.
+            log.exception(
+                "%s could not tell which photos changed, so every photo with a face in the event"
+                " is unpublished",
+                where,
+            )
+            if ids.event_id is None:
+                raise
+            return [p.row.id for p in self.store.event_photos(ids.event_id)]
+
     def _wait_for_storage(self) -> None:
         """Holds the next read until R2 answers, so an outage costs one try, not three."""
         wait = self.storage_wait_s[0]
@@ -348,14 +380,19 @@ class Ids:
 
     media_id: UUID | None = None
     reference_id: UUID | None = None
+    # reprocess names an event, not a photo (arch §5).
+    event_id: UUID | None = None
+    # The photos to unpublish on a final failure, for a job that has the hook.
+    unpublish: Callable[[], Any] | None = field(default=None, compare=False)
 
 
 def _where(job: str | None, message: Message, ids: Ids) -> str:
-    row = (
-        f"face_reference_id={ids.reference_id}"
-        if ids.reference_id is not None
-        else f"media_id={ids.media_id}"
-    )
+    if ids.reference_id is not None:
+        row = f"face_reference_id={ids.reference_id}"
+    elif ids.media_id is None and ids.event_id is not None:
+        row = f"event_id={ids.event_id}"
+    else:
+        row = f"media_id={ids.media_id}"
     return f"job={job or '?'} msg_id={message.msg_id} {row} try={message.read_ct}"
 
 

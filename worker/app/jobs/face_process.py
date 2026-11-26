@@ -17,7 +17,8 @@ thumbnail_dims, so a photo is never published before its faces are blurred.
    region, at variant_version 1's keys. A photo with no face to blur and no region keeps the
    upload keys and writes no object (root invariants 6, 11, 13).
 6. One transaction sets the size, the keys, variant_version 1 and processed_at, and inserts the
-   face and dnp_subject rows, with the message's delete. Every file is in R2 before it commits
+   face rows, each with the subject its files blur it for (D-178), and the dnp_subject rows, with
+   the message's delete. Every file is in R2 before it commits
    (root invariant 1).
 """
 
@@ -118,6 +119,7 @@ def run(ctx: JobContext, message: Message) -> None:
             matched_subject_id=None if m is None else m.subject_id,
             similarity=None if m is None else m.similarity,
             cluster_id=clusters.get(i),
+            dnp_subject_id=chosen.face_subjects[i],
         )
         for i, (f, m) in enumerate(zip(found, recognised, strict=True))
     ]
