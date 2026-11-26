@@ -16,7 +16,7 @@ from botocore.response import StreamingBody
 from botocore.stub import Stubber
 
 from app import storage as storage_module
-from app.storage import PROBE_KEY, ObjectMissing, Storage, StorageUnavailable
+from app.storage import PROBE_KEY, ObjectMissing, Storage, StorageUnavailable, media_prefix
 
 BUCKET = "momentlens-test"
 
@@ -207,3 +207,44 @@ def test_subject_keys_carry_the_photo_the_subject_and_the_version():
         storage_module.subject_thumb_key(media_id, subject_id, 3)
         == f"{media_id}/{subject_id}_thumb_v3.webp"
     )
+
+
+def test_list_follows_every_page(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_response(
+        "list_objects_v2",
+        {
+            "Contents": [{"Key": "a/upload.jpg"}, {"Key": "a/upload_thumb.webp"}],
+            "IsTruncated": True,
+            "NextContinuationToken": "page-2",
+        },
+        {"Bucket": BUCKET, "Prefix": "a/"},
+    )
+    stubber.add_response(
+        "list_objects_v2",
+        {"Contents": [{"Key": "a/public_v1.jpg"}], "IsTruncated": False},
+        {"Bucket": BUCKET, "Prefix": "a/", "ContinuationToken": "page-2"},
+    )
+    assert storage.list("a/") == ["a/upload.jpg", "a/upload_thumb.webp", "a/public_v1.jpg"]
+
+
+def test_list_of_an_empty_prefix_is_empty(stubbed):
+    storage, stubber, _ = stubbed
+    stubber.add_response(
+        "list_objects_v2", {"IsTruncated": False}, {"Bucket": BUCKET, "Prefix": "a/"}
+    )
+    assert storage.list("a/") == []
+
+
+@pytest.mark.parametrize(("status", "code"), [(403, "AccessDenied"), (404, "NoSuchBucket")])
+def test_list_refused_is_an_outage(stubbed, status, code):
+    storage, stubber, _ = stubbed
+    stubber.add_client_error("list_objects_v2", code, http_status_code=status)
+    with pytest.raises(StorageUnavailable):
+        storage.list("a/")
+
+
+def test_the_media_prefix_ends_at_the_photos_own_folder():
+    # The slash keeps out every key of a photo whose id starts with this one's.
+    media_id = UUID("6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e")
+    assert media_prefix(media_id) == "6f1c2d3e-4a5b-4c6d-8e7f-901a2b3c4d5e/"

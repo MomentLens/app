@@ -1,4 +1,4 @@
-"""R2 for the worker: read, write and delete an object, build the worker's keys, and tell a
+"""R2 for the worker: read, write, list and delete objects, build the worker's keys, and tell a
 missing file apart from an outage.
 
 The loop treats the two differently. A missing upload is archived on its first try, because a
@@ -58,6 +58,15 @@ def subject_key(media_id: UUID, subject_id: UUID, version: int) -> str:
 def subject_thumb_key(media_id: UUID, subject_id: UUID, version: int) -> str:
     """That subject's own thumbnail at a variant_version (arch §3, D-69)."""
     return f"{media_id}/{subject_id}_thumb_v{version}.webp"
+
+
+def media_prefix(media_id: UUID) -> str:
+    """Every key under one photo, the upload keys included, for media_delete (arch §3, D-130).
+
+    The trailing slash stops at the photo's own folder, so no other photo's keys match, and no
+    `users/` or `events/` key does either.
+    """
+    return f"{media_id}/"
 
 
 class ObjectMissing(Exception):
@@ -124,6 +133,22 @@ class Storage:
             self._client.delete_object(Bucket=self._bucket, Key=key)
         except (ClientError, BotoCoreError) as error:
             raise _classify(error, key) from error
+
+    def list(self, prefix: str) -> list[str]:
+        """Every key under `prefix`, following each page R2 returns, which holds at most 1,000.
+        Raises StorageUnavailable, or boto's error."""
+        keys: list[str] = []
+        request: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
+        try:
+            while True:
+                page = self._client.list_objects_v2(**request)
+                keys.extend(item["Key"] for item in page.get("Contents", []))
+                token = page.get("NextContinuationToken")
+                if not page.get("IsTruncated") or not token:
+                    return keys
+                request["ContinuationToken"] = token
+        except (ClientError, BotoCoreError) as error:
+            raise _classify(error, prefix) from error
 
     def reachable(self) -> bool:
         """True when R2 answers the probe with NoSuchKey or the object, so it is up and accepts
