@@ -659,9 +659,10 @@ def test_archive_keeps_media_delete_on_a_live_row_and_leaves_processed_at(conn, 
 
 
 def test_archive_keeps_media_delete_whose_row_is_gone(conn, store):
-    msg_id = send(conn, store, {"job": "media_delete", "media_id": str(uuid4())})
+    gone = uuid4()
+    msg_id = send(conn, store, {"job": "media_delete", "media_id": str(gone)})
 
-    result = store.archive(msg_id, uuid4(), gone_is_done=True, deletes_media=True)
+    result = store.archive(msg_id, gone, gone_is_done=True, deletes_media=True)
 
     assert result is Archive.ARCHIVED
     assert in_archive(conn, store, msg_id)
