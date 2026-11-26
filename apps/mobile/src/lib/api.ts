@@ -28,6 +28,8 @@ import {
   ListInvitesResponse,
   ListSubEventsResponse,
   ListUploadersResponse,
+  ListPeopleResponse,
+  ListPhotoFacesResponse,
   MediaDetailResponse,
   MediaImagesResponse,
   ProfileResponse,
@@ -1006,6 +1008,36 @@ export async function deleteMedia(mediaId: string): Promise<DeleteMediaResponse>
     throw await errorFrom('DELETE /media/{mediaId}', response);
   }
   return parseBody('DELETE /media/{mediaId}', response, DeleteMediaResponse);
+}
+
+// GET /events/{eventId}/media/people, for every active role except Photographer (spec §2.5.2,
+// D-176). The named people matched in this event's published photos. The API takes the viewer
+// from the session, so a Do Not Publish subject is on this list for themselves alone.
+export async function listPeople(
+  eventId: string,
+  signal?: AbortSignal,
+): Promise<ListPeopleResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/media/people`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/media/people', response);
+  }
+  return parseBody('GET /events/{eventId}/media/people', response, ListPeopleResponse);
+}
+
+// GET /events/{eventId}/media/{mediaId}/faces, for every active role except Photographer (spec
+// §2.5.6, D-176). The Recognized Faces strip of one photo, left to right.
+export async function listPhotoFaces(
+  eventId: string,
+  mediaId: string,
+  signal?: AbortSignal,
+): Promise<ListPhotoFacesResponse> {
+  const path = `/events/${encodeURIComponent(eventId)}/media/${encodeURIComponent(mediaId)}/faces`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/media/{mediaId}/faces', response);
+  }
+  return parseBody('GET /events/{eventId}/media/{mediaId}/faces', response, ListPhotoFacesResponse);
 }
 
 // POST /media/{mediaId}/blur-regions, for an active Guest or the Admin (spec §4.11.4.4). 201 stored
