@@ -203,6 +203,25 @@ def test_a_message_resent_on_a_written_row_writes_nothing(detected):
     assert store.state.archived == {} and worker.report.calls == []
 
 
+def test_a_deleted_photo_is_done_with_nothing_read_or_written(detected):
+    loaded = detected()
+    store, storage = FakeStore(), FakeStorage()
+    media_id, _, msg_id = photo(store, storage)
+    store.state.media[media_id]["deleted_at"] = "now"
+    before = dict(store.state.media[media_id])
+    worker = make_worker(store, storage)
+
+    drain(worker)
+
+    # Nobody can restore a deleted photo, so nothing keeps its files current (D-130).
+    assert store.state.media[media_id] == before
+    assert storage.reads == [] and storage.puts == [] and storage.deletes == []
+    assert media_id not in store.state.faces and media_id not in store.state.subjects
+    assert loaded.detector.calls == 0
+    assert msg_id not in store.state.messages
+    assert store.state.archived == {} and worker.report.calls == []
+
+
 # --- fail closed while arch §6 has no threshold ----------------------------------------------
 
 

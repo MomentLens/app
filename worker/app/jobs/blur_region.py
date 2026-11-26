@@ -5,6 +5,8 @@ faces are the rows face_process stored, and matching compares their stored embed
 detects again (D-66, root invariant 10). The job reads the photo's regions as they are now, so two
 quick draws run twice and the second run carries both.
 
+- A deleted photo's message is done with nothing read: nobody can restore it, and media_delete
+  is queued behind (D-130).
 - app/variants.py decides which faces the public file and each Do Not Publish subject's file blur,
   the same function face_process uses, against the event's flagged references as they are now.
 - With a face to blur or a region, it writes the public file and every subject's file, each with
@@ -44,6 +46,9 @@ def run(ctx: JobContext, message: Message) -> None:
     row = ctx.store.media_for_job(media_id)
     if row is None:
         log.info("%s the row is gone, so the message is done (arch §5)", where)
+        return
+    if row.deleted:
+        log.info("%s the photo is deleted, so the message is done (D-130)", where)
         return
     if row.variant_version == 0:
         # No job has written the row, so it has no public files to rebuild and add_blur_region

@@ -4,7 +4,8 @@ complete_upload sends this message when the photo's upload is done (S-21's migra
 thumbnail_dims, so a photo is never published before its faces are blurred.
 
 1. Acts only on a row no job has written, variant_version 0. Any other row's message is done, so a
-   message re-sent from the archive never undoes another job's files (D-123).
+   message re-sent from the archive never undoes another job's files (D-123). So is a deleted
+   photo's: nobody can restore it, and media_delete is queued behind (D-130).
 2. Detects faces once and keeps each box and embedding. Nothing detects this photo again
    (D-66, root invariant 10).
 3. Matches every face against the accepted references active members added to this event, for
@@ -46,6 +47,9 @@ def run(ctx: JobContext, message: Message) -> None:
     row = ctx.store.media_for_job(media_id)
     if row is None:
         log.info("%s the row is gone, so the message is done (arch §5)", where)
+        return
+    if row.deleted:
+        log.info("%s the photo is deleted, so the message is done (D-130)", where)
         return
     if row.variant_version != 0:
         log.info(

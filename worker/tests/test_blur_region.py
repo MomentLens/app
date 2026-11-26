@@ -189,6 +189,22 @@ def test_a_gone_row_is_done_with_nothing_read():
     assert storage.reads == [] and storage.puts == []
 
 
+def test_a_deleted_photo_is_done_with_nothing_read_or_written():
+    store, storage = FakeStore(), FakeStorage()
+    media_id, msg_id = photo(store, storage, deleted_at="now")
+    before = dict(store.state.media[media_id])
+    worker = make_worker(store, storage)
+
+    drain(worker)
+
+    # Nobody can restore a deleted photo, so nothing keeps its files current (D-130).
+    assert store.state.media[media_id] == before
+    assert media_id not in store.state.subjects
+    assert storage.reads == [] and storage.puts == [] and storage.deletes == []
+    assert msg_id not in store.state.messages
+    assert store.state.archived == {} and worker.report.calls == []
+
+
 def test_version_0_is_done_with_nothing_read_or_written():
     store, storage = FakeStore(), FakeStorage()
     media_id, msg_id = photo(store, storage, version=0, published=False, public_key=None)
