@@ -1,8 +1,9 @@
 """The loop's order, tries, lock, failure path and stop, over fakes (arch §5, D-103, D-123)."""
 
 import threading
-from uuid import uuid4
+from uuid import UUID, uuid4
 
+import numpy as np
 import pytest
 from fakes import Crash, FakeStorage, FakeStore, drain, jpeg, make_worker
 
@@ -242,7 +243,13 @@ def test_registry_names_match_their_message_models():
     for name, job in REGISTRY.items():
         assert job.name == name
         # Each message names its row by its own field; the extra one is ignored.
-        body = {"job": name, "media_id": str(uuid4()), "face_reference_id": str(uuid4())}
+        body = {
+            "job": name,
+            "media_id": str(uuid4()),
+            "face_reference_id": str(uuid4()),
+            "subject_id": str(uuid4()),
+            "event_id": str(uuid4()),
+        }
         assert job.message.model_validate(body).job == name
 
 
@@ -271,3 +278,55 @@ def test_media_delete_on_a_live_row_past_its_tries_is_archived_and_keeps_process
     assert msg_id in store.state.archived
     assert store.state.media[media_id]["processed_at"] == "earlier"
     assert [call["kind"] for call in worker.report.calls] == ["stopped"]
+
+
+# --- a final failure of a message that names no one photo (D-178) ---------------------------
+
+
+def _event_job(unpublish):
+    from app.jobs.base import JobMessage
+
+    class EventMessage(JobMessage):
+        event_id: UUID
+
+    def run(ctx, message):
+        raise RuntimeError("boom")
+
+    return Job(name="event_job", message=EventMessage, run=run, unpublish_on_failure=unpublish)
+
+
+def test_a_final_failure_unpublishes_the_photos_the_job_names():
+    store = FakeStore()
+    event_id = uuid4()
+    named = store.add_media(event_id=event_id, variant_version=1, processed_at="earlier")
+    other = store.add_media(event_id=event_id, variant_version=1, processed_at="earlier")
+    gone = uuid4()
+    store.send({"job": "event_job", "event_id": str(event_id)})
+    worker = make_worker(store, jobs={"event_job": _event_job(lambda s, m: [named, gone])})
+
+    drain(worker)
+
+    assert store.state.media[named]["processed_at"] is None
+    assert store.state.media[other]["processed_at"] == "earlier"
+    assert len(store.state.archived) == 1
+
+
+def test_when_the_job_cannot_list_them_every_photo_with_a_face_in_the_event_is_unpublished():
+    store = FakeStore()
+    event_id = uuid4()
+    with_face = store.add_media(event_id=event_id, variant_version=1, processed_at="earlier")
+    store.add_face(with_face, 0.1, 0.1, 0.1, 0.1, np.ones(512, np.float32))
+    no_face = store.add_media(event_id=event_id, variant_version=1, processed_at="earlier")
+    elsewhere = store.add_media(variant_version=1, processed_at="earlier")
+    store.add_face(elsewhere, 0.1, 0.1, 0.1, 0.1, np.ones(512, np.float32))
+    store.send({"job": "event_job", "event_id": str(event_id)})
+
+    def broken(_store, _message):
+        raise ValueError("cannot plan")
+
+    drain(make_worker(store, jobs={"event_job": _event_job(broken)}))
+
+    assert store.state.media[with_face]["processed_at"] is None
+    assert store.state.media[no_face]["processed_at"] == "earlier"
+    assert store.state.media[elsewhere]["processed_at"] == "earlier"
+    assert len(store.state.archived) == 1

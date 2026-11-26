@@ -414,3 +414,27 @@ def test_a_missing_upload_is_archived_on_the_first_try(detected):
 
     assert store.state.archived[msg_id].read_ct == 1
     assert store.state.media[media_id]["processed_at"] is None
+
+
+def test_each_face_records_the_subject_its_files_blur_it_for(detected, threshold):
+    detected()
+    store, storage = FakeStore(), FakeStorage()
+    media_id, event_id, _ = photo(store, storage)
+    a = store.add_member(event_id, embedding(0), dnp=True)
+    store.add_member(event_id, embedding(1))
+
+    drain(make_worker(store, storage))
+
+    # Face 1 is recognised, not blurred, so it has no Do Not Publish subject (D-178).
+    assert [f["dnp_subject_id"] for f in store.state.faces[media_id]] == [a, None, None]
+
+
+def test_with_no_threshold_no_face_has_a_dnp_subject(detected):
+    detected()
+    store, storage = FakeStore(), FakeStorage()
+    media_id, event_id, _ = photo(store, storage)
+    store.add_member(event_id, embedding(0), dnp=True)
+
+    drain(make_worker(store, storage))
+
+    assert [f["dnp_subject_id"] for f in store.state.faces[media_id]] == [None, None, None]

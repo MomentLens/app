@@ -22,6 +22,8 @@ from app.ai.model import FaceModel
 from app.db import (
     BlurRegion,
     DnpSubject,
+    EventPhoto,
+    FaceUpdate,
     LockedMedia,
     MediaRow,
     NewFace,
@@ -139,6 +141,7 @@ class FakeTx:
         public_key: str,
         public_thumb_key: str,
         subjects: list[DnpSubject],
+        face_subjects: Any = (),
     ) -> bool:
         self._store.fault("finish_blur_region")
         row = self._state.media.get(media_id)
@@ -151,7 +154,52 @@ class FakeTx:
             processed_at=row["processed_at"] or "now",
         )
         self._state.subjects[media_id] = list(subjects)
+        by_id = dict(face_subjects)
+        for f in self._state.faces.get(media_id, []):
+            if f["id"] in by_id:
+                f["dnp_subject_id"] = by_id[f["id"]]
         return True
+
+    def finish_reprocess(
+        self, media_id: UUID, read_version: int, files: Any, faces: list[FaceUpdate]
+    ) -> bool:
+        self._store.fault("finish_reprocess")
+        row = self._state.media.get(media_id)
+        if (
+            row is None
+            or row["variant_version"] != read_version
+            or read_version == 0
+            or row["deleted_at"] is not None
+        ):
+            return False
+        if files is not None:
+            public_key, public_thumb_key, subjects = files
+            row.update(
+                public_key=public_key,
+                public_thumb_key=public_thumb_key,
+                variant_version=read_version + 1,
+            )
+            self._state.subjects[media_id] = list(subjects)
+        by_id = {f.id: f for f in faces}
+        for f in self._state.faces.get(media_id, []):
+            new = by_id.get(f["id"])
+            if new is not None:
+                assert new.matched_subject_id is None or new.cluster_id is None, (
+                    "face_cluster_check: a matched face has no cluster"
+                )
+                f.update(
+                    matched_subject_id=new.matched_subject_id,
+                    similarity=new.similarity,
+                    cluster_id=new.cluster_id,
+                    dnp_subject_id=new.dnp_subject_id,
+                )
+        return True
+
+    def enqueue_reprocess(self, subject_id: UUID, event_id: UUID) -> None:
+        self._store.fault("enqueue_reprocess")
+        self._store.send(
+            {"job": "reprocess", "subject_id": str(subject_id), "event_id": str(event_id)}
+        )
 
     def lock_reference(self, reference_id: UUID) -> str | None:
         row = self._state.references.get(reference_id)
@@ -265,12 +313,20 @@ class FakeStore:
         return subject_id
 
     def add_face(
-        self, media_id: UUID, x: float, y: float, width: float, height: float, embedding: Any
-    ) -> None:
-        """A stored face row, as face_process would have left it."""
+        self,
+        media_id: UUID,
+        x: float,
+        y: float,
+        width: float,
+        height: float,
+        embedding: Any,
+        **columns: Any,
+    ) -> UUID:
+        """A stored face row, as face_process would have left it. Returns its id."""
+        face_id = uuid4()
         self.state.faces.setdefault(media_id, []).append(
             {
-                "id": uuid4(),
+                "id": face_id,
                 "x": x,
                 "y": y,
                 "width": width,
@@ -279,8 +335,11 @@ class FakeStore:
                 "matched_subject_id": None,
                 "similarity": None,
                 "cluster_id": None,
+                "dnp_subject_id": None,
             }
+            | columns
         )
+        return face_id
 
     # --- the Store interface ----------------------------------------------------------------
 
@@ -366,6 +425,7 @@ class FakeStore:
         return ReferenceRow(
             id=reference_id,
             event_id=row["event_id"],
+            subject_id=row["subject_id"],
             photo_key=row["photo_key"],
             status=row["status"],
         )
@@ -376,17 +436,24 @@ class FakeStore:
 
     def faces(self, media_id: UUID) -> list[StoredFace]:
         self.fault("faces")
-        return [
-            StoredFace(
-                id=f["id"],
-                x=f["x"],
-                y=f["y"],
-                width=f["width"],
-                height=f["height"],
-                embedding=f["embedding"],
-            )
-            for f in self.state.faces.get(media_id, [])
-        ]
+        return [_stored(f) for f in self.state.faces.get(media_id, [])]
+
+    def event_photos(self, event_id: UUID) -> list[EventPhoto]:
+        self.fault("event_photos")
+        photos = []
+        for media_id, row in self.state.media.items():
+            faces = self.state.faces.get(media_id)
+            if (
+                row["event_id"] != event_id
+                or row["deleted_at"] is not None
+                or row["variant_version"] == 0
+                or not faces
+            ):
+                continue
+            media = self.media_for_job(media_id)
+            assert media is not None
+            photos.append(EventPhoto(row=media, faces=[_stored(f) for f in faces]))
+        return photos
 
     def dnp_subjects(self, media_id: UUID) -> list[DnpSubject]:
         return list(self.state.subjects.get(media_id, []))
@@ -415,6 +482,21 @@ class FakeStore:
             for r in self.state.references.values()
             if r["event_id"] == event_id and r["status"] == "accepted" and r["subject_id"] in chosen
         ]
+
+
+def _stored(f: dict[str, Any]) -> StoredFace:
+    return StoredFace(
+        id=f["id"],
+        x=f["x"],
+        y=f["y"],
+        width=f["width"],
+        height=f["height"],
+        embedding=f["embedding"],
+        matched_subject_id=f["matched_subject_id"],
+        similarity=f["similarity"],
+        cluster_id=f["cluster_id"],
+        dnp_subject_id=f.get("dnp_subject_id"),
+    )
 
 
 class FakeStorage:
