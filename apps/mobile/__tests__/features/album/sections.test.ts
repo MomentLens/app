@@ -37,6 +37,8 @@ const makePhoto = (id: string, subEventId: string, capturedAt: string): AlbumMed
   id,
   subEventId,
   capturedAt,
+  uploaderUserId: '11111111-1111-4111-8111-111111111111',
+  uploaderName: 'Test Uploader',
   uploaderRole: 'guest',
   width: 1200,
   height: 800,

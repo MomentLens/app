@@ -1810,6 +1810,8 @@ describe('GET /events/{eventId}/media', () => {
           id: mediaId,
           subEventId,
           capturedAt: new Date().toISOString(),
+          uploaderUserId: uploaderId,
+          uploaderName: 'Amina Khan',
           uploaderRole: 'guest',
           width: 1200,
           height: 800,

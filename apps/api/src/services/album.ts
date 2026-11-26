@@ -231,6 +231,9 @@ export async function listAlbum(
       id: item.id,
       subEventId: item.subEventId,
       capturedAt: toTimestamp(item.capturedAt),
+      // Placeholder until S-22's api build joins profile in list_album (D-179).
+      uploaderUserId: '00000000-0000-0000-0000-000000000000',
+      uploaderName: 'Unknown',
       uploaderRole: item.uploaderRole,
       width: item.width,
       height: item.height,
