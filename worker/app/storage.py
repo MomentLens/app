@@ -136,16 +136,20 @@ class Storage:
 
     def list(self, prefix: str) -> list[str]:
         """Every key under `prefix`, following each page R2 returns, which holds at most 1,000.
-        Raises StorageUnavailable, or boto's error."""
+        Raises StorageUnavailable, or boto's error. A truncated page with no token to the next
+        one raises RuntimeError, so the try fails instead of media_delete finishing on part of
+        the prefix."""
         keys: list[str] = []
         request: dict[str, str] = {"Bucket": self._bucket, "Prefix": prefix}
         try:
             while True:
                 page = self._client.list_objects_v2(**request)
                 keys.extend(item["Key"] for item in page.get("Contents", []))
-                token = page.get("NextContinuationToken")
-                if not page.get("IsTruncated") or not token:
+                if not page.get("IsTruncated"):
                     return keys
+                token = page.get("NextContinuationToken")
+                if not token:
+                    raise RuntimeError(f"R2 cut the list of {prefix} short with no next page")
                 request["ContinuationToken"] = token
         except (ClientError, BotoCoreError) as error:
             raise _classify(error, prefix) from error
