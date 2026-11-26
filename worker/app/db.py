@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
@@ -86,6 +86,33 @@ class StoredFace:
     width: float
     height: float
     embedding: np.ndarray
+    # Recognition among the event's active members, and the Unknown cluster (D-74).
+    matched_subject_id: UUID | None = None
+    similarity: float | None = None
+    cluster_id: UUID | None = None
+    # The Do Not Publish subject the photo's current files blur this face for (D-178).
+    dnp_subject_id: UUID | None = None
+
+
+@dataclass(frozen=True)
+class EventPhoto:
+    """A published or once-published photo in an event, with its stored faces, as reprocess
+    reads it."""
+
+    row: MediaRow
+    faces: list[StoredFace]
+
+
+@dataclass(frozen=True)
+class FaceUpdate:
+    """reprocess's rewrite of one face row: its match, its cluster and the subject its files now
+    blur it for (D-178)."""
+
+    id: UUID
+    matched_subject_id: UUID | None
+    similarity: float | None
+    cluster_id: UUID | None
+    dnp_subject_id: UUID | None
 
 
 @dataclass(frozen=True)
@@ -101,6 +128,8 @@ class NewFace:
     matched_subject_id: UUID | None
     similarity: float | None
     cluster_id: UUID | None
+    # The Do Not Publish subject the photo's files blur this face for, from variants.plan (D-178).
+    dnp_subject_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -119,6 +148,7 @@ class ReferenceRow:
 
     id: UUID
     event_id: UUID
+    subject_id: UUID
     # Built by the API (root invariant 12); the worker only reads it.
     photo_key: str
     status: str
@@ -262,8 +292,8 @@ class Tx:
             self._cur.executemany(
                 "insert into public.face"
                 " (media_id, x, y, width, height, embedding, matched_subject_id, similarity,"
-                " cluster_id)"
-                " values (%s, %s, %s, %s, %s, %s::extensions.vector, %s, %s, %s)",
+                " cluster_id, dnp_subject_id)"
+                " values (%s, %s, %s, %s, %s, %s::extensions.vector, %s, %s, %s, %s)",
                 [
                     (
                         media_id,
@@ -275,6 +305,7 @@ class Tx:
                         f.matched_subject_id,
                         f.similarity,
                         f.cluster_id,
+                        f.dnp_subject_id,
                     )
                     for f in faces
                 ],
@@ -289,6 +320,7 @@ class Tx:
         public_key: str,
         public_thumb_key: str,
         subjects: list[DnpSubject],
+        face_subjects: Sequence[tuple[UUID, UUID | None]] = (),
     ) -> bool:
         """Points the row and its subjects at a regeneration's files. False when no row matched,
         and then nothing is written.
@@ -298,8 +330,9 @@ class Tx:
         processed_at is set when it is null and kept when it is not, so a message re-sent from the
         archive republishes the photo (D-171). The photo's dnp_subject rows are replaced by
         `subjects` in the same transaction, so a subject never holds a key from another version.
-        Every file the keys name already applies every stored region, so publishing in this
-        statement is safe (root invariant 1, D-55).
+        `face_subjects` sets each face's dnp_subject_id, by face id, to the subject the new files
+        blur it for (D-178). Every file the keys name already applies every stored region, so
+        publishing in this statement is safe (root invariant 1, D-55).
         """
         self._cur.execute(
             "update public.media"
@@ -316,9 +349,81 @@ class Tx:
         )
         if self._cur.rowcount != 1:
             return False
+        self._replace_subjects(media_id, subjects)
+        self._set_dnp_subjects(media_id, face_subjects)
+        return True
+
+    def finish_reprocess(
+        self,
+        media_id: UUID,
+        read_version: int,
+        files: tuple[str, str, list[DnpSubject]] | None,
+        faces: Sequence[FaceUpdate],
+    ) -> bool:
+        """One photo's part of reprocess: its face rows' new matches and, when its blurred faces
+        changed, its new files (D-178). False when the row was deleted or rewritten since the job
+        read it, and then nothing is written.
+
+        `files` is the public key, the public thumbnail key and the subjects, at read_version + 1.
+        The row's variant_version goes up by one with them (root invariant 2) and processed_at is
+        left as it is: reprocess never publishes (arch §5). Every file is in R2 before this runs,
+        so a published row never points at a file that is not there (root invariant 1).
+        """
+        self._cur.execute(
+            "select 1 from public.media where id = %s and variant_version = %s"
+            " and variant_version > 0 and deleted_at is null for update",
+            (media_id, read_version),
+        )
+        if self._cur.fetchone() is None:
+            return False
+        if files is not None:
+            public_key, public_thumb_key, subjects = files
+            self._cur.execute(
+                "update public.media"
+                " set public_key = %s, public_thumb_key = %s, variant_version = variant_version + 1"
+                " where id = %s",
+                (public_key, public_thumb_key, media_id),
+            )
+            self._replace_subjects(media_id, subjects)
+        if faces:
+            # One statement per face sets all four columns at once, so face_cluster_check sees
+            # a matched face with no cluster rather than a step in between.
+            self._cur.executemany(
+                "update public.face"
+                " set matched_subject_id = %s, similarity = %s, cluster_id = %s,"
+                " dnp_subject_id = %s"
+                " where id = %s and media_id = %s",
+                [
+                    (
+                        f.matched_subject_id,
+                        f.similarity,
+                        f.cluster_id,
+                        f.dnp_subject_id,
+                        f.id,
+                        media_id,
+                    )
+                    for f in faces
+                ],
+            )
+        return True
+
+    def enqueue_reprocess(self, subject_id: UUID, event_id: UUID) -> None:
+        """Sends reprocess for one subject in one event through the migration's one sender,
+        public.enqueue_reprocess, so the message has one shape (S-25)."""
+        self._cur.execute("select public.enqueue_reprocess(%s, %s)", (subject_id, event_id))
+
+    def _replace_subjects(self, media_id: UUID, subjects: list[DnpSubject]) -> None:
         self._cur.execute("delete from public.dnp_subject where media_id = %s", (media_id,))
         self._insert_subjects(media_id, subjects)
-        return True
+
+    def _set_dnp_subjects(
+        self, media_id: UUID, face_subjects: Sequence[tuple[UUID, UUID | None]]
+    ) -> None:
+        if face_subjects:
+            self._cur.executemany(
+                "update public.face set dnp_subject_id = %s where id = %s and media_id = %s",
+                [(subject, face_id, media_id) for face_id, subject in face_subjects],
+            )
 
     def _insert_subjects(self, media_id: UUID, subjects: list[DnpSubject]) -> None:
         if subjects:
@@ -428,6 +533,7 @@ class Store:
         gone_is_done: bool,
         reference_id: UUID | None = None,
         deletes_media: bool = False,
+        unpublish: Sequence[UUID] = (),
     ) -> Archive:
         """A final failure. Archives the message and, in the same transaction, unpublishes the
         photo it names (D-108) or rejects the pending reference it names as `failed` (D-172).
@@ -439,6 +545,10 @@ class Store:
         that is a bug to look at, and on a deleted or gone row the files under its prefix are
         still there, so the message is kept to send again. It never unpublishes: the job writes
         no file a viewer could see wrong, and a live photo stays in the album (D-177).
+
+        `unpublish` lists more photos to take out of the album in the same transaction: a
+        reprocess message names no photo, so the loop passes every photo it found to change and
+        had not rebuilt (D-178). A deleted or gone one is passed over.
         """
         with self.transaction() as tx:
             locked = None if media_id is None else tx.lock_media(media_id)
@@ -459,6 +569,11 @@ class Store:
             rejected = reference_id is not None and status == "pending"
             if rejected:
                 tx.fail_reference(reference_id)
+            for other in unpublish:
+                row = tx.lock_media(other)
+                if row is not None and row.published and not row.deleted:
+                    tx.unpublish(other)
+                    published = True
             tx.archive_message(msg_id)
         if published:
             return Archive.UNPUBLISHED
@@ -507,17 +622,47 @@ class Store:
         """The photo's face rows as face_process stored them, through face_media_idx."""
         with self._statement() as cur:
             cur.execute(
-                "select id, x, y, width, height, embedding::text from public.face"
-                " where media_id = %s order by created_at, id",
+                f"select {_FACE_COLUMNS} from public.face f"
+                " where f.media_id = %s order by f.created_at, f.id",
                 (media_id,),
             )
             rows = cur.fetchall()
-        return [
-            StoredFace(
-                id=r[0], x=r[1], y=r[2], width=r[3], height=r[4], embedding=parse_vector(r[5])
+        return [_stored_face(r) for r in rows]
+
+    def event_photos(self, event_id: UUID) -> list[EventPhoto]:
+        """Every photo in the event that reprocess can rebuild, with its faces: not deleted
+        (D-130), written by a job, so variant_version above 0, and with at least one face. A
+        photo with no face cannot change. Scoped to the one event, so no other event's photo is
+        read (D-129)."""
+        with self._statement() as cur:
+            cur.execute(
+                "select m.id, m.event_id, m.upload_key, m.upload_thumb_key, m.public_key,"
+                " m.public_thumb_key, m.variant_version, m.processed_at is not null,"
+                f" {_FACE_COLUMNS}"
+                " from public.media m join public.face f on f.media_id = m.id"
+                " where m.event_id = %s and m.deleted_at is null and m.variant_version > 0"
+                " order by m.created_at, m.id, f.created_at, f.id",
+                (event_id,),
             )
-            for r in rows
-        ]
+            rows = cur.fetchall()
+        photos: dict[UUID, EventPhoto] = {}
+        for r in rows:
+            photo = photos.get(r[0])
+            if photo is None:
+                row = MediaRow(
+                    id=r[0],
+                    event_id=r[1],
+                    upload_key=r[2],
+                    upload_thumb_key=r[3],
+                    public_key=r[4],
+                    public_thumb_key=r[5],
+                    variant_version=r[6],
+                    published=bool(r[7]),
+                    deleted=False,
+                )
+                photo = photos[r[0]] = EventPhoto(row=row, faces=[])
+            photo.faces.append(_stored_face(r[8:]))
+        return list(photos.values())
 
     def dnp_subjects(self, media_id: UUID) -> list[DnpSubject]:
         """The photo's dnp_subject rows, so a regeneration can delete the files they replace."""
@@ -575,13 +720,16 @@ class Store:
         """The reference reference_process decides, or None when the API deleted it (D-172)."""
         with self._statement() as cur:
             cur.execute(
-                "select id, event_id, photo_key, status from public.face_reference where id = %s",
+                "select id, event_id, subject_id, photo_key, status from public.face_reference"
+                " where id = %s",
                 (reference_id,),
             )
             row = cur.fetchone()
         if row is None:
             return None
-        return ReferenceRow(id=row[0], event_id=row[1], photo_key=row[2], status=row[3])
+        return ReferenceRow(
+            id=row[0], event_id=row[1], subject_id=row[2], photo_key=row[3], status=row[4]
+        )
 
     # --- internals --------------------------------------------------------------------------
 
@@ -606,6 +754,27 @@ class Store:
     def _statement(self) -> Iterator[psycopg.Cursor[Any]]:
         with self._guard(), self._live().cursor() as cur:
             yield cur
+
+
+_FACE_COLUMNS = (
+    "f.id, f.x, f.y, f.width, f.height, f.embedding::text, f.matched_subject_id, f.similarity,"
+    " f.cluster_id, f.dnp_subject_id"
+)
+
+
+def _stored_face(r: Sequence[Any]) -> StoredFace:
+    return StoredFace(
+        id=r[0],
+        x=r[1],
+        y=r[2],
+        width=r[3],
+        height=r[4],
+        embedding=parse_vector(r[5]),
+        matched_subject_id=r[6],
+        similarity=r[7],
+        cluster_id=r[8],
+        dnp_subject_id=r[9],
+    )
 
 
 def vector_literal(embedding: np.ndarray) -> str:

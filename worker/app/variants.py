@@ -1,7 +1,7 @@
 """Which faces each of a photo's files blurs, and the one writer of those files (arch §5, D-57).
 
-`plan` is the one function that decides which faces are blurred. face_process, blur_region and,
-from S-25, reprocess all call it, so no job can blur a different set. `write` is the one place that
+`plan` is the one function that decides which faces are blurred. face_process, blur_region and
+reprocess all call it, so no job can blur a different set. `write` is the one place that
 turns a plan into files, so every regeneration applies the same faces and every stored region
 (root invariant 6).
 
@@ -19,6 +19,7 @@ turns a plan into files, so every regeneration applies the same faces and every 
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -29,7 +30,9 @@ import numpy as np
 from app import blur, storage
 from app.ai import matching
 from app.ai.matching import Reference
-from app.db import BlurRegion, DnpSubject
+from app.db import BlurRegion, DnpSubject, MediaRow
+
+log = logging.getLogger("momentlens.worker.jobs")
 
 
 class Face(Protocol):
@@ -45,6 +48,8 @@ class Face(Protocol):
 class Writer(Protocol):
     def put(self, key: str, data: bytes, content_type: str) -> None: ...
 
+    def delete(self, key: str) -> None: ...
+
 
 @dataclass(frozen=True)
 class Plan:
@@ -53,6 +58,9 @@ class Plan:
     # Each subject's own file: the faces it blurs. Ordered by subject_id, so a retry writes the
     # same keys in the same order.
     subjects: dict[UUID, tuple[int, ...]] = field(default_factory=dict)
+    # Each face's Do Not Publish subject, the one it is blurred for, or None. The job stores it as
+    # face.dnp_subject_id, and reprocess rebuilds a photo only where this differs (D-178).
+    face_subjects: tuple[UUID | None, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,10 +75,12 @@ def plan(faces: Sequence[Face], flagged: Sequence[Reference], threshold: float |
     references of subjects with Do Not Publish on in the photo's event (Store.flagged_references).
     `threshold` is arch §6's match threshold, or None while it is not measured."""
     if threshold is None:
-        return Plan(public=tuple(range(len(faces))))
+        # Every face blurred for nobody in particular, so no face has a subject (D-172).
+        return Plan(public=tuple(range(len(faces))), face_subjects=(None,) * len(faces))
     hidden: list[int] = []
     own: dict[UUID, set[int]] = {}
-    for i, match in enumerate(matching.match([f.embedding for f in faces], flagged, threshold)):
+    matches = matching.match([f.embedding for f in faces], flagged, threshold)
+    for i, match in enumerate(matches):
         if match is not None:
             hidden.append(i)
             own.setdefault(match.subject_id, set()).add(i)
@@ -80,6 +90,7 @@ def plan(faces: Sequence[Face], flagged: Sequence[Reference], threshold: float |
             subject: tuple(i for i in hidden if i not in own[subject])
             for subject in sorted(own, key=str)
         },
+        face_subjects=tuple(None if m is None else m.subject_id for m in matches),
     )
 
 
@@ -130,3 +141,23 @@ def write(
         put(subject.variant_key, subject.variant_thumb_key, blurred)
         subjects.append(subject)
     return Files(public_key, public_thumb_key, subjects)
+
+
+def delete_replaced(
+    writer: Writer, where: str, row: MediaRow, old_subjects: Sequence[DnpSubject], files: Files
+) -> None:
+    """After a regeneration commits, deletes the files the rows stopped pointing at: the row's
+    old public keys and every old subject's keys. Never an upload key, and never a key the new
+    rows point at (D-103). A failed delete is logged; the object stays until media_delete."""
+    keep = {row.upload_key, row.upload_thumb_key, files.public_key, files.public_thumb_key}
+    keep.update(k for s in files.subjects for k in (s.variant_key, s.variant_thumb_key))
+    replaced = [row.public_key, row.public_thumb_key]
+    replaced += [k for s in old_subjects for k in (s.variant_key, s.variant_thumb_key)]
+    for old in replaced:
+        if old is None or old in keep:
+            continue
+        try:
+            writer.delete(old)
+        except Exception:
+            # The rows already point at the new files. The old one stays until media_delete.
+            log.warning("%s could not delete the replaced %s", where, old, exc_info=True)
