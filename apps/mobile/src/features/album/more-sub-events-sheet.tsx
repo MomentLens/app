@@ -6,7 +6,7 @@ import { Sheet } from '@/components/ui/sheet';
 import { SheetHandle, SheetToolbar } from '@/components/ui/sheet-toolbar';
 import { formatDay } from '@/features/events/format';
 import { romanNumeral } from '@/features/schedule/schedule';
-import { useSectionCounts } from './use-album';
+import { useSectionCounts, type IdentityFilters } from './use-album';
 
 interface MoreSubEventsSheetProps {
   eventId: string;
@@ -14,7 +14,7 @@ interface MoreSubEventsSheetProps {
   // The album's own counts when no chip is active. With a chip active they cover only that
   // sub-event, so pass null and the sheet reads every section's count itself.
   albumCounts: Readonly<Record<string, number>> | null;
-  uploaderId: string | undefined;
+  identityFilters: IdentityFilters;
   now: Date;
   selectedId: string | null;
   liveSubEventId: string | null;
@@ -25,7 +25,8 @@ interface MoreSubEventsSheetProps {
 
 // Sub-events sheet (spec §2.5.2, D-148):
 // Shown when an event has more than 6 sub-events and the user taps "More ▾" in the chip row.
-// Counts follow the uploader filter, never the chip, so each row says what picking it shows.
+// Counts follow the People and Uploader filters, never the chip, so each row says what picking it
+// shows.
 export function MoreSubEventsSheet({ isOpen, onClose, ...props }: MoreSubEventsSheetProps) {
   return (
     <Sheet target={isOpen ? true : null} onClose={onClose}>
@@ -38,14 +39,14 @@ function MoreSubEventsContent({
   eventId,
   subEvents,
   albumCounts,
-  uploaderId,
+  identityFilters,
   now,
   selectedId,
   liveSubEventId,
   onSelect,
   onClose,
 }: Omit<MoreSubEventsSheetProps, 'isOpen'>) {
-  const fetched = useSectionCounts(eventId, uploaderId, albumCounts === null);
+  const fetched = useSectionCounts(eventId, identityFilters, albumCounts === null);
   const counts = useMemo(() => {
     if (albumCounts !== null) return albumCounts;
     return Object.fromEntries(
