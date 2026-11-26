@@ -986,6 +986,61 @@ def test_deleting_a_pending_reference_sends_nothing(conn, rejoin):
     assert reprocess_sent(conn, rejoin["event_id"]) == []
 
 
+def test_deleting_one_of_two_accepted_references_sends_reprocess(conn, rejoin):
+    # The faces only the deleted one matched lose their match, though another is left (D-178).
+    join(conn, rejoin)
+    other = uuid4()
+    conn.execute(
+        "insert into public.face_reference (id, subject_id, event_id, photo_key, status, embedding)"
+        " values (%s, %s, %s, %s, 'accepted', %s::extensions.vector)",
+        (
+            other,
+            rejoin["subject_id"],
+            rejoin["event_id"],
+            f"users/{rejoin['person']}/events/{rejoin['event_id']}/reference_{other}.jpg",
+            vector_literal(unit(1)),
+        ),
+    )
+    before = len(reprocess_sent(conn, rejoin["event_id"]))
+
+    outcome, _key = conn.execute(
+        "select outcome, photo_key from public.delete_face_reference(%s, %s, %s)",
+        (other, rejoin["event_id"], rejoin["person"]),
+    ).fetchone()
+
+    assert outcome == "removed"
+    sent = reprocess_sent(conn, rejoin["event_id"])
+    assert len(sent) == before + 1
+    assert sent[-1] == expected(rejoin)
+
+
+def test_deleting_a_rejected_reference_sends_nothing(conn, rejoin):
+    # A rejected reference has no embedding, so it matched nothing.
+    set_reference(conn, rejoin["reference"], "rejected")
+    join(conn, rejoin)
+
+    outcome, _key = conn.execute(
+        "select outcome, photo_key from public.delete_face_reference(%s, %s, %s)",
+        (rejoin["reference"], rejoin["event_id"], rejoin["person"]),
+    ).fetchone()
+
+    assert outcome == "removed"
+    assert reprocess_sent(conn, rejoin["event_id"]) == []
+
+
+@pytest.mark.parametrize("role", ["anon", "authenticated"])
+def test_a_client_role_cannot_send_reprocess(conn, rejoin, role):
+    # Only service_role may execute it, so no phone can queue a job for any event.
+    with conn.transaction(force_rollback=True):
+        conn.execute(sql.SQL("set local role {}").format(sql.Identifier(role)))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute(
+                "select public.enqueue_reprocess(%s, %s)",
+                (rejoin["subject_id"], rejoin["event_id"]),
+            )
+    assert reprocess_sent(conn, rejoin["event_id"]) == []
+
+
 def test_face_dnp_subject_id_is_set_null_with_its_subject(conn, media_id):
     subject_id = conn.execute(
         "insert into public.subject (user_id) values (null) returning id"
