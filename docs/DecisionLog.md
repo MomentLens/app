@@ -1855,6 +1855,14 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Why.** A subject already in a photo through a wrong match keeps their real face clear in the public file when a new reference matches it, because the subject set stays the same. Without a stored plan, the job could tell nothing apart and would rebuild every one of the subject's photos on each rejoin or extra reference. One message covers a whole event, so a single transaction loses every finished photo on a crash, and D-108's unpublish knew only a message naming one photo. Archiving on a missing object, as for the other jobs, would leave every other photo in the event unblurred. `blur_region` already plans from the current references, so a deleted reference would unblur on the next region drawn anyway.
 **Rejected.** Rebuilding every photo with a face of the subject on each run, which needs no column. One transaction for the whole event. Archiving the message when one upload object is missing. Keeping a face blurred after the reference that matched it is gone.
 **Cost.** One nullable column on `face` and a write of it in `face_process` and `blur_region`. A failed `reprocess` takes some of the subject's photos out of the album until it runs again. A wrong match that only a deleted reference caused goes away with that reference.
+**Amended (see D-180).** Photos written before arch §6 has a match threshold are not rebuilt; the dev project's photos are wiped when S-26 records it.
+
+### D-180: The dev project's photos are wiped when S-26 records the match threshold
+**Decision.** Amends D-178. Ukasha ruled on this on 2026-11-27, at S-25's done stage. When S-26 writes the match threshold into arch §6, the dev project's photos are wiped, as they were when S-21 merged. `reprocess` gets no code for photos written before the threshold.
+**Why.** A photo written with no threshold blurs every face and stores `dnp_subject_id` null on each, the same value a face nobody blurs has. Once the threshold lands, `reprocess` plans null for every face that matches no Do Not Publish subject, reads the photo as unchanged, and leaves every face blurred. `blur_region` plans from scratch, so the next region drawn on such a photo would clear every other face at once. Every photo at the demo is uploaded after S-26, so only the dev project's photos are written this way.
+**Rejected.** Marking each photo written with no threshold and rebuilding it on the next `reprocess`, which costs a column, its tests and a schema change for photos the demo never shows.
+**Cost.** The dev project loses its photos once more. A photo uploaded to the dev project before S-26 and kept would stay fully blurred until a region is drawn on it.
+**Reopen if.** Photos written before the threshold have to survive, for example if S-26 slips past the first real event.
 
 ## Open items that are not decisions yet
 
@@ -1867,4 +1875,5 @@ These are not settled and should not be treated as though they are.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
 - **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
 - **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
+- **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
