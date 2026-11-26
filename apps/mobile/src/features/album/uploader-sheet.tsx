@@ -208,17 +208,7 @@ function PeopleTab({
             <ActivityIndicator className="text-textSecondary" />
           </View>
         ) : peopleQuery.isError && !peopleQuery.data ? (
-          <View className="items-center justify-center gap-2 py-8">
-            <Text className="font-body text-body text-textSecondary">{"Couldn't load people"}</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() => void peopleQuery.refetch()}
-              hitSlop={8}>
-              <Text className="font-body font-semibold text-accentText">
-                {byPlatform('Try Again', 'Try again')}
-              </Text>
-            </Pressable>
-          </View>
+          <ListLoadFailed what="people" onRetry={() => void peopleQuery.refetch()} />
         ) : listed.length === 0 ? (
           <View className="items-center justify-center py-8">
             <Text className="text-center font-body text-body text-textSecondary">
@@ -302,6 +292,20 @@ function FindMyPhotosRow({
   );
 }
 
+// A list that has never loaded, offline most often. "No one yet" there would be a wrong answer.
+function ListLoadFailed({ what, onRetry }: { what: string; onRetry: () => void }) {
+  return (
+    <View className="items-center justify-center gap-2 py-8">
+      <Text className="font-body text-body text-textSecondary">{`Couldn't load ${what}`}</Text>
+      <Pressable accessibilityRole="button" onPress={onRetry} hitSlop={8}>
+        <Text className="font-body font-semibold text-accentText">
+          {byPlatform('Try Again', 'Try again')}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function ListCard({ children }: { children: ReactNode }) {
   return (
     <View className="overflow-hidden rounded-2xl border border-border bg-surface">{children}</View>
@@ -379,6 +383,8 @@ function UploadersTab({
           <View className="items-center justify-center py-8">
             <ActivityIndicator className="text-textSecondary" />
           </View>
+        ) : uploadersQuery.isError && !uploadersQuery.data ? (
+          <ListLoadFailed what="uploaders" onRetry={() => void uploadersQuery.refetch()} />
         ) : listed.length === 0 ? (
           <View className="items-center justify-center py-8">
             <Text className="font-body text-body text-textSecondary">
