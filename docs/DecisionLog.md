@@ -796,6 +796,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-123).** The archive and the clearing of `processed_at` commit in one transaction, and the worker reports each archived message to Sentry.
 **Amended (see D-148).** Other phones drop the photo on their next fetch of the album, which a Realtime reconnect and a return to the foreground both start. The event fetch carries no photos.
 **Amended (see D-171).** A re-sent `blur_region` sets `processed_at` when it is null and `variant_version` is above 0. `thumbnail_dims` never does, because it acts only at version 0 (D-123).
+**Amended (see D-178).** A `reprocess` message names no photo, so its archive clears `processed_at` on every photo it found to change and has not rebuilt.
 
 ### D-109: Auth rulings from S-01's read-back
 **Decision.** Amends D-35, D-94 and D-105. Ukasha ruled on each of these on 2026-09-24.
@@ -1085,6 +1086,7 @@ Written by the audit and ruled on by Ukasha the same day. D-82 and D-84 to D-87 
 **Amended (see D-163).** `DATABASE_URL` is Postgres on the server's loopback, `127.0.0.1:5432`, which `infra/supabase/setup.sh` writes. It is still a session connection, as the lock needs. A laptop's worker reaches it through the SSH tunnel in hb §13.4. GitHub's runners cannot reach it, so where the SQL test's CI job runs is Open.
 **Amended (see D-169).** OpenCV stays on 4.x for the demo. S-18 measured 5.0 against it on 2026-11-18 and found no gain.
 **Amended (see D-177).** A `media_delete` message whose row is gone deletes the photo's R2 prefix before it is deleted as done. Every other job's message for a gone row is still deleted as done with nothing else.
+**Amended (see D-178).** `reprocess` commits each photo on its own and deletes its message with the last one, and a missing upload object unpublishes that photo instead of archiving the message.
 
 ### D-124: Each platform draws the controls, and the brand stays in the content
 **Decision.** Changes hb §15's typography. Ukasha ruled on these on 2026-10-03, after a design critique of the build at `ccfa45c` on the iPhone 17 Pro simulator (iOS 26.5) and the Pixel 7 Pro (Android 16).
@@ -1842,6 +1844,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** One more archive kind in the worker. A late upload costs at most two objects of storage. S-24 filters flags on `deleted_at`.
 **Reopen if.** Retention deletion (spec §4.21) gets built, which can sweep orphaned prefixes too.
 
+### D-178: How `reprocess` finds a changed photo, commits, and fails
+**Decision.** Amends D-108, D-123 and spec §4.11.4.5. Ukasha ruled on these on 2026-11-27, at S-25's read-back.
+- A photo changes when the faces any of its files blur change, which the spec's "set of Do Not Publish subjects changed" missed. A new column, `face.dnp_subject_id`, records the subject each face is blurred for. `face_process`, `blur_region` and `reprocess` write it from `variants.plan`, and `reprocess` rebuilds only the photos where its new plan differs.
+- `reprocess` rewrites each face's `matched_subject_id`, `similarity` and `cluster_id` in the event against the active members' references, so Find My Photos finds the photos taken before a reference was added or a member rejoined.
+- `reprocess` commits each photo on its own and deletes the message with the last one. A rerun skips the photos already rebuilt.
+- When `reprocess` fails for good, its archive clears `processed_at` on every photo it found to change and has not rebuilt.
+- A photo whose upload object is missing is unpublished and reported to Sentry, and `reprocess` carries on with the event's other photos.
+- Deleting a reference that is not the last can unblur a face only that reference matched.
+**Why.** A subject already in a photo through a wrong match keeps their real face clear in the public file when a new reference matches it, because the subject set stays the same. Without a stored plan, the job could tell nothing apart and would rebuild every one of the subject's photos on each rejoin or extra reference. One message covers a whole event, so a single transaction loses every finished photo on a crash, and D-108's unpublish knew only a message naming one photo. Archiving on a missing object, as for the other jobs, would leave every other photo in the event unblurred. `blur_region` already plans from the current references, so a deleted reference would unblur on the next region drawn anyway.
+**Rejected.** Rebuilding every photo with a face of the subject on each run, which needs no column. One transaction for the whole event. Archiving the message when one upload object is missing. Keeping a face blurred after the reference that matched it is gone.
+**Cost.** One nullable column on `face` and a write of it in `face_process` and `blur_region`. A failed `reprocess` takes some of the subject's photos out of the album until it runs again. A wrong match that only a deleted reference caused goes away with that reference.
+
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
@@ -1853,5 +1867,4 @@ These are not settled and should not be treated as though they are.
 - **How the stable stack sits beside development on one server.** D-78's open item and `docs/ARCHITECTURE.md` §7. Settle it before Phase 7.
 - **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
 - **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
-- **Whether Do Not Publish blurring uses a lower match threshold than recognition.** `docs/ARCHITECTURE.md` §6, settled with S-26's measurements.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
