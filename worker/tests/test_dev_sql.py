@@ -7,8 +7,9 @@ writes and the lock.
 It skips while DATABASE_URL is unset. `--dev-sql` reads DATABASE_URL from the repo root's .env
 when it is unset and fails instead of skipping, which is how CI runs it (scripts/verify.mjs, in
 the dev-project job of .github/workflows/ci.yml). Each test makes its own pgmq queue inside the
-rolled-back transaction and never reads `jobs`. The lock test uses a random key, never the
-worker's, so a running dev server worker is not disturbed.
+rolled-back transaction and never reads `jobs` with pgmq.read. The reprocess tests count the
+messages the SQL functions sent there for their own event, which the rollback removes. The lock
+test uses a random key, never the worker's, so a running dev server worker is not disturbed.
 """
 
 import os
@@ -756,6 +757,250 @@ def test_archive_deletes_a_gone_references_message_as_done(conn, store):
 
     assert store.archive(msg_id, None, gone_is_done=True, reference_id=uuid4()) is Archive.GONE
     assert not in_archive(conn, store, msg_id)
+
+
+# The four functions that send reprocess (S-25's migration, D-84, D-178). They send to `jobs`
+# itself, so these tests count the messages there for their own throwaway event, inside the
+# rolled-back transaction, and never read the queue with pgmq.read.
+
+
+def new_user(conn):
+    return conn.execute(
+        "insert into auth.users (id, raw_user_meta_data)"
+        ' values (gen_random_uuid(), \'{"full_name": "Worker SQL test"}\') returning id'
+    ).fetchone()[0]
+
+
+@pytest.fixture
+def rejoin(conn):
+    """An event with an active Admin and a guest invite, and a removed Guest who kept one
+    reference there. Each test sets the reference's status and the event's approval mode."""
+    admin, person = new_user(conn), new_user(conn)
+    event_id = conn.execute(
+        "insert into public.event (name, type, create_request_id)"
+        " values ('Worker SQL test', 'other', gen_random_uuid()) returning id"
+    ).fetchone()[0]
+    conn.execute(
+        "insert into public.membership (event_id, user_id, role, status)"
+        " values (%s, %s, 'admin', 'active'), (%s, %s, 'guest', 'removed')",
+        (event_id, admin, event_id, person),
+    )
+    token = secrets.token_urlsafe(32)
+    conn.execute(
+        "insert into public.invite (event_id, role, token, shortcode) values (%s, 'guest', %s, %s)",
+        (
+            event_id,
+            token,
+            "".join(secrets.choice("ABCDEFGHJKMNPQRSTUVWXYZ23456789") for _ in "123456"),
+        ),
+    )
+    subject_id = conn.execute(
+        "insert into public.subject (user_id) values (%s) returning id", (person,)
+    ).fetchone()[0]
+    reference = uuid4()
+    conn.execute(
+        "insert into public.face_reference (id, subject_id, event_id, photo_key, status, embedding)"
+        " values (%s, %s, %s, %s, 'accepted', %s::extensions.vector)",
+        (
+            reference,
+            subject_id,
+            event_id,
+            f"users/{person}/events/{event_id}/reference_{reference}.jpg",
+            vector_literal(unit(0)),
+        ),
+    )
+    return {
+        "admin": admin,
+        "person": person,
+        "event_id": event_id,
+        "token": token,
+        "subject_id": subject_id,
+        "reference": reference,
+    }
+
+
+def set_reference(conn, reference, status):
+    """Turns the accepted reference pending or rejected, which its checks tie to the embedding."""
+    conn.execute(
+        "update public.face_reference set status = %s, embedding = null,"
+        " reject_reason = case when %s = 'rejected' then 'no_face' end where id = %s",
+        (status, status, reference),
+    )
+
+
+def set_mode(conn, event_id, mode):
+    conn.execute("update public.event set approval_mode = %s where id = %s", (mode, event_id))
+
+
+def reprocess_sent(conn, event_id):
+    return [
+        row[0]
+        for row in conn.execute(
+            "select message from pgmq.q_jobs"
+            " where message->>'job' = 'reprocess' and message->>'event_id' = %s order by msg_id",
+            (str(event_id),),
+        ).fetchall()
+    ]
+
+
+def join(conn, w):
+    return conn.execute(
+        "select outcome, status from public.join_event(%s, %s, null, 150)",
+        (w["person"], w["token"]),
+    ).fetchone()
+
+
+def target(conn, w):
+    """The person's pending row as Pending Approvals' accessVersion token holds it."""
+    member_id, version = conn.execute(
+        "select id, access_version from public.membership where event_id = %s and user_id = %s",
+        (w["event_id"], w["person"]),
+    ).fetchone()
+    return (
+        member_id,
+        version,
+        Jsonb([{"user_id": str(w["person"]), "id": str(member_id), "version": version}]),
+    )
+
+
+def expected(w):
+    return {"job": "reprocess", "subject_id": str(w["subject_id"]), "event_id": str(w["event_id"])}
+
+
+def test_an_active_rejoin_sends_reprocess_for_an_accepted_reference(conn, rejoin):
+    assert join(conn, rejoin) == ("rejoined", "active")
+    assert reprocess_sent(conn, rejoin["event_id"]) == [expected(rejoin)]
+
+
+@pytest.mark.parametrize("status", ["pending", "rejected"])
+def test_a_rejoin_with_no_accepted_reference_sends_nothing(conn, rejoin, status):
+    set_reference(conn, rejoin["reference"], status)
+    assert join(conn, rejoin) == ("rejoined", "active")
+    assert reprocess_sent(conn, rejoin["event_id"]) == []
+
+
+def test_a_pending_rejoin_sends_nothing_until_the_approval(conn, rejoin):
+    set_mode(conn, rejoin["event_id"], "manual")
+    assert join(conn, rejoin) == ("rejoined", "pending")
+    assert reprocess_sent(conn, rejoin["event_id"]) == [], (
+        "pending until approved (arch:membership)"
+    )
+
+    _, _, targets = target(conn, rejoin)
+    answer = conn.execute(
+        "select public.approve_requests(%s, %s, %s, 150)",
+        (rejoin["event_id"], rejoin["admin"], targets),
+    ).fetchone()[0]
+    assert answer["outcome"] == "updated"
+    assert reprocess_sent(conn, rejoin["event_id"]) == [expected(rejoin)]
+
+
+def test_an_approval_with_no_accepted_reference_sends_nothing(conn, rejoin):
+    set_mode(conn, rejoin["event_id"], "manual")
+    set_reference(conn, rejoin["reference"], "pending")
+    join(conn, rejoin)
+    _, _, targets = target(conn, rejoin)
+    conn.execute(
+        "select public.approve_requests(%s, %s, %s, 150)",
+        (rejoin["event_id"], rejoin["admin"], targets),
+    )
+    assert reprocess_sent(conn, rejoin["event_id"]) == []
+
+
+def test_a_reject_and_a_block_send_nothing(conn, rejoin):
+    set_mode(conn, rejoin["event_id"], "manual")
+    join(conn, rejoin)
+    _, _, targets = target(conn, rejoin)
+    answer = conn.execute(
+        "select public.reject_requests(%s, %s, %s)", (rejoin["event_id"], rejoin["admin"], targets)
+    ).fetchone()[0]
+    assert answer["outcome"] == "updated"
+
+    join(conn, rejoin)
+    member_id, version, _ = target(conn, rejoin)
+    answer = conn.execute(
+        "select public.block_request(%s, %s, %s, %s, %s)",
+        (rejoin["event_id"], rejoin["admin"], rejoin["person"], member_id, version),
+    ).fetchone()[0]
+    assert answer["outcome"] == "updated"
+    assert reprocess_sent(conn, rejoin["event_id"]) == []
+
+
+def test_a_switch_to_auto_sends_reprocess_for_each_admitted_subject_with_one(conn, rejoin):
+    set_mode(conn, rejoin["event_id"], "manual")
+    join(conn, rejoin)
+    # A second pending Guest with no subject at all, who is admitted and sends nothing.
+    other = new_user(conn)
+    conn.execute(
+        "insert into public.membership (event_id, user_id, role, status)"
+        " values (%s, %s, 'guest', 'pending')",
+        (rejoin["event_id"], other),
+    )
+
+    outcome, admitted = conn.execute(
+        "select outcome, admitted from public.update_event_settings(%s, null, null, 'auto', 150)",
+        (rejoin["event_id"],),
+    ).fetchone()
+
+    assert (outcome, admitted) == ("updated", 2)
+    assert reprocess_sent(conn, rejoin["event_id"]) == [expected(rejoin)]
+
+
+def test_a_settings_change_that_admits_nobody_sends_nothing(conn, rejoin):
+    join(conn, rejoin)  # active already, in an auto event
+    sent = len(reprocess_sent(conn, rejoin["event_id"]))
+    outcome, admitted = conn.execute(
+        "select outcome, admitted"
+        " from public.update_event_settings(%s, 'Renamed', null, 'auto', 150)",
+        (rejoin["event_id"],),
+    ).fetchone()
+    assert (outcome, admitted) == ("updated", 0)
+    assert len(reprocess_sent(conn, rejoin["event_id"])) == sent
+
+
+def test_deleting_the_last_accepted_reference_sends_reprocess(conn, rejoin):
+    join(conn, rejoin)
+    before = len(reprocess_sent(conn, rejoin["event_id"]))
+
+    outcome, _key = conn.execute(
+        "select outcome, photo_key from public.delete_face_reference(%s, %s, %s)",
+        (rejoin["reference"], rejoin["event_id"], rejoin["person"]),
+    ).fetchone()
+
+    assert outcome == "removed"
+    sent = reprocess_sent(conn, rejoin["event_id"])
+    assert len(sent) == before + 1, "the faces it matched lose their match (D-178)"
+    assert sent[-1] == expected(rejoin)
+
+
+def test_deleting_a_pending_reference_sends_nothing(conn, rejoin):
+    set_reference(conn, rejoin["reference"], "pending")
+    join(conn, rejoin)
+
+    outcome, _key = conn.execute(
+        "select outcome, photo_key from public.delete_face_reference(%s, %s, %s)",
+        (rejoin["reference"], rejoin["event_id"], rejoin["person"]),
+    ).fetchone()
+
+    assert outcome == "removed"
+    assert reprocess_sent(conn, rejoin["event_id"]) == []
+
+
+def test_face_dnp_subject_id_is_set_null_with_its_subject(conn, media_id):
+    subject_id = conn.execute(
+        "insert into public.subject (user_id) values (null) returning id"
+    ).fetchone()[0]
+    face_id = conn.execute(
+        "insert into public.face (media_id, embedding, x, y, width, height, dnp_subject_id)"
+        " values (%s, %s::extensions.vector, 0.1, 0.1, 0.2, 0.2, %s) returning id",
+        (media_id, vector_literal(unit(0)), subject_id),
+    ).fetchone()[0]
+
+    conn.execute("delete from public.subject where id = %s", (subject_id,))
+
+    assert conn.execute(
+        "select dnp_subject_id from public.face where id = %s", (face_id,)
+    ).fetchone() == (None,)
 
 
 def test_a_second_worker_cannot_take_the_lock(database_url):
