@@ -294,6 +294,7 @@ def test_the_row_write_and_the_message_delete_commit_together(conn, store, media
 
 
 def test_media_for_job_returns_a_soft_deleted_row_and_none_for_a_gone_one(conn, store, media_id):
+    assert store.media_for_job(media_id).deleted is False
     conn.execute("update public.media set deleted_at = now() where id = %s", (media_id,))
 
     row = store.media_for_job(media_id)
@@ -310,7 +311,70 @@ def test_media_for_job_returns_a_soft_deleted_row_and_none_for_a_gone_one(conn, 
         0,
     )
     assert (row.public_key, row.public_thumb_key, row.published) == (None, None, False)
+    assert row.deleted is True
     assert store.media_for_job(uuid4()) is None
+
+
+def neighbour_of(conn, media_id):
+    """A second photo in the same event, by the same uploader, with its own keys and hash."""
+    other = uuid4()
+    conn.execute(
+        "insert into public.media (id, event_id, sub_event_id, uploader_user_id,"
+        " uploader_role_at_upload, captured_at, content_hash, upload_key, upload_thumb_key,"
+        " uploaded_at, size_bytes)"
+        " select %s, event_id, sub_event_id, uploader_user_id, uploader_role_at_upload,"
+        " captured_at, %s, %s, %s, uploaded_at, size_bytes from public.media where id = %s",
+        (
+            other,
+            uuid4().hex + uuid4().hex,
+            f"{other}/upload.jpg",
+            f"{other}/upload_thumb.webp",
+            media_id,
+        ),
+    )
+    return other
+
+
+def row_counts(conn, media_id):
+    return tuple(
+        conn.execute(
+            f"select count(*) from public.{table} where media_id = %s",  # noqa: S608
+            (media_id,),
+        ).fetchone()[0]
+        for table in ("face", "dnp_subject", "manual_blur_region")
+    )
+
+
+def test_delete_media_rows_deletes_the_photos_rows_and_leaves_a_neighbours(conn, store, media_id):
+    neighbour = neighbour_of(conn, media_id)
+    subject_id = conn.execute(
+        "insert into public.subject (user_id) values (null) returning id"
+    ).fetchone()[0]
+    for m in (media_id, neighbour):
+        with store.transaction() as tx:
+            assert tx.finish_face_process(
+                m,
+                640,
+                480,
+                f"{m}/public_v1.jpg",
+                f"{m}/public_thumb_v1.webp",
+                [face(0, subject_id, 0.93), face(1)],
+                [subject_row(m, subject_id, 1)],
+            )
+        add_region(conn, m, 0.5, 0.5, 0.25, 0.25)
+    conn.execute("update public.media set deleted_at = now() where id = %s", (media_id,))
+
+    with store.transaction() as tx:
+        assert tx.delete_media_rows(media_id) == (2, 1, 1)
+
+    assert row_counts(conn, media_id) == (0, 0, 0)
+    assert row_counts(conn, neighbour) == (2, 1, 1)
+    # The media row stays, with deleted_at and its hash (D-130).
+    kept = conn.execute(
+        "select deleted_at is not null, content_hash is not null from public.media where id = %s",
+        (media_id,),
+    ).fetchone()
+    assert kept == (True, True)
 
 
 def publish(conn, media_id, version=1):
@@ -568,6 +632,39 @@ def test_archive_deletes_a_gone_rows_message_as_done(conn, store):
 
     assert not in_archive(conn, store, msg_id)
     assert store.read(120) is None
+
+
+def test_archive_deletes_a_deleted_photos_message_as_done(conn, store, media_id):
+    conn.execute(
+        "update public.media set processed_at = now(), deleted_at = now() where id = %s",
+        (media_id,),
+    )
+    msg_id = send(conn, store, {"job": "blur_region", "media_id": str(media_id)})
+
+    assert store.archive(msg_id, media_id, gone_is_done=True) is Archive.DELETED
+
+    assert not in_archive(conn, store, msg_id)
+    assert store.read(120) is None
+
+
+def test_archive_keeps_media_delete_on_a_live_row_and_leaves_processed_at(conn, store, media_id):
+    conn.execute("update public.media set processed_at = now() where id = %s", (media_id,))
+    msg_id = send(conn, store, {"job": "media_delete", "media_id": str(media_id)})
+
+    result = store.archive(msg_id, media_id, gone_is_done=True, deletes_media=True)
+
+    assert result is Archive.ARCHIVED
+    assert in_archive(conn, store, msg_id)
+    assert media_row(conn, media_id)[5] is True
+
+
+def test_archive_keeps_media_delete_whose_row_is_gone(conn, store):
+    msg_id = send(conn, store, {"job": "media_delete", "media_id": str(uuid4())})
+
+    result = store.archive(msg_id, uuid4(), gone_is_done=True, deletes_media=True)
+
+    assert result is Archive.ARCHIVED
+    assert in_archive(conn, store, msg_id)
 
 
 def test_archive_keeps_an_unknown_jobs_message_whose_row_is_gone(conn, store):
