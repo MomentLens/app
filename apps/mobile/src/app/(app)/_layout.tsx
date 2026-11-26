@@ -67,6 +67,11 @@ export default function AppLayout() {
         name="blur/[eventId]/[mediaId]"
         options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
       />
+      {/* Development builds only; S-22 deletes it (D-176). */}
+      <Stack.Screen
+        name="dev/faces/[eventId]/[mediaId]"
+        options={{ presentation: 'fullScreenModal' }}
+      />
       <Stack.Screen name="join/confirm" />
       <Stack.Screen
         name="scan-venue/[eventId]"
