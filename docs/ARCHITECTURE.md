@@ -395,7 +395,7 @@ S-18a's warm-up job, `thumbnail_dims`, set `processed_at` without blurring anyth
 
 ## 6. Similarity thresholds
 
-**Not measured.** Never use a number from any spec draft (Handbook §11.4). Until a value is recorded here, the worker fails closed: it blurs every detected face in every file it writes, subjects' own files included, and records no match and no Unknown cluster on `face` rows (D-172). Tests set a threshold in their own fixtures, never in configuration (D-104).
+**Not measured.** Never use a number from any spec draft (Handbook §11.4). Until a value is recorded here, the worker fails closed: it blurs every detected face in every file it writes, subjects' own files included, and records no match and no Unknown cluster on `face` rows (D-172). Such a photo stores `dnp_subject_id` null on every face, so `reprocess` never rebuilds it once a threshold is recorded; the dev project's photos are wiped then (D-180). Tests set a threshold in their own fixtures, never in configuration (D-104).
 
 | Threshold | Used by | Value | Measured on | Date |
 |---|---|---|---|---|
