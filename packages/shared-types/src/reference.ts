@@ -105,8 +105,9 @@ export type CreateReferenceUploadResponse = z.infer<typeof CreateReferenceUpload
 
 /**
  * DELETE /events/{eventId}/references/{referenceId}, with no body. It deletes the row, with its
- * embedding, then the object, and answers 200 with `ListReferencesResponse`. Until S-25 it
- * enqueues no `reprocess`, and until S-29 it does not refuse the last accepted reference (D-172).
+ * embedding, then the object, and answers 200 with `ListReferencesResponse`. Deleting an accepted
+ * reference enqueues `reprocess` for the caller in this event, in the same transaction (D-178).
+ * Until S-29 it does not refuse the last accepted reference (D-172).
  *
  * After the refusals on `ListReferencesResponse`, 404 `not_found` for an unknown reference, one
  * already deleted, or one of another person or another event. The app treats a 404 on a delete
