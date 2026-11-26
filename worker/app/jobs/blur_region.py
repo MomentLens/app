@@ -10,7 +10,8 @@ quick draws run twice and the second run carries both.
 - app/variants.py decides which faces the public file and each Do Not Publish subject's file blur,
   the same function face_process uses, against the event's flagged references as they are now.
 - With a face to blur or a region, it writes the public file and every subject's file, each with
-  its thumbnail, at the next version's keys, then points the row and the subject rows at them. A
+  its thumbnail, at the next version's keys, then points the row and the subject rows at them,
+  and sets each face's dnp_subject_id to the subject the new files blur it for (D-178). A
   retry before the commit rewrites the same keys, which no row points at yet (D-103).
 - With neither, it points the public keys back at the upload keys, keeps no subject and writes no
   object (arch §3, root invariant 13). While arch §6 has no match threshold every face is one to
@@ -89,6 +90,7 @@ def run(ctx: JobContext, message: Message) -> None:
             files.public_key,
             files.public_thumb_key,
             files.subjects,
+            [(f.id, s) for f, s in zip(stored, chosen.face_subjects, strict=True)],
         )
 
     ctx.commit(write)
@@ -114,18 +116,7 @@ def run(ctx: JobContext, message: Message) -> None:
         "" if row.published else ", republished (D-171)",
     )
 
-    keep = {row.upload_key, row.upload_thumb_key, files.public_key, files.public_thumb_key}
-    keep.update(k for s in files.subjects for k in (s.variant_key, s.variant_thumb_key))
-    replaced = [row.public_key, row.public_thumb_key]
-    replaced += [k for s in old_subjects for k in (s.variant_key, s.variant_thumb_key)]
-    for old in replaced:
-        if old is None or old in keep:
-            continue
-        try:
-            ctx.storage.delete(old)
-        except Exception:
-            # The rows already point at the new files. The old one stays until media_delete.
-            log.warning("%s could not delete the replaced %s", where, old, exc_info=True)
+    variants.delete_replaced(ctx.storage, where, row, old_subjects, files)
 
 
 JOB = Job(name=NAME, message=Message, run=run)

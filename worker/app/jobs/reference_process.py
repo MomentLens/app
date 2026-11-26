@@ -11,8 +11,9 @@ The decision commits with the message's delete. A row the API deleted, or one al
 means the message is done. A final failure sets the row `rejected` with `failed` in the archive's
 transaction, so the app stops polling (app/db.py, Store.archive).
 
-From S-25 an accepted reference then enqueues `reprocess` for its subject in its event. S-20
-enqueues nothing, because the worker would archive a job it does not have (D-172).
+An accepted reference sends `reprocess` for its subject in its event in the same transaction, so
+the photos already in the event are matched against it and blurred where Do Not Publish is on
+(spec §4.11.4.5, D-141). A rejected one sends nothing: it changes no match.
 """
 
 from __future__ import annotations
@@ -58,6 +59,8 @@ def run(ctx: JobContext, message: Message) -> None:
     def write(tx: Tx) -> None:
         nonlocal written
         written = tx.decide_reference(row.id, status, reason, embedding)
+        if written and status == "accepted":
+            tx.enqueue_reprocess(row.subject_id, row.event_id)
 
     ctx.commit(write)
     if not written:

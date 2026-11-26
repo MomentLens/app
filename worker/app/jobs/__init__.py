@@ -4,12 +4,18 @@ thumbnail_dims is gone: face_process replaced it at S-21, so the two never run o
 (D-72). A thumbnail_dims message left in the queue is archived as a job the worker does not have.
 """
 
-from app.jobs import blur_region, face_process, media_delete, reference_process
+from app.jobs import blur_region, face_process, media_delete, reference_process, reprocess
 from app.jobs.base import Job
 
 REGISTRY: dict[str, Job] = {
     job.name: job
-    for job in (face_process.JOB, blur_region.JOB, reference_process.JOB, media_delete.JOB)
+    for job in (
+        face_process.JOB,
+        blur_region.JOB,
+        reference_process.JOB,
+        reprocess.JOB,
+        media_delete.JOB,
+    )
 }
 
 
