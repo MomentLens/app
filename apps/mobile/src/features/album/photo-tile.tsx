@@ -9,46 +9,40 @@ interface PhotoTileProps {
   mediaId: string;
   image?: MediaImage;
   onError: (mediaId: string) => void;
-  onLongPress?: (mediaId: string) => void;
+  onPress: (mediaId: string) => void;
 }
 
 // 300px WebP thumbnail, center-cropped to square on purpose (spec §4.13, D-105).
 // Uniform square height allows FlashList v2 to compute content height without measuring (hb §16).
 // The app caches under cacheKey ({objectKey}#v{variant_version}), never url (root invariant 2, D-86).
 // A tile the serving endpoint left out never reaches here: sections.ts drops it (D-148).
-// Tapping opens nothing until S-22 (D-148). A development build opens Blur an Area on a long press
-// (S-19), which S-22 replaces with the photo view's Blur button.
+// A tap opens the single photo view, where Blur a region now lives (spec §2.5.6, D-179). Home's grid
+// has no long press (D-160).
 export const PhotoTile = memo(function PhotoTile({
   mediaId,
   image,
   onError,
-  onLongPress,
+  onPress,
 }: PhotoTileProps) {
   if (!image) {
     return <View className="aspect-square w-full bg-surfaceMuted" />;
   }
 
-  const tile = (
-    <View className="aspect-square w-full overflow-hidden bg-surfaceMuted">
+  return (
+    <Pressable
+      onPress={() => onPress(mediaId)}
+      accessibilityRole="button"
+      accessibilityLabel="Event photo"
+      accessibilityHint="Opens the photo"
+      className="aspect-square w-full overflow-hidden bg-surfaceMuted active:opacity-80">
       <Image
         source={presignedSource(image)}
         onError={() => onError(mediaId)}
         contentFit="cover"
         transition={150}
-        accessibilityRole="image"
-        accessibilityLabel="Event photo"
+        accessibilityIgnoresInvertColors
         style={StyleSheet.absoluteFill}
       />
-    </View>
-  );
-  if (!onLongPress) return tile;
-  return (
-    <Pressable
-      onLongPress={() => onLongPress(mediaId)}
-      accessibilityHint="Long press to blur an area"
-      accessibilityActions={[{ name: 'longpress', label: 'Blur an area' }]}
-      onAccessibilityAction={() => onLongPress(mediaId)}>
-      {tile}
     </Pressable>
   );
 });
