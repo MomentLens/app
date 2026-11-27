@@ -31,6 +31,13 @@ The rules (D-173):
   photo. Two faces from different bench photos are left out: they could be the same guest.
 - Detection score: keep 0.5 unless a team face scores under it or a non-face scores at or over
   it. The second needs eyes, so every detection between 0.3 and 0.7 is saved as a crop.
+
+Two checks do not rest on the picked values, since a wrong label moves the pick to fit it:
+- A genuine pair at or under the highest impostor score fails the run. A guest labelled as a team
+  member, because their face was larger, lands here.
+- A different-person pair over the median same-person pair fails the run, and the five highest
+  are printed with their photos. One person on both sides, such as a team member in a bench photo,
+  lands here.
 """
 
 from __future__ import annotations
@@ -123,11 +130,17 @@ class Result:
     team_cross_false_matches: int
     highest_impostor: float
     rank_1_errors: list[LabelledFace]
+    # Genuine pairs at or under the highest impostor score. A face labelled with the wrong person,
+    # such as a guest larger than the team member, lands here, since the match pick fits it.
+    genuine_overlaps: list[Miss]
     cluster_threshold: float
     highest_different_person_pair: float
     different_person_pairs: int
+    # The highest different-person pairs, with what each face is, for a person to look at.
+    top_different_pairs: list[tuple[float, str, str]]
     same_person_pairs: int
     same_person_pairs_split: int
+    median_same_person_pair: float
     notes: list[str] = field(default_factory=list)
 
 
@@ -309,6 +322,32 @@ def _within(vectors: Sequence[np.ndarray]) -> np.ndarray:
     return matrix[np.triu_indices(len(vectors), k=1)]
 
 
+def _top_pairs(
+    blocks: Sequence[
+        tuple[Sequence[str], Sequence[np.ndarray], Sequence[str], Sequence[np.ndarray]]
+    ],
+    within: Sequence[tuple[Sequence[str], Sequence[np.ndarray]]],
+    count: int,
+) -> list[tuple[float, str, str]]:
+    """The `count` highest cosines among the pairs `_pairs` and `_within` score, each with the
+    labels of its two faces."""
+    pairs: list[tuple[float, str, str]] = []
+    for labels_a, a, labels_b, b in blocks:
+        if a and b:
+            matrix = _unit(a) @ _unit(b).T
+            rows, cols = np.unravel_index(np.argsort(matrix, axis=None)[-count:], matrix.shape)
+            for i, j in zip(rows, cols, strict=True):
+                pairs.append((float(matrix[i, j]), labels_a[i], labels_b[j]))
+    for labels, vectors in within:
+        if len(vectors) >= 2:
+            matrix = _unit(vectors) @ _unit(vectors).T
+            rows, cols = np.triu_indices(len(vectors), k=1)
+            for k in np.argsort(matrix[rows, cols])[-count:]:
+                i, j = rows[k], cols[k]
+                pairs.append((float(matrix[i, j]), labels[i], labels[j]))
+    return sorted(pairs, reverse=True)[:count]
+
+
 def analyse(
     team_faces: Sequence[LabelledFace],
     bench: dict[str, list[DetectedFace]],
@@ -360,19 +399,43 @@ def analyse(
             if m is None or m.subject_id != _subject(e.person)
         ]
 
+    # A check that does not rest on the picked value: no genuine pair may score at or under an
+    # impostor. The zero-miss check above passes whatever the labels, because the pick fits them.
+    highest_impostor = max(flat_bench + flat_cross, default=float("nan"))
+    overlaps: list[Miss] = []
+    if not np.isnan(highest_impostor):
+        above = float(np.nextafter(np.float64(highest_impostor), np.inf))
+        overlaps = genuine_misses(team_faces, refs, above, detection_score=detection_score)
+
     # Clustering: face against face.
     people = sorted({f.person for f in stored})
     by_person = {p: [f.face.embedding for f in stored if f.person == p] for p in people}
+    names = {p: [f"{f.photo} ({p})" for f in stored if f.person == p] for p in people}
+    bench_kept = {
+        name: [f for f in faces if f.score >= detection_score] for name, faces in bench.items()
+    }
+    bench_names = [
+        f"bench {name} face {i}" for name, fs in bench_kept.items() for i in range(len(fs))
+    ]
     different: list[np.ndarray] = []
     same: list[np.ndarray] = []
+    blocks = []
     for i, p in enumerate(people):
         same.append(_within(by_person[p]))
         for q in people[i + 1 :]:
             different.append(_pairs(by_person[p], by_person[q]))
+            blocks.append((names[p], by_person[p], names[q], by_person[q]))
     team_embeddings = [f.face.embedding for f in stored]
+    team_names = [name for p in people for name in names[p]]
+    team_in_order = [e for p in people for e in by_person[p]]
     different.append(_pairs(team_embeddings, bench_embeddings))
-    for faces in bench.values():
-        different.append(_within([f.embedding for f in faces if f.score >= detection_score]))
+    blocks.append((team_names, team_in_order, bench_names, bench_embeddings))
+    within = []
+    for name, faces in bench_kept.items():
+        different.append(_within([f.embedding for f in faces]))
+        within.append(
+            ([f"bench {name} face {i}" for i in range(len(faces))], [f.embedding for f in faces])
+        )
     different_all = np.concatenate(different) if different else np.zeros(0, np.float32)
     same_all = np.concatenate(same) if same else np.zeros(0, np.float32)
     cluster_threshold = pick_cluster_threshold(different_all.tolist())
@@ -390,13 +453,16 @@ def analyse(
         bench_faces_matched=int(matched_bench_faces),
         team_cross_pairs=len(flat_cross),
         team_cross_false_matches=sum(s >= match_threshold for s in flat_cross),
-        highest_impostor=max(flat_bench + flat_cross, default=float("nan")),
+        highest_impostor=highest_impostor,
         rank_1_errors=rank_1_errors,
+        genuine_overlaps=overlaps,
         cluster_threshold=cluster_threshold,
         highest_different_person_pair=float(different_all.max()),
         different_person_pairs=int(different_all.size),
+        top_different_pairs=_top_pairs(blocks, within, 5),
         same_person_pairs=int(same_all.size),
         same_person_pairs_split=int((same_all < cluster_threshold).sum()),
+        median_same_person_pair=float(np.median(same_all)) if same_all.size else float("nan"),
         notes=notes,
     )
 
@@ -406,6 +472,8 @@ def analyse(
 
 def check_outside_repo(team_dir: Path) -> None:
     """The team's photos stay off git (card Q5), so the folder may not sit in any work tree."""
+    if not team_dir.is_dir():
+        raise CalibrationError(f"{team_dir} is not a folder")
     try:
         inside = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -544,6 +612,13 @@ def report(result: Result, extras: list[str], detection_misses: list[str], crops
     print(f"      highest impostor score {result.highest_impostor:.4f}")
     for f in result.rank_1_errors:
         print(f"rank1 {f.photo} ({f.person}) is closest to another person's selfie")
+    for m in result.genuine_overlaps:
+        ok = False
+        print(
+            f"FAIL  {m.face.photo} ({m.face.person}) against {m.reference.photo} scores "
+            f"{m.similarity:.4f}, no higher than an impostor. Check its crop: a wrong label, such "
+            "as a guest larger than the team member, or D-173's reopen case"
+        )
 
     print("\n== Unknown clustering ==")
     print(f"value {result.cluster_threshold:.2f}")
@@ -551,6 +626,15 @@ def report(result: Result, extras: list[str], detection_misses: list[str], crops
         f"      highest different-person pair {result.highest_different_person_pair:.4f} over "
         f"{result.different_person_pairs} pairs"
     )
+    for score, a, b in result.top_different_pairs:
+        print(f"      {score:.4f}  {a}  vs  {b}")
+    if result.highest_different_person_pair > result.median_same_person_pair:
+        ok = False
+        print(
+            f"FAIL  the highest different-person pair scores over the median same-person pair "
+            f"({result.median_same_person_pair:.4f}). Look at the pairs above: one face may be "
+            "the same person twice, such as a team member in a bench photo or a mirror"
+        )
     print(
         f"      {result.same_person_pairs_split} of {result.same_person_pairs} same-person pairs "
         "fall under it, so one person can split into several clusters"
