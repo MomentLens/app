@@ -83,7 +83,6 @@ class FakeEvents implements EventStore {
 class FakeAlbumStore implements AlbumStore {
   rows: (AlbumMediaRow & {
     eventId: string;
-    uploaderUserId: string;
     uploadedAt: string | null;
     processedAt: string | null;
     deletedAt: string | null;
@@ -145,6 +144,8 @@ class FakeAlbumStore implements AlbumStore {
         id: r.id,
         subEventId: r.subEventId,
         capturedAt: r.capturedAt,
+        uploaderUserId: r.uploaderUserId,
+        uploaderName: r.uploaderName,
         uploaderRole: r.uploaderRole,
         width: r.width,
         height: r.height,
@@ -272,6 +273,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         eventId,
         subEventId: subEventId1,
         uploaderUserId: GUEST,
+        uploaderName: 'Guest Uploader',
         uploaderRole: 'guest',
         capturedAt: '2026-10-06T10:00:00.000Z',
         startsAt: '2026-10-06T09:00:00.000Z',
@@ -288,6 +290,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         eventId: otherEventId,
         subEventId: subEventId1,
         uploaderUserId: GUEST,
+        uploaderName: 'Guest Uploader',
         uploaderRole: 'guest',
         capturedAt: '2026-10-06T10:00:00.000Z',
         startsAt: '2026-10-06T09:00:00.000Z',
@@ -304,6 +307,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         eventId,
         subEventId: subEventId1,
         uploaderUserId: ADMIN,
+        uploaderName: 'Admin Uploader',
         uploaderRole: 'admin',
         capturedAt: '2026-10-06T10:00:00.000Z',
         startsAt: '2026-10-06T09:00:00.000Z',
@@ -320,6 +324,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         eventId,
         subEventId: subEventId1,
         uploaderUserId: GUEST,
+        uploaderName: 'Guest Uploader',
         uploaderRole: 'guest',
         capturedAt: '2026-10-06T10:00:00.000Z',
         startsAt: '2026-10-06T09:00:00.000Z',
@@ -336,6 +341,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         eventId,
         subEventId: subEventId1,
         uploaderUserId: GUEST,
+        uploaderName: 'Guest Uploader',
         uploaderRole: 'guest',
         capturedAt: '2026-10-06T10:00:00.000Z',
         startsAt: '2026-10-06T09:00:00.000Z',
@@ -352,6 +358,7 @@ describe('GET /events/:eventId/media (Album)', () => {
         eventId,
         subEventId: subEventId1,
         uploaderUserId: GUEST,
+        uploaderName: 'Guest Uploader',
         uploaderRole: 'guest',
         capturedAt: '2026-10-06T10:00:00.000Z',
         startsAt: '2026-10-06T09:00:00.000Z',
@@ -370,6 +377,8 @@ describe('GET /events/:eventId/media (Album)', () => {
     expect(res.status).toBe(200);
     const body = ListAlbumResponse.parse(await res.json());
     expect(body.media.map((m) => m.id)).toEqual([publishedId]);
+    expect(body.media[0]?.uploaderUserId).toBe(GUEST);
+    expect(body.media[0]?.uploaderName).toBe('Guest Uploader');
     expect(body.sectionCounts).toEqual([{ subEventId: subEventId1, count: 1 }]);
     expect(body.nextCursor).toBeNull();
   });
@@ -384,6 +393,7 @@ describe('GET /events/:eventId/media (Album)', () => {
       eventId,
       subEventId: subEventId1,
       uploaderUserId: GUEST,
+      uploaderName: 'Guest Uploader',
       uploaderRole: 'guest' as const,
       capturedAt:
         i === 49 ? lastCapturedAt : `2026-10-06T11:${String(59 - i).padStart(2, '0')}:00+00:00`,
