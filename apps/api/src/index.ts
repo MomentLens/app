@@ -15,6 +15,7 @@ import { createInviteManagementStore, createInviteStore } from './services/invit
 import { createJoinRequestStore } from './services/join-requests';
 import { createMediaStore } from './services/media';
 import { createMediaImagesStore } from './services/media-images';
+import { createPhotoFlagStore } from './services/photo-flags';
 import { createConsentStore, createFindProfile, createSetAvatar } from './services/profiles';
 import { createReferenceStore } from './services/references';
 import { createSubEventStore } from './services/sub-events';
@@ -77,6 +78,7 @@ createApp({
   media: createMediaStore(sql),
   album: createAlbumStore(sql),
   mediaImages: createMediaImagesStore(sql),
+  photoFlags: createPhotoFlagStore(sql),
   blurRegions: createBlurRegionStore(sql),
   references: createReferenceStore(sql),
   presignGet: r2.presignGet,
