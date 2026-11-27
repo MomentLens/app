@@ -275,7 +275,7 @@ export function PhotoViewerScreen({
               <Action
                 label={flagged ? 'Flagged' : 'Flag'}
                 glyph={flagged ? GLYPH.flagged : GLYPH.flag}
-                disabled={flagged || !detail || viewer.flagging}
+                disabled={flagged || viewer.detailLoading || viewer.flagging}
                 onPress={askToFlag}
               />
             ) : null}
