@@ -37,6 +37,12 @@ export const GLYPH = {
   // The album's state on Home, in Manage and in My Media's banner (D-161).
   albumOpen: { ios: 'lock.open', android: 'lock_open' },
   albumClosed: { ios: 'lock', android: 'lock' },
+  // The single photo view's action bar, blur notice and self-visible marker (spec §2.5.6).
+  flag: { ios: 'flag', android: 'flag' },
+  flagged: { ios: 'flag.fill', android: 'flag' },
+  blur: { ios: 'person.and.background.dotted', android: 'blur_on' },
+  info: { ios: 'info.circle', android: 'info' },
+  ownVariant: { ios: 'lock.fill', android: 'lock' },
 } as const satisfies Record<string, GlyphName>;
 
 interface GlyphProps {
