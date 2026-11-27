@@ -13,9 +13,11 @@ import {
   CreateCoverUploadResponse,
   CreateReferenceUploadResponse,
   CreateEventResponse,
+  DeleteMediaResponse,
   ErrorResponse,
   GetEventResponse,
   GetEventSettingsResponse,
+  FlagPhotoResponse,
   ForceVerifyAttendeeResponse,
   HealthResponse,
   JoinEventResponse,
@@ -26,6 +28,7 @@ import {
   ListInvitesResponse,
   ListSubEventsResponse,
   ListUploadersResponse,
+  MediaDetailResponse,
   MediaImagesResponse,
   ProfileResponse,
   MediaStatusResponse,
@@ -965,6 +968,44 @@ export async function listUploaders(
     throw await errorFrom('GET /events/{eventId}/media/uploaders', response);
   }
   return parseBody('GET /events/{eventId}/media/uploaders', response, ListUploadersResponse);
+}
+
+// GET /media/{mediaId}: whether the file this viewer gets has a Do Not Publish face or a blur
+// region blurred in it, and whether they flagged the photo, for an active Guest or the Admin
+// (D-179). It names no subject and no box.
+export async function getMediaDetail(
+  mediaId: string,
+  signal?: AbortSignal,
+): Promise<MediaDetailResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /media/{mediaId}', response);
+  }
+  return parseBody('GET /media/{mediaId}', response, MediaDetailResponse);
+}
+
+// POST /media/{mediaId}/flags, for an active Guest only. 201 stored the flag and 200 answered a
+// repeat, which never reopens a kept flag, so a resend is safe (D-179).
+export async function flagPhoto(mediaId: string): Promise<FlagPhotoResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}/flags`;
+  const response = await authenticatedRequest(path, { method: 'POST' });
+  if (response.status !== 201 && response.status !== 200) {
+    throw await errorFrom('POST /media/{mediaId}/flags', response);
+  }
+  return parseBody('POST /media/{mediaId}/flags', response, FlagPhotoResponse);
+}
+
+// DELETE /media/{mediaId}, for the photo's uploader or the event's Admin. Permanent (D-130). A
+// repeat by either of them answers 200 with the first deletedAt and enqueues nothing, so a resend
+// after a lost answer is safe (D-160, D-179).
+export async function deleteMedia(mediaId: string): Promise<DeleteMediaResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}`;
+  const response = await authenticatedRequest(path, { method: 'DELETE' });
+  if (response.status !== 200) {
+    throw await errorFrom('DELETE /media/{mediaId}', response);
+  }
+  return parseBody('DELETE /media/{mediaId}', response, DeleteMediaResponse);
 }
 
 // POST /media/{mediaId}/blur-regions, for an active Guest or the Admin (spec §4.11.4.4). 201 stored
