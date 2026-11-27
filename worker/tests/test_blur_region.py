@@ -3,6 +3,7 @@
 from uuid import uuid4
 
 import numpy as np
+import pytest
 from fakes import FakeStorage, FakeStore, drain, face_model, make_worker, noise_jpeg
 
 from app import blur, images
@@ -10,6 +11,15 @@ from app.ai import matching, model
 from app.db import DnpSubject
 from app.jobs import REGISTRY
 from app.storage import StorageUnavailable
+
+
+@pytest.fixture(autouse=True)
+def fail_closed(monkeypatch):
+    """Both thresholds None unless a test sets its own, so no test here runs on the worker's
+    provisional values (D-104, D-182)."""
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", None)
+    monkeypatch.setattr(matching, "CLUSTER_THRESHOLD", None)
+
 
 # 640x512 with a region on 16-pixel boundaries: JPEG codes 16x16 blocks, so every block outside
 # the region gets the same input as an unblurred encode. The decoder smooths colour across block
@@ -366,7 +376,6 @@ def test_subjects_files_are_rebuilt_with_every_region_and_their_own_face_clear(m
 
 
 def test_the_last_region_deleted_on_a_fail_closed_photo_keeps_its_faces_blurred():
-    assert matching.MATCH_THRESHOLD is None, "arch §6 has a value now; update this test"
     store, storage = FakeStore(), FakeStorage()
     media_id, msg_id = photo(store, storage, version=2, regions=())
     old = (f"{media_id}/public_v2.jpg", f"{media_id}/public_thumb_v2.webp")
