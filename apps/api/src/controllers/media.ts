@@ -2,9 +2,12 @@ import type { Request, Response } from 'express';
 
 import {
   CompleteUploadResponse,
+  DeleteMediaResponse,
+  FlagPhotoResponse,
   ListAlbumRequest,
   ListAlbumResponse,
   ListUploadersResponse,
+  MediaDetailResponse,
   MediaImagesRequest,
   MediaImagesResponse,
   MediaStatusRequest,
@@ -20,8 +23,16 @@ import type { AlbumStore } from '../services/album';
 import type { EventStore } from '../services/events';
 import { serveMediaImages } from '../services/media-images';
 import type { ServeImagesDeps } from '../services/media-images';
-import { completeUpload, mediaStatus, preflightUpload } from '../services/media';
-import type { MediaDeps } from '../services/media';
+import {
+  completeUpload,
+  deleteMedia,
+  getMediaDetail,
+  mediaStatus,
+  preflightUpload,
+} from '../services/media';
+import type { MediaDeps, MediaStore } from '../services/media';
+import { flagPhoto } from '../services/photo-flags';
+import type { PhotoFlagStore } from '../services/photo-flags';
 
 // Each answer is parsed with its contract before sending, so a value the contract rejects is a 500,
 // not a bad body. A pre-flight answer holds signed URLs, so no cache may keep either.
@@ -90,5 +101,38 @@ export function mediaImagesController(deps: ServeImagesDeps) {
     const request = parseInput(MediaImagesRequest, req.body);
     const answer = await serveMediaImages(deps, id, eventId, request);
     res.set('Cache-Control', 'no-store').json(MediaImagesResponse.parse(answer));
+  };
+}
+
+// GET /media/{mediaId}. No body and no query parameters (D-179).
+export function getMediaDetailController(media: MediaStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const mediaId = parseInput(PathId, req.params.mediaId);
+    const answer = await getMediaDetail(media, id, mediaId);
+    res.set('Cache-Control', 'no-store').json(MediaDetailResponse.parse(answer));
+  };
+}
+
+// DELETE /media/{mediaId}. No body (D-130, D-160, D-179).
+export function deleteMediaController(deps: Pick<MediaDeps, 'media' | 'logger'>) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const mediaId = parseInput(PathId, req.params.mediaId);
+    const answer = await deleteMedia(deps, id, mediaId);
+    res.set('Cache-Control', 'no-store').json(DeleteMediaResponse.parse(answer));
+  };
+}
+
+// POST /media/{mediaId}/flags. No body; 201 on first flag and 200 on repeat (D-179).
+export function flagPhotoController(photoFlags: PhotoFlagStore) {
+  return async (req: Request, res: Response): Promise<void> => {
+    const { id } = authenticatedUser(req);
+    const mediaId = parseInput(PathId, req.params.mediaId);
+    const { created, answer } = await flagPhoto(photoFlags, id, mediaId);
+    res
+      .status(created ? 201 : 200)
+      .set('Cache-Control', 'no-store')
+      .json(FlagPhotoResponse.parse(answer));
   };
 }

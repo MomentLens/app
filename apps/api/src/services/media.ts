@@ -3,12 +3,13 @@ import { randomUUID } from 'node:crypto';
 import type { Logger } from 'pino';
 import { z } from 'zod';
 
-import { currentSubEvent, readingMatches } from '@momentlens/shared-types';
+import { currentSubEvent, MembershipRole, readingMatches } from '@momentlens/shared-types';
 import type {
   CompleteUploadResponse,
+  DeleteMediaResponse,
+  MediaDetailResponse,
   MediaStatusRequest,
   MediaStatusResponse,
-  MembershipRole,
   PreflightUploadRequest,
   PreflightUploadResponse,
   SubEvent,
@@ -18,7 +19,7 @@ import type { Sql } from '../db/sql';
 import { uploadKeys } from '../lib/keys';
 import type { DeleteObject, ObjectSize, PresignPut } from '../lib/r2';
 import { ApiError } from '../middleware/errors';
-import { requireActiveMember, requireMember } from './events';
+import { requireActiveMember, requireMember, toTimestamp } from './events';
 import type { EventStore } from './events';
 import { createSubEventStore } from './sub-events';
 
@@ -106,8 +107,19 @@ export type CompleteResult =
   | { outcome: 'completed'; messageId: number | null }
   | { outcome: 'duplicate' | 'gone' | 'not_uploader' | 'not_found' | 'not_member' };
 
-// Every read and write of media that upload makes. It checks nothing about who asks; the functions
-// below do, before each call.
+// What GET /media/{mediaId} reads for the authenticated caller (D-179).
+export type MediaDetailLookup =
+  | { outcome: 'not_found' }
+  | { outcome: 'not_member' }
+  | { outcome: 'active'; role: MembershipRole; detail: MediaDetailResponse };
+
+// What delete_media did (D-130, D-160, D-179). `deleted` carries the row's deleted_at and the
+// message id of the media_delete job it sent, or null when the row was already deleted.
+export type DeleteMediaResult =
+  | { outcome: 'not_found' | 'not_member' | 'not_uploader' }
+  | { outcome: 'deleted'; deletedAt: string; messageId: number | null };
+
+// Every read and write of media that upload, detail and delete make.
 export interface MediaStore {
   // The event-scoped schedule, read only when pre-flight carries verification records.
   verificationSchedule(eventId: string): Promise<SubEvent[] | null>;
@@ -116,6 +128,8 @@ export interface MediaStore {
   // Null when no row has this id, or the row was soft-deleted (D-122).
   findUpload(mediaId: string): Promise<UploadRecord | null>;
   complete(mediaId: string, userId: string, sizeBytes: number): Promise<CompleteResult>;
+  detail(mediaId: string, userId: string): Promise<MediaDetailLookup>;
+  remove(mediaId: string, userId: string): Promise<DeleteMediaResult>;
 }
 
 export interface MediaDeps {
@@ -196,6 +210,35 @@ const StatusRow = z.object({
   processed_at: z.string().nullable(),
   deleted_at: z.string().nullable(),
 });
+
+const DetailRow = z.object({
+  role: MembershipRole.nullable(),
+  status: z.string().nullable(),
+  has_privacy_blur: z.boolean(),
+  has_manual_blur: z.boolean(),
+  flagged_by_me: z.boolean(),
+});
+
+const DeleteRow = z.union([
+  z
+    .object({
+      outcome: z.literal('deleted'),
+      deleted_at: z.string(),
+      message_id: z.int().nullable(),
+    })
+    .transform((row) => ({
+      outcome: row.outcome,
+      deletedAt: row.deleted_at,
+      messageId: row.message_id,
+    })),
+  z
+    .object({
+      outcome: z.enum(['not_found', 'not_member', 'not_uploader']),
+      deleted_at: z.null(),
+      message_id: z.null(),
+    })
+    .transform((row) => ({ outcome: row.outcome })),
+]);
 
 // start_upload's arguments. Exported so the dev-project test can call it with the publishable key
 // and see it refused.
@@ -307,6 +350,65 @@ export function createMediaStore(sql: Sql): MediaStore {
             p_size_bytes => ${sizeBytes}
           )`,
         CompleteRow,
+      );
+    },
+
+    async detail(mediaId, userId) {
+      // Viewer-scoped detail for GET /media/{mediaId} (D-179, root invariant 4). has_privacy_blur
+      // joins subject to compare subject.user_id with the authenticated viewer (D-63), so it is
+      // false when the viewer is the sole Do Not Publish subject and never returns subject ids.
+      const rows = await sql`
+        select
+          mb.role,
+          mb.status,
+          exists (
+            select 1
+            from public.dnp_subject d
+            join public.subject s on s.id = d.subject_id
+            where d.media_id = m.id
+              and s.user_id is distinct from ${userId}
+          ) as has_privacy_blur,
+          exists (
+            select 1
+            from public.manual_blur_region r
+            where r.media_id = m.id
+          ) as has_manual_blur,
+          exists (
+            select 1
+            from public.photo_flag f
+            where f.media_id = m.id
+              and f.flagged_by_user_id = ${userId}
+          ) as flagged_by_me
+        from public.media m
+        join public.event e on e.id = m.event_id
+        left join public.membership mb on mb.event_id = m.event_id and mb.user_id = ${userId}
+        where m.id = ${mediaId}
+          and m.processed_at is not null
+          and m.deleted_at is null
+          and e.deleted_at is null`;
+      const found = z.array(DetailRow).parse(rows)[0];
+      if (found === undefined) return { outcome: 'not_found' };
+      if (found.status !== 'active' || found.role === null) return { outcome: 'not_member' };
+      return {
+        outcome: 'active',
+        role: found.role,
+        detail: {
+          hasPrivacyBlur: found.has_privacy_blur,
+          hasManualBlur: found.has_manual_blur,
+          flaggedByMe: found.flagged_by_me,
+        },
+      };
+    },
+
+    async remove(mediaId, userId) {
+      return callOne(
+        'delete_media',
+        sql`
+          select * from public.delete_media(
+            p_media_id => ${mediaId},
+            p_user_id => ${userId}
+          )`,
+        DeleteRow,
       );
     },
   };
@@ -512,5 +614,54 @@ export async function completeUpload(
       throw new ApiError('not_found', 'No such event');
     case 'not_member':
       throw new ApiError('not_member', 'You are no longer an active member of this event');
+  }
+}
+
+// GET /media/{mediaId} (spec §2.5.6, arch:media, D-179). Viewer-scoped blur and flag booleans for
+// active Guests and the event Admin; Photographers get 403 wrong_role.
+export async function getMediaDetail(
+  media: MediaStore,
+  userId: string,
+  mediaId: string,
+): Promise<MediaDetailResponse> {
+  const found = await media.detail(mediaId, userId);
+  if (found.outcome === 'not_found') {
+    throw new ApiError('not_found', 'No such photo');
+  }
+  if (found.outcome === 'not_member') {
+    throw new ApiError('not_member', 'Not an active member of this event');
+  }
+  if (found.role === 'photographer') {
+    throw new ApiError('wrong_role', 'Photographers cannot view photo detail');
+  }
+  return found.detail;
+}
+
+// DELETE /media/{mediaId} (spec §2.5.6, §4.21, D-130, D-160, D-179). Permanent deletion through
+// delete_media, which sets deleted_at and enqueues one media_delete job in one transaction.
+export async function deleteMedia(
+  deps: Pick<MediaDeps, 'media' | 'logger'>,
+  userId: string,
+  mediaId: string,
+): Promise<DeleteMediaResponse> {
+  const result = await deps.media.remove(mediaId, userId);
+  switch (result.outcome) {
+    case 'not_found':
+      throw new ApiError('not_found', 'No such photo');
+    case 'not_member':
+      throw new ApiError('not_member', 'Not an active member of this event');
+    case 'not_uploader':
+      throw new ApiError(
+        'not_uploader',
+        'Only the uploader or the event Admin can delete this photo',
+      );
+    case 'deleted':
+      if (result.messageId !== null) {
+        deps.logger.info(
+          { mediaId, messageId: result.messageId },
+          'media deleted and cleanup job enqueued',
+        );
+      }
+      return { mediaId, deletedAt: toTimestamp(result.deletedAt) };
   }
 }

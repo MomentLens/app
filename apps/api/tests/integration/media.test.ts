@@ -200,6 +200,9 @@ class FakeMedia implements MediaStore {
     this.messages += 1;
     return Promise.resolve({ outcome: 'completed', messageId: this.messages });
   }
+
+  detail = () => Promise.resolve({ outcome: 'not_found' as const });
+  remove = () => Promise.reject(new Error('not used here'));
 }
 
 // The objects in the bucket, key to size, and every delete asked for.

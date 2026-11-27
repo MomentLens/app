@@ -40,6 +40,9 @@ import {
 } from './controllers/invites';
 import {
   completeUploadController,
+  deleteMediaController,
+  flagPhotoController,
+  getMediaDetailController,
   listAlbumController,
   listUploadersController,
   mediaImagesController,
@@ -89,6 +92,7 @@ import type { InviteManagementStore, InviteStore } from './services/invites';
 import type { JoinRequestStore } from './services/join-requests';
 import type { MediaStore } from './services/media';
 import type { MediaImagesStore } from './services/media-images';
+import type { PhotoFlagStore } from './services/photo-flags';
 import type { ConsentStore, FindProfile, SetAvatar } from './services/profiles';
 import type { ReferenceStore } from './services/references';
 import type { SubEventStore } from './services/sub-events';
@@ -113,6 +117,7 @@ export interface AppDeps {
   media: MediaStore;
   album: AlbumStore;
   mediaImages: MediaImagesStore;
+  photoFlags: PhotoFlagStore;
   blurRegions: BlurRegionStore;
   references: ReferenceStore;
   presignGet: PresignGet;
@@ -195,6 +200,9 @@ export function createApp(deps: AppDeps): Express {
       status: mediaStatusController(mediaDeps),
       preflight: preflightUploadController(mediaDeps),
       complete: completeUploadController(mediaDeps),
+      detail: getMediaDetailController(deps.media),
+      remove: deleteMediaController(mediaDeps),
+      flag: flagPhotoController(deps.photoFlags),
       listAlbum: listAlbumController(deps.events, deps.album),
       listUploaders: listUploadersController(deps.events, deps.album),
       serveImages: mediaImagesController(serveImagesDeps),
