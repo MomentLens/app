@@ -92,6 +92,7 @@ import {
   UPLOAD_LIMITS,
 } from '../../src/services/media';
 import type { NewUpload, StartResult } from '../../src/services/media';
+import { createPhotoFlagStore } from '../../src/services/photo-flags';
 import {
   acceptConsent,
   createConsentStore,
@@ -3510,7 +3511,7 @@ if (project === null) {
         await expect(countMedia(other.event.id)).resolves.toBe(0);
       });
 
-      it("treats another user's unfinished row as no duplicate, and a finished one as a duplicate, soft-deleted or not", async () => {
+      it("treats another user's unfinished row as no duplicate, refuses a live finished duplicate, and lets a deleted photo upload again (D-130)", async () => {
         const a = await createNamedUser();
         const g = await createNamedUser();
         const p = await createNamedUser();
@@ -3521,19 +3522,29 @@ if (project === null) {
 
         const mine = newUpload(event.id, mehndi, a.id, { role: 'admin', contentHash });
         const theirs = newUpload(event.id, mehndi, g.id, { contentHash });
+        const racing = newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash });
         started(await media.start(mine, UPLOAD_LIMITS));
         await expect(media.start(theirs, UPLOAD_LIMITS)).resolves.toMatchObject({
           outcome: 'created',
           mediaId: theirs.mediaId,
         });
+        await expect(media.start(racing, UPLOAD_LIMITS)).resolves.toMatchObject({
+          outcome: 'created',
+          mediaId: racing.mediaId,
+        });
 
         await expect(media.complete(mine.mediaId, a.id, 1000)).resolves.toMatchObject({
           outcome: 'completed',
         });
-        // The Guest's own unfinished row resumes, and completion answers that one (D-122).
+        // The Guest's own unfinished row resumes, and completion answers duplicate while mine is live (D-122).
         await expect(
           media.start(newUpload(event.id, mehndi, g.id, { contentHash }), UPLOAD_LIMITS),
         ).resolves.toMatchObject({ outcome: 'resumed', mediaId: theirs.mediaId });
+        await expect(media.complete(racing.mediaId, p.id, 1000)).resolves.toEqual({
+          outcome: 'duplicate',
+        });
+        await expect(mediaRow(racing.mediaId)).resolves.toBeNull();
+        // A new pre-flight with the same hash is refused while mine is live.
         await expect(
           media.start(
             newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash }),
@@ -3541,18 +3552,22 @@ if (project === null) {
           ),
         ).resolves.toEqual({ outcome: 'duplicate' });
 
+        // Once mine is soft-deleted, the same bytes can be uploaded and completed again (D-130).
         await softDeleteMedia(mine.mediaId);
-        await expect(
-          media.start(
-            newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash }),
-            UPLOAD_LIMITS,
-          ),
-        ).resolves.toEqual({ outcome: 'duplicate' });
-        await expect(media.complete(theirs.mediaId, g.id, 1000)).resolves.toEqual({
+        const reupload = newUpload(event.id, mehndi, p.id, { role: 'photographer', contentHash });
+        await expect(media.start(reupload, UPLOAD_LIMITS)).resolves.toMatchObject({
+          outcome: 'created',
+          mediaId: reupload.mediaId,
+        });
+        await expect(media.complete(theirs.mediaId, g.id, 1000)).resolves.toMatchObject({
+          outcome: 'completed',
+        });
+        // With theirs now live, p's racing reupload is refused at completion as a live duplicate.
+        await expect(media.complete(reupload.mediaId, p.id, 1000)).resolves.toEqual({
           outcome: 'duplicate',
         });
-        await expect(mediaRow(theirs.mediaId)).resolves.toBeNull();
-        await expect(countMedia(event.id)).resolves.toBe(1);
+        await expect(mediaRow(reupload.mediaId)).resolves.toBeNull();
+        await expect(countMedia(event.id)).resolves.toBe(2);
       });
 
       it('completes once: one message, the size and uploaded_at set, processed_at still null, and a repeat changes nothing', async () => {
@@ -6015,6 +6030,15 @@ if (project === null) {
           [...mehndiRows, ...baraatRows].map((r) => r.id),
         );
         expect(served.find((item) => item.id === baraatRows[0]!.id)?.variantVersion).toBe(2);
+        // D-179: list_album joins profile for uploader identity on every item.
+        expect(served.find((item) => item.id === mehndiRows[0]!.id)).toMatchObject({
+          uploaderUserId: g.id,
+          uploaderName: 'Guest',
+        });
+        expect(served.find((item) => item.id === mehndiRows[1]!.id)).toMatchObject({
+          uploaderUserId: a.id,
+          uploaderName: 'Admin',
+        });
 
         const guestInMehndi = await listAlbum(store, albumStore, event.id, g.id, {
           uploaderId: g.id,
@@ -7277,6 +7301,403 @@ if (project === null) {
         const gone = await admin.from('consent').select('user_id').eq('user_id', a.id);
         expect(gone.data).toEqual([]);
         await expect(consent.accept(a.id, PRIVACY_POLICY_VERSION)).resolves.toBe('no_account');
+      });
+    });
+
+    describe('S-22 delete_media, photo_flag, flag_photo and media detail (D-130, D-160, D-179)', () => {
+      const subEvents = createSubEventStore(db);
+      const media = createMediaStore(db);
+      const photoFlags = createPhotoFlagStore(db);
+
+      class Rollback extends Error {}
+
+      async function seedPhoto(
+        eventId: string,
+        subEventId: string,
+        uploader: string,
+        role: 'admin' | 'guest' | 'photographer',
+        { uploaded = true, processed = true, contentHash = randomBytes(32).toString('hex') } = {},
+      ) {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const result = await admin.from('media').insert({
+          id,
+          event_id: eventId,
+          sub_event_id: subEventId,
+          uploader_user_id: uploader,
+          uploader_role_at_upload: role,
+          captured_at: now,
+          content_hash: contentHash,
+          size_bytes: uploaded ? 100 : null,
+          upload_key: `${id}/upload.jpg`,
+          upload_thumb_key: `${id}/upload_thumb.webp`,
+          uploaded_at: uploaded ? now : null,
+          public_key: processed ? `${id}/public_v1.jpg` : null,
+          public_thumb_key: processed ? `${id}/public_thumb_v1.webp` : null,
+          variant_version: processed ? 1 : 0,
+          processed_at: processed ? now : null,
+        });
+        expect(result.error).toBeNull();
+        return id;
+      }
+
+      async function fixture() {
+        const [a, g, g2, p, pen, blk, rem, out] = await Promise.all([
+          createNamedUser('S22 Admin'),
+          createNamedUser('S22 Guest'),
+          createNamedUser('S22 Other Guest'),
+          createNamedUser('S22 Photographer'),
+          createNamedUser('S22 Pending'),
+          createNamedUser('S22 Blocked'),
+          createNamedUser('S22 Removed'),
+          createNamedUser('S22 Outsider'),
+        ]);
+        const event = await createdEvent(a.id);
+        await createdEvent(out.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, g2.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        await addMember(event.id, pen.id, 'guest', 'pending');
+        await addMember(event.id, blk.id, 'guest', 'blocked');
+        await addMember(event.id, rem.id, 'guest', 'removed');
+        const subEventId = ((await subEvents.schedule(event.id)) ?? [])[0]?.id;
+        if (subEventId === undefined) throw new Error('no sub-event found');
+        const photo = await seedPhoto(event.id, subEventId, g.id, 'guest');
+        return { a, g, g2, p, pen, blk, rem, out, event, subEventId, photo };
+      }
+
+      async function deleteMessagesFor(sql: Sql | postgres.TransactionSql, mediaId: string) {
+        const rows = await sql`
+          select msg_id from pgmq.q_jobs
+          where message->>'job' = 'media_delete' and message->>'media_id' = ${mediaId}
+          union all
+          select msg_id from pgmq.a_jobs
+          where message->>'job' = 'media_delete' and message->>'media_id' = ${mediaId}`;
+        return rows.length;
+      }
+
+      async function rolledBack(body: (tx: postgres.TransactionSql) => Promise<void>) {
+        try {
+          await owner.begin(async (tx) => {
+            await body(tx);
+            throw new Rollback();
+          });
+        } catch (error) {
+          if (!(error instanceof Rollback)) throw error;
+        }
+      }
+
+      async function callDeleteInTx(tx: postgres.TransactionSql, mediaId: string, userId: string) {
+        await tx`set local role service_role`;
+        try {
+          const [row] = await tx`
+            select * from public.delete_media(p_media_id => ${mediaId}, p_user_id => ${userId})`;
+          if (row === undefined) throw new Error('delete_media returned no row');
+          return row as { outcome: string; deleted_at: string | null; message_id: number | null };
+        } finally {
+          await tx`reset role`;
+        }
+      }
+
+      it('shows photo_flag to neither anon nor signed-in clients and blocks direct writes and RPCs', async () => {
+        const f = await fixture();
+        const seeded = await admin
+          .from('photo_flag')
+          .insert({ media_id: f.photo, flagged_by_user_id: f.g.id });
+        expect(seeded.error).toBeNull();
+
+        const guest = await signedInClient(f.g);
+        const adminClient = await signedInClient(f.a);
+        for (const client of [anon, guest, adminClient]) {
+          const read = await client.from('photo_flag').select('*');
+          expect(read.error).toBeNull();
+          expect(read.data).toEqual([]);
+          const ins = await client
+            .from('photo_flag')
+            .insert({ media_id: f.photo, flagged_by_user_id: f.g2.id });
+          expect(ins.error).not.toBeNull();
+          await client.from('photo_flag').update({ state: 'kept' }).eq('media_id', f.photo);
+          await client.from('photo_flag').delete().eq('media_id', f.photo);
+          const rpcFlag = await client.rpc('flag_photo', {
+            p_media_id: f.photo,
+            p_user_id: f.g2.id,
+          });
+          expect(rpcFlag.error).not.toBeNull();
+          const rpcDel = await client.rpc('delete_media', {
+            p_media_id: f.photo,
+            p_user_id: f.g.id,
+          });
+          expect(rpcDel.error).not.toBeNull();
+        }
+
+        // Check constraint refuses invalid states, and unique constraint refuses duplicate rows.
+        const badState = await admin
+          .from('photo_flag')
+          .insert({ media_id: f.photo, flagged_by_user_id: f.g2.id, state: 'deleted' });
+        expect(badState.error?.code).toBe('23514');
+        const dup = await admin
+          .from('photo_flag')
+          .insert({ media_id: f.photo, flagged_by_user_id: f.g.id });
+        expect(dup.error?.code).toBe('23505');
+
+        const remaining = await admin.from('photo_flag').select('state').eq('media_id', f.photo);
+        expect(remaining.data).toEqual([{ state: 'open' }]);
+        expect(await deleteMessagesFor(owner, f.photo)).toBe(0);
+      });
+
+      it('enforces flag_photo access order, role checks, idempotency, and kept preservation', async () => {
+        const f = await fixture();
+        const unprocessed = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest', {
+          processed: false,
+        });
+        const deleted = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest');
+        await admin
+          .from('media')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', deleted);
+
+        // 404 for unknown, unprocessed, deleted photo.
+        for (const id of [randomUUID(), unprocessed, deleted]) {
+          await expect(photoFlags.flag(id, f.g.id)).resolves.toEqual({ outcome: 'not_found' });
+        }
+        // 403 not_member for non-active members.
+        for (const user of [f.pen, f.blk, f.rem, f.out]) {
+          await expect(photoFlags.flag(f.photo, user.id)).resolves.toEqual({
+            outcome: 'not_member',
+          });
+        }
+        // 403 wrong_role for Admin and Photographer.
+        for (const user of [f.a, f.p]) {
+          await expect(photoFlags.flag(f.photo, user.id)).resolves.toEqual({
+            outcome: 'wrong_role',
+          });
+        }
+
+        // Allowed while album is closed (default on createdEvent) and while archived.
+        await admin
+          .from('event')
+          .update({ archived_at: new Date().toISOString() })
+          .eq('id', f.event.id);
+        await expect(photoFlags.flag(f.photo, f.g.id)).resolves.toEqual({ outcome: 'flagged' });
+        await expect(photoFlags.flag(f.photo, f.g.id)).resolves.toEqual({
+          outcome: 'already_flagged',
+        });
+
+        // Kept flag stays kept on repeat.
+        await admin
+          .from('photo_flag')
+          .update({ state: 'kept' })
+          .eq('media_id', f.photo)
+          .eq('flagged_by_user_id', f.g.id);
+        await expect(photoFlags.flag(f.photo, f.g.id)).resolves.toEqual({
+          outcome: 'already_flagged',
+        });
+        const afterKept = await admin
+          .from('photo_flag')
+          .select('state')
+          .eq('media_id', f.photo)
+          .eq('flagged_by_user_id', f.g.id)
+          .single();
+        expect(afterKept.data).toEqual({ state: 'kept' });
+
+        // Soft-deleted event answers not_found.
+        await admin
+          .from('event')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', f.event.id);
+        await expect(photoFlags.flag(f.photo, f.g2.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+      });
+
+      it('enforces delete_media authorization, unfinished-row rule, single media_delete job and re-upload after delete', async () => {
+        const f = await fixture();
+        const contentHash = randomBytes(32).toString('hex');
+        const finished = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest', {
+          contentHash,
+        });
+        const unfinished = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest', {
+          uploaded: false,
+          processed: false,
+        });
+
+        // Rolled-back transaction checks every refusal and verifies exactly one media_delete job
+        // without leaving messages for the dev worker.
+        await rolledBack(async (tx) => {
+          await expect(callDeleteInTx(tx, randomUUID(), f.g.id)).resolves.toMatchObject({
+            outcome: 'not_found',
+            message_id: null,
+          });
+          for (const user of [f.pen, f.blk, f.rem, f.out]) {
+            await expect(callDeleteInTx(tx, finished, user.id)).resolves.toMatchObject({
+              outcome: 'not_member',
+              message_id: null,
+            });
+          }
+          // Admin gets not_found on another user's unfinished row; other Guest/Photographer get not_uploader.
+          await expect(callDeleteInTx(tx, unfinished, f.a.id)).resolves.toMatchObject({
+            outcome: 'not_found',
+            message_id: null,
+          });
+          await expect(callDeleteInTx(tx, finished, f.g2.id)).resolves.toMatchObject({
+            outcome: 'not_uploader',
+            message_id: null,
+          });
+          await expect(callDeleteInTx(tx, finished, f.p.id)).resolves.toMatchObject({
+            outcome: 'not_uploader',
+            message_id: null,
+          });
+          expect(await deleteMessagesFor(tx, finished)).toBe(0);
+
+          // First delete by uploader sets deleted_at and sends exactly one media_delete message.
+          const first = await callDeleteInTx(tx, finished, f.g.id);
+          expect(first.outcome).toBe('deleted');
+          expect(first.deleted_at).not.toBeNull();
+          expect(first.message_id).not.toBeNull();
+          expect(await deleteMessagesFor(tx, finished)).toBe(1);
+
+          // Repeat by uploader and by Admin returns the same deleted_at with no second message.
+          const byUploaderAgain = await callDeleteInTx(tx, finished, f.g.id);
+          expect(byUploaderAgain).toEqual({
+            outcome: 'deleted',
+            deleted_at: first.deleted_at,
+            message_id: null,
+          });
+          const byAdminAgain = await callDeleteInTx(tx, finished, f.a.id);
+          expect(byAdminAgain).toEqual({
+            outcome: 'deleted',
+            deleted_at: first.deleted_at,
+            message_id: null,
+          });
+          expect(await deleteMessagesFor(tx, finished)).toBe(1);
+
+          // Other active members still get not_uploader after deletion.
+          await expect(callDeleteInTx(tx, finished, f.g2.id)).resolves.toMatchObject({
+            outcome: 'not_uploader',
+            message_id: null,
+          });
+          await expect(callDeleteInTx(tx, finished, f.p.id)).resolves.toMatchObject({
+            outcome: 'not_uploader',
+            message_id: null,
+          });
+
+          // Uploader may soft-delete their own unfinished row.
+          const delUnfinished = await callDeleteInTx(tx, unfinished, f.g.id);
+          expect(delUnfinished.outcome).toBe('deleted');
+          expect(delUnfinished.message_id).not.toBeNull();
+          expect(await deleteMessagesFor(tx, unfinished)).toBe(1);
+
+          // Soft-deleted event answers not_found even for authorized deleters.
+          await tx`update public.event set deleted_at = now() where id = ${f.event.id}`;
+          await expect(callDeleteInTx(tx, finished, f.g.id)).resolves.toMatchObject({
+            outcome: 'not_found',
+            message_id: null,
+          });
+        });
+
+        // Re-upload of the same bytes succeeds after delete_media (D-130) through the real store,
+        // and clean up the queued media_delete job afterwards.
+        await admin
+          .from('event')
+          .update({ archived_at: new Date().toISOString() })
+          .eq('id', f.event.id);
+        const removed = await media.remove(finished, f.a.id);
+        expect(removed).toEqual({
+          outcome: 'deleted',
+          deletedAt: expect.any(String),
+          messageId: expect.any(Number),
+        });
+        await owner`
+          select pgmq.delete('jobs', msg_id) from pgmq.q_jobs
+          where message->>'job' = 'media_delete' and message->>'media_id' = ${finished}`;
+
+        const reuploadId = randomUUID();
+        const keys = uploadKeys(reuploadId);
+        const started = await media.start(
+          {
+            mediaId: reuploadId,
+            eventId: f.event.id,
+            subEventId: f.subEventId,
+            userId: f.a.id,
+            role: 'admin',
+            contentHash,
+            capturedAt: new Date().toISOString(),
+            uploadKey: keys.photo,
+            uploadThumbKey: keys.thumbnail,
+          },
+          UPLOAD_LIMITS,
+        );
+        expect(started).toMatchObject({ outcome: 'created', mediaId: reuploadId });
+        const completed = await media.complete(reuploadId, f.a.id, 1234);
+        expect(completed).toEqual({ outcome: 'completed', messageId: expect.any(Number) });
+        await owner`
+          select pgmq.delete('jobs', msg_id) from pgmq.q_jobs
+          where message->>'job' = 'face_process' and message->>'media_id' = ${reuploadId}`;
+      });
+
+      it('computes viewer-scoped media.detail booleans against real dnp_subject, manual_blur_region and photo_flag', async () => {
+        const f = await fixture();
+        const subjects = await owner<{ id: string; user_id: string }[]>`
+          insert into public.subject (user_id) values (${f.g.id}), (${f.g2.id})
+          on conflict (user_id) do update set user_id = excluded.user_id
+          returning id, user_id`;
+        const gSubject = subjects.find((s) => s.user_id === f.g.id)!.id;
+        const g2Subject = subjects.find((s) => s.user_id === f.g2.id)!.id;
+
+        // Sole DNP subject: false for f.g, true for f.g2 and f.a.
+        await owner`
+          insert into public.dnp_subject (media_id, subject_id, variant_key, variant_thumb_key)
+          values (
+            ${f.photo}, ${gSubject},
+            ${`${f.photo}/${gSubject}_v1.jpg`}, ${`${f.photo}/${gSubject}_thumb_v1.webp`}
+          )`;
+        await expect(media.detail(f.photo, f.g.id)).resolves.toEqual({
+          outcome: 'active',
+          role: 'guest',
+          detail: { hasPrivacyBlur: false, hasManualBlur: false, flaggedByMe: false },
+        });
+        await expect(media.detail(f.photo, f.g2.id)).resolves.toEqual({
+          outcome: 'active',
+          role: 'guest',
+          detail: { hasPrivacyBlur: true, hasManualBlur: false, flaggedByMe: false },
+        });
+
+        // Second DNP subject + manual blur region + kept flag by f.g.
+        await owner`
+          insert into public.dnp_subject (media_id, subject_id, variant_key, variant_thumb_key)
+          values (
+            ${f.photo}, ${g2Subject},
+            ${`${f.photo}/${g2Subject}_v1.jpg`}, ${`${f.photo}/${g2Subject}_thumb_v1.webp`}
+          )`;
+        await admin.from('manual_blur_region').insert({
+          id: randomUUID(),
+          media_id: f.photo,
+          drawn_by_user_id: f.a.id,
+          x: 0.1,
+          y: 0.1,
+          width: 0.2,
+          height: 0.2,
+        });
+        await admin
+          .from('photo_flag')
+          .insert({ media_id: f.photo, flagged_by_user_id: f.g.id, state: 'kept' });
+
+        await expect(media.detail(f.photo, f.g.id)).resolves.toEqual({
+          outcome: 'active',
+          role: 'guest',
+          detail: { hasPrivacyBlur: true, hasManualBlur: true, flaggedByMe: true },
+        });
+        await expect(media.detail(f.photo, f.a.id)).resolves.toEqual({
+          outcome: 'active',
+          role: 'admin',
+          detail: { hasPrivacyBlur: true, hasManualBlur: true, flaggedByMe: false },
+        });
+        await expect(media.detail(f.photo, f.p.id)).resolves.toMatchObject({
+          outcome: 'active',
+          role: 'photographer',
+        });
+        await expect(media.detail(f.photo, f.out.id)).resolves.toEqual({ outcome: 'not_member' });
+        await expect(media.detail(randomUUID(), f.g.id)).resolves.toEqual({ outcome: 'not_found' });
       });
     });
   });
