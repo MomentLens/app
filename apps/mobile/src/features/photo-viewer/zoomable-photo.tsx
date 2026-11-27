@@ -135,8 +135,9 @@ export const ZoomablePhoto = memo(function ZoomablePhoto({
     <Animated.View style={[StyleSheet.absoluteFill, pageStyle]}>
       {body}
       {/* The placeholder thumbnail is this viewer's own file too, so its flag counts while the
-          full image signs. Before the photo's size is known the badge takes the screen's corner. */}
-      {(image ?? placeholder)?.isOwnVariant ? (
+          full image signs, but not once the endpoint has left the photo out (image null). Before
+          the photo's size is known the badge takes the screen's corner. */}
+      {(image === undefined ? placeholder : image)?.isOwnVariant ? (
         <View
           accessible
           accessibilityRole="image"
