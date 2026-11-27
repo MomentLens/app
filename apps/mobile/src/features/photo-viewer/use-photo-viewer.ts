@@ -247,6 +247,7 @@ export function usePhotoViewer(eventId: string, openedId: string, filters: Album
     isOwnPhoto,
     actions,
     detail: detail.data,
+    detailLoading: detail.isLoading,
     flagging,
     deleting,
     flag,
