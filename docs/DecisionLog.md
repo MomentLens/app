@@ -1822,6 +1822,22 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** S-20 can test detection only through `reference_process` and unit tests. A selfie with a stranger in the background is rejected as `multiple_faces`. The Unknown strip is empty until S-26.
 **Amended (see D-174).** S-21's migration adds the membership column the guard reads. The guard itself still lands in S-29.
 
+### D-173: One match threshold, measured by S-26's rules
+**Decision.** Amends D-104. Ukasha ruled on these on 2026-11-23, at S-26's read-back.
+- One match threshold serves Do Not Publish blurring, Find My Photos, and the Recognized Faces strip.
+- Both the match threshold and the Unknown clustering threshold are constants in `worker/app/ai/matching.py`, never environment variables, and a test in `worker/tests/test_matching.py` parses `docs/ARCHITECTURE.md` §6 to keep the constants equal to the table.
+- The match threshold is the highest two-decimal value at which every team face in the event-style photos still matches its own person with only 1 reference. `worker/bench/calibrate.py` reports the false-match rate against the bench faces and team cross pairs at that value, and Ukasha picks if that rate looks too high.
+- S-26 measures the Unknown clustering threshold now, as the lowest two-decimal value above every different-person face-to-face pair.
+- The 17 wedding photos in `worker/bench/photos.sha256` serve as impostors, and any two faces in the same photo always count as different people.
+- `worker/bench/calibrate.py` and `worker/bench/calibration.sha256` are committed to the repo. The team calibration photos stay out of git, on Ukasha's machine, with B and C's OK.
+- Keep `reference_process`'s detection score at 0.5 unless a team face scores under 0.5 or a non-face scores at or over 0.5; any change amends D-172.
+- `docs/ARCHITECTURE.md` §6 records the OpenCV, onnxruntime, and model versions alongside `worker/bench/calibration.sha256` so D-169's upgrade recheck can run against the same baseline.
+**Why.** A `face` row holds one `matched_subject_id`, and D-74 keeps every comparison in the worker, so a second threshold has nowhere to store its result. A missed match is the costly failure (spec §5.5). Three team members give only 3 different-person identity pairs, which cannot test stranger separation. Production compares each face against a subject's closest reference, not all pairs.
+**Rejected.** A lower match threshold solely for Do Not Publish, which would need a second column on `face` and rework in S-21, S-23, and S-25. Leaving Unknown clustering unmeasured for the demo. Using a one-off script that cannot be rerun for D-169's OpenCV recheck.
+**Cost.** A relative above the low threshold is named as the subject in the Recognized Faces strip and appears in their Find My Photos. One unregistered person may split into several Unknown clusters. The calibration photos of B and C live on Ukasha's machine.
+**Reopen if.** The measurements show genuine and impostor scores overlapping at 1 reference, so that no value meets the zero-miss rule.
+**Amended (see D-182).** Until these rules run on the team's photos, arch §6 holds provisional values and this slice's issue stays open.
+
 ### D-174: S-21 adds the Do Not Publish column on `membership`
 **Decision.** Amends D-172, and changes the slice plan for S-21 and S-29. Ukasha ruled on it on 2026-11-25, at S-21's read-back. S-21's migration creates `dnp_subject` and adds `membership.dnp_activated_at`, the column only. S-29 keeps the activation function that sets it and enqueues `reprocess`, the drop of `subject.dnp_activated_at`, the Cancel Request change and the last-reference guard. Until S-29, S-21's tests set the column directly and nothing in the app sets it.
 **Why.** `face_process` writes a subject's file only when that subject's membership in the event has Do Not Publish on (D-129). S-29 depended on S-25, which depends on S-21, so the worker had no column to read, and no slice created `dnp_subject`.
@@ -1866,27 +1882,18 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Cost.** The dev project loses its photos once more. A photo uploaded to the dev project before S-26 and kept would stay fully blurred until a region is drawn on it.
 **Reopen if.** Photos written before the threshold have to survive, for example if S-26 slips past the first real event.
 
-### D-173: One match threshold, measured by S-26's rules
-**Decision.** Amends D-104. Ukasha ruled on these on 2026-11-23, at S-26's read-back.
-- One match threshold serves Do Not Publish blurring, Find My Photos, and the Recognized Faces strip.
-- Both the match threshold and the Unknown clustering threshold are constants in `worker/app/ai/matching.py`, never environment variables, and a test in `worker/tests/test_matching.py` parses `docs/ARCHITECTURE.md` §6 to keep the constants equal to the table.
-- The match threshold is the highest two-decimal value at which every team face in the event-style photos still matches its own person with only 1 reference. `worker/bench/calibrate.py` reports the false-match rate against the bench faces and team cross pairs at that value, and Ukasha picks if that rate looks too high.
-- S-26 measures the Unknown clustering threshold now, as the lowest two-decimal value above every different-person face-to-face pair.
-- The 17 wedding photos in `worker/bench/photos.sha256` serve as impostors, and any two faces in the same photo always count as different people.
-- `worker/bench/calibrate.py` and `worker/bench/calibration.sha256` are committed to the repo. The team calibration photos stay out of git, on Ukasha's machine, with B and C's OK.
-- Keep `reference_process`'s detection score at 0.5 unless a team face scores under 0.5 or a non-face scores at or over 0.5; any change amends D-172.
-- `docs/ARCHITECTURE.md` §6 records the OpenCV, onnxruntime, and model versions alongside `worker/bench/calibration.sha256` so D-169's upgrade recheck can run against the same baseline.
-**Why.** A `face` row holds one `matched_subject_id`, and D-74 keeps every comparison in the worker, so a second threshold has nowhere to store its result. A missed match is the costly failure (spec §5.5). Three team members give only 3 different-person identity pairs, which cannot test stranger separation. Production compares each face against a subject's closest reference, not all pairs.
-**Rejected.** A lower match threshold solely for Do Not Publish, which would need a second column on `face` and rework in S-21, S-23, and S-25. Leaving Unknown clustering unmeasured for the demo. Using a one-off script that cannot be rerun for D-169's OpenCV recheck.
-**Cost.** A relative above the low threshold is named as the subject in the Recognized Faces strip and appears in their Find My Photos. One unregistered person may split into several Unknown clusters. The calibration photos of B and C live on Ukasha's machine.
-**Reopen if.** The measurements show genuine and impostor scores overlapping at 1 reference, so that no value meets the zero-miss rule.
-**Amended (see D-182).** Until these rules run on the team's photos, arch §6 holds provisional values and this slice's issue stays open.
+### D-182: Provisional thresholds until S-26 measures
+**Decision.** Amends D-104 and D-173. Ukasha ruled on this on 2026-11-28. Until S-26 measures, `MATCH_THRESHOLD` is 0.35 and `CLUSTER_THRESHOLD` is 0.50 in `worker/app/ai/matching.py`, and arch §6 records both as provisional and not measured. S-26's worker PR merges with them, and S-26's issue (#135) stays open until `python -m bench.calibrate` runs on the team's photos and replaces them under D-173's rules. The detection score stays 0.5, unchecked. Tests keep setting their own thresholds (D-104). This merge skips S-26's done stage and its readiness record (D-149); the done and cleanup stages run after the calibration, and cleanup closes the issue.
+**Why.** S-21, S-23, S-25 and the slices after them need a real match to test, and the team's photos are not taken yet. Failing closed until then blocks every slice that waits on S-26.
+**Rejected.** Keeping the worker fail-closed until the photos exist, which blocks those slices. D-104 rejected a provisional number because nobody remembers to replace it; here the open issue, the word "provisional" in arch §6 and this entry are the reminder.
+**Cost.** The values come from typical `buffalo_l` scores, not this project's photos. 0.35 may still miss a subject in low light or profile, leaving that face unblurred with nothing to report it, and may blur and name a relative. 0.50 may split one guest into several Unknowns. No demo or real event runs on them. When calibration changes the match threshold, the dev project's photos are wiped again (D-180), because `reprocess` does not run on a threshold change.
+**Reopen if.** S-26's calibration has not run by the first real event; then that event waits for it.
 
 ## Open items that are not decisions yet
 
 These are not settled and should not be treated as though they are.
 
-- **Similarity thresholds.** Not measured; the plan and the table are `docs/ARCHITECTURE.md` §6. Shipping an example number is how the blur silently fails in a demo.
+- **Similarity thresholds.** Not measured; the plan and the table are `docs/ARCHITECTURE.md` §6, which holds provisional values until S-26's calibration (D-182). Shipping an example number is how the blur silently fails in a demo.
 - **Whether the standby actually works.** D-79 defines it. It is not real until `scripts/provision.sh` has run against a real VM on one of the three credits. Half a day in Phase 7.
 - **The feature-complete date.** The buffer is imaginary until a date is attached to "feature complete." March 2027 has been proposed and not agreed. Handbook §14.7 has the two things the build-fast-harden-later plan gets wrong.
 - **The judge-device plan in D-61.** Written down as a decision, not yet rehearsed. It is not real until the build is installed on the actual devices and someone has joined an event on them.
@@ -1894,10 +1901,3 @@ These are not settled and should not be treated as though they are.
 - **How the standby carries the database.** The database lives on the server's disk (D-163), so a swap to D-79's standby has to move it. Settle it before the Phase 7 rehearsal, which has to move it too.
 - **Realtime's 100 messages a second.** One photo published to a full event is 150 messages (D-163). Measure what Realtime does then before changing the limit.
 - **Why D-69 kept the client thumbnail.** The alternative, the worker writing every thumbnail, lost without a recorded reason. Write the reason into D-69 while someone still remembers it.
-
-### D-182: Provisional thresholds until S-26 measures
-**Decision.** Amends D-104 and D-173. Ukasha ruled on this on 2026-11-28. Until S-26 measures, `MATCH_THRESHOLD` is 0.35 and `CLUSTER_THRESHOLD` is 0.50 in `worker/app/ai/matching.py`, and arch §6 records both as provisional and not measured. S-26's worker PR merges with them, and S-26's issue (#135) stays open until `python -m bench.calibrate` runs on the team's photos and replaces them under D-173's rules. The detection score stays 0.5, unchecked. Tests keep setting their own thresholds (D-104). This merge skips S-26's done stage and its readiness record (D-149); the done and cleanup stages run after the calibration, and cleanup closes the issue.
-**Why.** S-21, S-23, S-25 and the slices after them need a real match to test, and the team's photos are not taken yet. Failing closed until then blocks every slice that waits on S-26.
-**Rejected.** Keeping the worker fail-closed until the photos exist, which blocks those slices. D-104 rejected a provisional number because nobody remembers to replace it; here the open issue, the word "provisional" in arch §6 and this entry are the reminder.
-**Cost.** The values come from typical `buffalo_l` scores, not this project's photos. 0.35 may still miss a subject in low light or profile, leaving that face unblurred with nothing to report it, and may blur and name a relative. 0.50 may split one guest into several Unknowns. No demo or real event runs on them. When calibration changes the match threshold, the dev project's photos are wiped again (D-180), because `reprocess` does not run on a threshold change.
-**Reopen if.** S-26's calibration has not run by the first real event; then that event waits for it.
