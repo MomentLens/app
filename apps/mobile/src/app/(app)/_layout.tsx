@@ -56,6 +56,12 @@ export default function AppLayout() {
         name="capture/[eventId]"
         options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
       />
+      {/* No swipe back or down: a sideways swipe turns the page and a drag pans a zoomed photo
+          (S-22). */}
+      <Stack.Screen
+        name="photo/[eventId]/[mediaId]"
+        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+      />
       {/* No swipe down: a drag on the photo draws a blur region (S-19). */}
       <Stack.Screen
         name="blur/[eventId]/[mediaId]"
