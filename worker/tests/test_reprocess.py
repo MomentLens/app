@@ -30,6 +30,14 @@ from app.ai import faces, matching
 from app.jobs import REGISTRY, reprocess
 
 
+@pytest.fixture(autouse=True)
+def fail_closed(monkeypatch):
+    """Both thresholds None unless a test sets its own, so no test here runs on the worker's
+    provisional values (D-104, D-182)."""
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", None)
+    monkeypatch.setattr(matching, "CLUSTER_THRESHOLD", None)
+
+
 @pytest.fixture
 def threshold(monkeypatch):
     monkeypatch.setattr(matching, "MATCH_THRESHOLD", 0.9)

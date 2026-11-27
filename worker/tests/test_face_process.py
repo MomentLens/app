@@ -38,6 +38,14 @@ def embedding(i):
     return row
 
 
+@pytest.fixture(autouse=True)
+def fail_closed(monkeypatch):
+    """Both thresholds None unless a test sets its own, so no test here runs on the worker's
+    provisional values (D-104, D-182)."""
+    monkeypatch.setattr(matching, "MATCH_THRESHOLD", None)
+    monkeypatch.setattr(matching, "CLUSTER_THRESHOLD", None)
+
+
 @pytest.fixture
 def detected(monkeypatch):
     """Loads a model whose detector finds `boxes`, and returns it."""
@@ -222,11 +230,10 @@ def test_a_deleted_photo_is_done_with_nothing_read_or_written(detected):
     assert store.state.archived == {} and worker.report.calls == []
 
 
-# --- fail closed while arch §6 has no threshold ----------------------------------------------
+# --- fail closed while a threshold is None ----------------------------------------------------
 
 
 def test_with_no_threshold_every_face_is_blurred_and_nobody_is_a_subject(detected):
-    assert matching.MATCH_THRESHOLD is None, "arch §6 has a value now; update this test"
     detected()
     store, storage = FakeStore(), FakeStorage()
     media_id, event_id, _ = photo(store, storage)
