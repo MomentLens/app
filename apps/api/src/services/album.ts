@@ -48,6 +48,8 @@ export interface AlbumMediaRow {
   id: string;
   subEventId: string;
   capturedAt: string;
+  uploaderUserId: string;
+  uploaderName: string;
   uploaderRole: MembershipRole;
   width: number | null;
   height: number | null;
@@ -95,6 +97,8 @@ const ListAlbumRpcResult = z.object({
       id: z.uuid(),
       sub_event_id: z.uuid(),
       captured_at: PgTimestamp,
+      uploader_user_id: z.uuid(),
+      uploader_name: FullName,
       uploader_role: MembershipRole,
       width: z.number().nullable(),
       height: z.number().nullable(),
@@ -143,6 +147,8 @@ export function createAlbumStore(sql: Sql): AlbumStore {
           id: m.id,
           subEventId: m.sub_event_id,
           capturedAt: m.captured_at,
+          uploaderUserId: m.uploader_user_id,
+          uploaderName: m.uploader_name,
           uploaderRole: m.uploader_role,
           width: m.width,
           height: m.height,
@@ -231,9 +237,8 @@ export async function listAlbum(
       id: item.id,
       subEventId: item.subEventId,
       capturedAt: toTimestamp(item.capturedAt),
-      // Placeholder until S-22's api build joins profile in list_album (D-179).
-      uploaderUserId: '00000000-0000-0000-0000-000000000000',
-      uploaderName: 'Unknown',
+      uploaderUserId: item.uploaderUserId,
+      uploaderName: item.uploaderName,
       uploaderRole: item.uploaderRole,
       width: item.width,
       height: item.height,
