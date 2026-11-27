@@ -4,7 +4,6 @@ import type {
   BlurRegion,
   ListAlbumResponse,
   ListBlurRegionsResponse,
-  MediaImage,
 } from '@momentlens/shared-types';
 import {
   useQuery,
@@ -15,14 +14,9 @@ import {
 import { randomUUID } from 'expo-crypto';
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react';
 
+import { fullImageQuery } from '@/features/album/full-image';
 import { recheckEvent, retryUnlessRefused } from '@/features/event-shell/use-event';
-import {
-  ApiError,
-  addBlurRegion,
-  getMediaImages,
-  listBlurRegions,
-  removeBlurRegion,
-} from '@/lib/api';
+import { ApiError, addBlurRegion, listBlurRegions, removeBlurRegion } from '@/lib/api';
 
 export function blurRegionsQueryKey(mediaId: string) {
   return ['blur-regions', mediaId] as const;
@@ -114,31 +108,9 @@ export function newestInAlbums(
   return newest;
 }
 
-const RENEW_AFTER = 45 * 60 * 1000;
-
-// The photo's full image for this viewer, signed by the serving endpoint (root invariant 3). The
-// key carries `variant_version`, so a regeneration while the screen is open signs the new file. A
-// null image means the endpoint left the photo out: the viewer may no longer see it.
+// The photo's full image for this viewer, shared with the single photo view (use-album-images.ts).
 export function useFullImage(eventId: string, mediaId: string, variantVersion: number | undefined) {
-  return useQuery({
-    queryKey: ['media-images', eventId, 'full', mediaId, variantVersion ?? 'unknown'],
-    queryFn: async ({ signal }): Promise<MediaImage | null> => {
-      try {
-        const response = await getMediaImages(
-          eventId,
-          { mediaIds: [mediaId], size: 'full' },
-          signal,
-        );
-        return response.images[mediaId] ?? null;
-      } catch (error) {
-        refused(eventId, error);
-        throw error;
-      }
-    },
-    staleTime: RENEW_AFTER,
-    refetchInterval: RENEW_AFTER,
-    retry: retryUnlessRefused,
-  });
+  return useQuery(fullImageQuery(eventId, mediaId, variantVersion));
 }
 
 // A region saved on this phone and not yet confirmed by the API. It draws solid at once, so the
