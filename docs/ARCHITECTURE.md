@@ -222,7 +222,7 @@ One row per detected face, written only by the worker.
 - The box is four columns, `x`, `y`, `width`, `height`, the detector's box before the blur expands it, as fractions of the stored image, which Stage 1 already turned upright (D-99). `face_box_check` keeps it inside 0..1, the same shape and check as `manual_blur_region`. The worker clamps a box that runs past an edge
 - `matched_subject_id` (nullable, `ON DELETE SET NULL`), `similarity`, the cosine similarity to that subject's closest reference (D-74). `face_similarity_check`: a match always carries a similarity, in -1..1
 - `cluster_id`, the Unknown identity for an unmatched face (§4.11). No table; the id only groups faces. Null while §6 has no clustering threshold (D-104, D-172). `face_cluster_check`: a matched face has no cluster
-- S-20 writes the table and the worker's detect, embed, match and cluster functions in `worker/app/ai/faces.py` and `worker/app/ai/matching.py`. The two thresholds there are `None` constants that point at §6, never environment variables. S-21 registers `face_process`, which writes the rows (D-172)
+- S-20 writes the table and the worker's detect, embed, match and cluster functions in `worker/app/ai/faces.py` and `worker/app/ai/matching.py`. The two thresholds there are constants that mirror §6, never environment variables; until S-26 measures they hold §6's provisional values (D-182). S-21 registers `face_process`, which writes the rows (D-172)
 - `reprocess` re-blurs from the stored box and never detects again (D-30, D-66)
 - `dnp_subject_id` (nullable, `on delete set null`), the Do Not Publish subject the face is blurred for, as `variants.plan` decided it, from S-25's `20261126204929_reprocess_enqueue.sql`. `face_process`, `blur_region` and `reprocess` write it with the files, so `reprocess` can tell which photos its new plan changes. It can be set where `matched_subject_id` is null, for a removed or blocked subject (D-175, D-178)
 - RLS on with no policy and the same grants as `face_reference`
@@ -395,12 +395,12 @@ S-18a's warm-up job, `thumbnail_dims`, set `processed_at` without blurring anyth
 
 ## 6. Similarity thresholds
 
-**Not measured.** Never use a number from any spec draft (Handbook §11.4). Until a value is recorded here, the worker fails closed: it blurs every detected face in every file it writes, subjects' own files included, and records no match and no Unknown cluster on `face` rows (D-172). Such a photo stores `dnp_subject_id` null on every face, so `reprocess` never rebuilds it once a threshold is recorded; the dev project's photos are wiped then (D-180). Tests set a threshold in their own fixtures, never in configuration (D-104).
+**Provisional, not measured** (D-182). Ukasha set the match and clustering values on 2026-11-28 so the slices after S-26 can test a real match before the team's photos exist. They come from typical `buffalo_l` scores, not from this project's photos, and no demo or real event runs on them. S-26's issue stays open until `python -m bench.calibrate` replaces them, and the dev project's photos are wiped again then (D-180, D-182). Never use a number from any spec draft (Handbook §11.4). While a value here is "not measured", the worker fails closed: it blurs every detected face in every file it writes, subjects' own files included, and records no match and no Unknown cluster on `face` rows (D-172). Such a photo stores `dnp_subject_id` null on every face, so `reprocess` never rebuilds it once a threshold is recorded; the dev project's photos are wiped then (D-180). Tests set a threshold in their own fixtures, never in configuration (D-104).
 
 | Threshold | Used by | Value | Measured on | Date |
 |---|---|---|---|---|
-| Match | `face_process`, `reprocess` | not measured | | |
-| Unknown clustering | `face_process` | not measured | | |
+| Match | `face_process`, `reprocess`, `blur_region` | 0.35, provisional: below the 0.4 to 0.5 often used to verify `buffalo_l` faces, because a miss leaves a subject unblurred (D-173, D-182) | not measured: no photos | 2026-11-28 |
+| Unknown clustering | `face_process`, `reprocess` | 0.50, provisional: above the 0.2 to 0.3 that different people's `buffalo_l` faces usually reach, so two strangers rarely share a cluster (D-182) | not measured: no photos | 2026-11-28 |
 | Face detection score, for `reference_process`'s one-face count | `reference_process` | 0.5, SCRFD's default, with no minimum face size. A detector setting, not a similarity threshold. S-26 checks it on its photos (D-172) | not measured | |
 
 **Settled** (D-173): one match threshold for Do Not Publish blurring and for recognition. A `face` row holds one matched subject, and the low threshold is the bias toward blurring that spec §4.11.4.5 asks for.

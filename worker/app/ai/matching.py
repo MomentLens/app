@@ -1,10 +1,11 @@
 """Every similarity comparison in the system: matching to references, and Unknown clusters (D-74).
 
 Both thresholds mirror arch §6, and tests/test_matching.py reads arch §6 to keep them equal
-(D-173). While a threshold is None the worker fails closed: nothing matches and nothing is
-clustered, and S-21's face_process blurs every detected face (D-104, D-172). Never put an example
-number here. The values come from `python -m bench.calibrate` on the team's photos, and arch §6
-changes in the same commit. A test passes its own threshold, never these (D-104).
+(D-173). The values below are provisional, picked from typical buffalo_l scores and not measured
+(D-182). S-26 replaces them with `python -m bench.calibrate` on the team's photos, and arch §6
+changes in the same commit. While a threshold is None the worker fails closed: nothing matches and
+nothing is clustered, and face_process blurs every detected face (D-104, D-172). A test passes its
+own threshold, never these (D-104).
 
 Matching in an event reads only the accepted references active members added to that event
 (D-141). The caller picks those rows; these functions compare whatever they are given.
@@ -18,10 +19,10 @@ from uuid import UUID, uuid4
 
 import numpy as np
 
-# arch §6, Match, used by face_process and reprocess: not measured.
-MATCH_THRESHOLD: float | None = None
-# arch §6, Unknown clustering, used by face_process: not measured.
-CLUSTER_THRESHOLD: float | None = None
+# arch §6, Match, used by face_process, reprocess and blur_region. Provisional (D-182).
+MATCH_THRESHOLD: float | None = 0.35
+# arch §6, Unknown clustering, used by face_process and reprocess. Provisional (D-182).
+CLUSTER_THRESHOLD: float | None = 0.50
 
 
 @dataclass(frozen=True)
