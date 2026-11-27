@@ -61,11 +61,6 @@ function HomeContent({
   initialSubEventId?: string;
 }) {
   const router = useRouter();
-  const openBlur = useCallback(
-    (mediaId: string) =>
-      router.push({ pathname: '/blur/[eventId]/[mediaId]', params: { eventId, mediaId } }),
-    [router, eventId],
-  );
   const eventQuery = useEvent(eventId);
   const event = eventQuery.data?.event;
   const scheduleQuery = useSubEvents(eventId);
@@ -91,6 +86,22 @@ function HomeContent({
   );
   const [selectedUploader, setSelectedUploader] = useState<UploaderFilter | undefined>(undefined);
   const selectedUploaderId = selectedUploader?.id;
+
+  // A tap on a tile opens the single photo view over the same filters, so its pager follows the
+  // grid (spec §2.5.6).
+  const openPhoto = useCallback(
+    (mediaId: string) =>
+      router.push({
+        pathname: '/photo/[eventId]/[mediaId]',
+        params: {
+          eventId,
+          mediaId,
+          ...(selectedSubEventId ? { subEventId: selectedSubEventId } : {}),
+          ...(selectedUploaderId ? { uploaderId: selectedUploaderId } : {}),
+        },
+      }),
+    [router, eventId, selectedSubEventId, selectedUploaderId],
+  );
 
   // Sheets
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
@@ -218,9 +229,7 @@ function HomeContent({
             refreshing={pulling}
             onRefresh={() => void refresh()}
             onImageError={thumbnails.retry}
-            // Development builds only: S-22's photo view gives Blur an Area its real entry and
-            // deletes this one (S-19 card).
-            onLongPressPhoto={__DEV__ ? openBlur : undefined}
+            onPressPhoto={openPhoto}
             items={items}
             images={thumbnails.images}
             stickyIndices={stickyIndices}
