@@ -41,11 +41,11 @@ The API enforces every rule here. The two marked rows are also RLS policies.
 | `membership` | A user sees their own rows, with the event's name on a pending one (D-115); the Admin sees every row for their events (Handbook §5) |
 | `face`, `dnp_subject` | Only through the viewer-scoped rule (root invariant 4). A Do Not Publish subject learns they are in a photo; no other viewer learns who is. A Photographer gets no `face` rows, for their own photos too (§4.10, D-08) |
 | `face_reference` | The owner, and only their photos, with or without Do Not Publish (D-109). Embeddings never leave the database and the worker (Handbook §5) |
-| `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see, the album closed included; its drawer or the Admin removes it. A Guest lists only their own regions on a photo. The Admin lists every region, with who drew each, on the photo and in the Review Queue (D-83, D-170) |
-| `photo_flag` | An active Guest flags a published photo in the event through `POST /media/{mediaId}/flags` and learns whether they already flagged it through `GET /media/{mediaId}`. The Admin reads and resolves open flags in the Review Queue (S-24). A Photographer has no access (D-179) |
+| `manual_blur_region` | Any Guest or the Admin draws one on a photo they can see, the album closed included; its drawer or the Admin removes it. A Guest lists only their own regions on a photo. The Admin lists every region, with who drew each, on the photo, and lists and keeps open regions in the Review Queue (D-83, D-170, D-181) |
+| `photo_flag` | An active Guest flags a published photo in the event through `POST /media/{mediaId}/flags` and learns whether they already flagged it through `GET /media/{mediaId}`. The Admin lists and keeps open flags in the Review Queue (D-179, D-181). A Photographer has no access |
 | `venue.qr_secret` | The event's Admin, for printing (D-17) |
 | `profile.avatar_key` | The user, and the same people as `profile.full_name`, so a Photographer sees no other member's (D-08). Shown in an event's context, it goes to nobody but the user when their membership in that event has Do Not Publish on, the Admin included. Another event's context shows it as usual (D-35, D-109, D-129) |
-| `profile.full_name` | Active members of an event the user belongs to, and that event's Admin while the user's join request is pending. Do Not Publish does not hide it (D-35). A Photographer sees no other member's name, since the name list is the guest list (D-08) |
+| `profile.full_name` | Active members of an event the user belongs to, and that event's Admin while the user's join request is pending. Do Not Publish does not hide it (D-35). A removed or blocked member's name stays visible on photos they uploaded and blur regions they drew (D-170, D-181). A Photographer sees no other member's name, since the name list is the guest list (D-08) |
 | `health_check` | The API only, for `GET /health`. RLS is on with no policy, so the publishable key reads no rows, and `apps/api/tests/integration/rls.test.ts` checks that |
 
 ---
@@ -238,11 +238,11 @@ A Do Not Publish subject found in a photo, with that subject's personalized file
 
 ### `manual_blur_region`
 A rectangle someone drew to hide part of a photo, usually a face the detector missed (D-83).
-- `id`, `media_id`, `drawn_by_user_id`, `x`, `y`, `width`, `height`, `created_at`. The four numbers are fractions of the stored image, so one row fits every file of the photo (D-99). The app sends `id`, so a retry after a lost answer inserts nothing new
+- `id`, `media_id`, `drawn_by_user_id`, `x`, `y`, `width`, `height`, `state` (`open`, `kept`, default `open`, added in S-24), `created_at`. The four numbers are fractions of the stored image, so one row fits every file of the photo (D-99). The app sends `id`, so a retry after a lost answer inserts nothing new
 - `drawn_by_user_id` references `auth.users` with no cascade, so a drawer's regions stay after they leave the event (D-170)
-- `add_blur_region` and `remove_blur_region` change the row and send `blur_region` in one transaction (§1, §5). Removing one deletes the row
-- Endpoints, from S-19: `POST /media/{mediaId}/blur-regions`, `GET /media/{mediaId}/blur-regions` (the caller's own, or every region for the Admin) and `DELETE /blur-regions/{regionId}`
-- Every file the worker writes for the photo applies every row, on every regeneration (root invariant 6)
+- `add_blur_region` and `remove_blur_region` change the row and send `blur_region` in one transaction (§1, §5). Removing one deletes the row. From S-24, `add_blur_region` sets `state = 'kept'` for Admin-drawn regions and `'open'` for Guest-drawn regions, and `keep_blur_region(p_region_id, p_user_id)` sets `state = 'kept'` under event and media share locks so the region leaves the Review Queue while staying active on the photo (D-181)
+- Endpoints: from S-19, `POST /media/{mediaId}/blur-regions`, `GET /media/{mediaId}/blur-regions` (the caller's own, or every region for the Admin, `open` and `kept` alike) and `DELETE /blur-regions/{regionId}`; from S-24, Admin-only `GET /events/{eventId}/review-queue/blur-regions` (paginated `open` regions where `media.processed_at IS NOT NULL AND media.deleted_at IS NULL`) and `POST /blur-regions/{regionId}/keep` (D-181)
+- Every file the worker writes for the photo applies every row, `open` and `kept` alike, on every regeneration (root invariant 6)
 
 ### `photo_flag`
 A Guest's flag asking the Admin to review a published photo (spec §2.5.6, spec §2.5.7, D-179). Migration `supabase/migrations/20261126213004_delete_media_and_photo_flag.sql`, which also adds `flag_photo`.
@@ -250,7 +250,8 @@ A Guest's flag asking the Admin to review a published photo (spec §2.5.6, spec 
 - Unique on `(media_id, flagged_by_user_id)`, so one Guest flags a photo at most once and a repeat never reopens a `kept` flag (D-179)
 - `POST /media/{mediaId}/flags` (no body), for active Guests only (Admin and Photographer get 403 `wrong_role`). Refuses an unknown, unprocessed or deleted photo or a deleted event with 404 `not_found`, and stays allowed while the album is closed or the event is archived. Answers 201 `{ flagged: true }` on first flag and 200 `{ flagged: true }` on repeat (D-179)
 - `flag_photo(p_media_id, p_user_id)` serves that endpoint. It runs as `security invoker`, takes the event row and then the media row `FOR SHARE`, the order `add_blur_region` uses, and inserts with `on conflict do nothing`, so a repeat changes nothing
-- A deleted photo keeps its flags. `media_delete` leaves them, because they hold no image and no face, and the Review Queue leaves out a flag whose photo has `deleted_at` set (D-177)
+- A deleted photo keeps its flags. `media_delete` leaves them, because they hold no image and no face, and the Review Queue leaves out a flag whose photo has `deleted_at` set or `processed_at` null (D-177, D-181)
+- Review Queue endpoints, from S-24 (Admin only, allowed while the album is closed or the event is archived): `GET /events/{eventId}/review-queue/flags` (keyset-paginated, grouping open flags by `media_id` with latest open `flaggedAt` and `flagCount`, requiring `media.processed_at IS NOT NULL AND media.deleted_at IS NULL`) and `POST /media/{mediaId}/flags/keep`, served by `keep_photo_flags(p_media_id, p_user_id)` under event and media share locks to mark every open flag on the photo `kept` idempotently (D-181)
 - RLS on with no policy, and grants the same as `manual_blur_region` (§1, root invariant 14)
 
 ### `consent`
