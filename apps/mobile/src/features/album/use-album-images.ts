@@ -7,6 +7,7 @@ import {
   useQueries,
   useQuery,
   useQueryClient,
+  type QueryClient,
   type UseQueryResult,
   type Query,
   skipToken,
@@ -143,4 +144,18 @@ export function useThumbnailMap(eventId: string, media: readonly Versioned[]): T
     })),
     combine,
   });
+}
+
+// The thumbnail Home already signed for this photo at this version, if any, for the single photo
+// view to show while the full image loads. Its key carries the version too, so it is never a
+// pre-blur file (root invariant 2).
+export function cachedThumbnail(
+  client: QueryClient,
+  eventId: string,
+  item: Versioned,
+): MediaImage | undefined {
+  const cache = client.getQueryData<ImageCache>(['media-images', eventId, 'thumbnail-cache']);
+  const entry = cache?.[item.id];
+  if (!entry || entry.version !== item.variantVersion || entry.image === null) return undefined;
+  return entry.renewAt > Date.now() ? entry.image : undefined;
 }
