@@ -18,6 +18,7 @@ export * from './join-request';
 export * from './media';
 export * from './profile';
 export * from './reference';
+export * from './review-queue';
 export * from './sub-event';
 export * from './verification';
 export * from './venue-qr';
