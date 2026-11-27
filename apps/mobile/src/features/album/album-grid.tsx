@@ -25,8 +25,8 @@ interface AlbumGridProps {
   refreshing: boolean;
   onRefresh: () => void;
   onImageError: (mediaId: string) => void;
-  // A long press on a photo, given only in development builds until S-22's photo view (S-19).
-  onLongPressPhoto?: (mediaId: string) => void;
+  // A tap on a photo opens the single photo view (spec §2.5.6).
+  onPressPhoto: (mediaId: string) => void;
   ListEmptyComponent?: React.ReactElement;
 }
 
@@ -44,7 +44,7 @@ export function AlbumGrid({
   refreshing,
   onRefresh,
   onImageError,
-  onLongPressPhoto,
+  onPressPhoto,
   ListEmptyComponent,
 }: AlbumGridProps) {
   const data = useMemo<GridItem[]>(
@@ -98,12 +98,12 @@ export function AlbumGrid({
             mediaId={item.media.id}
             image={images[item.media.id]}
             onError={onImageError}
-            onLongPress={onLongPressPhoto}
+            onPress={onPressPhoto}
           />
         </View>
       );
     },
-    [images, header, ListEmptyComponent, onImageError, onLongPressPhoto],
+    [images, header, ListEmptyComponent, onImageError, onPressPhoto],
   );
 
   return (
