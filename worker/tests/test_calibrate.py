@@ -157,6 +157,50 @@ def test_the_cluster_value_sits_above_same_photo_bench_pairs():
     assert joined != existing[0].cluster_id
 
 
+# Checks that do not rest on the picked value
+
+
+def test_a_face_labelled_with_the_wrong_person_is_caught_though_the_zero_miss_check_passes():
+    # a/event_1.jpg is a guest the script labelled as a: 0.05 to a's selfies, under a bench face.
+    bench = {"x.jpg": [face(0.1, 0.1, 0.9, vector(0.3, 7))]}
+    result = calibrate.analyse(team([0.81, 0.05]), bench, detection_score=0.5)
+    assert result.match_threshold == 0.05
+    assert result.genuine_misses == []
+    assert {m.face.photo for m in result.genuine_overlaps} == {"a/event_1.jpg"}
+
+
+def test_genuine_scores_above_every_impostor_overlap_nothing():
+    bench = {"x.jpg": [face(0.1, 0.1, 0.9, vector(0.1, 7))]}
+    result = calibrate.analyse(team([0.81, 0.62]), bench, detection_score=0.5)
+    assert result.genuine_overlaps == []
+
+
+def spread_team() -> list[LabelledFace]:
+    """Same-person pairs with a median of 0.55, so a different-person pair can sit above it."""
+    return team([0.6, 0.55, 0.5])
+
+
+def test_the_highest_different_person_pairs_name_their_faces():
+    bench = {"y.jpg": [face(0.1, 0.1, 0.9, vector(0.9, 7)), face(0.5, 0.1, 0.9, vector(0.1, 8))]}
+    result = calibrate.analyse(spread_team(), bench, detection_score=0.5)
+    score, first, second = result.top_different_pairs[0]
+    assert score == pytest.approx(0.9, abs=1e-5)
+    assert first.startswith("a/selfie_") and second == "bench y.jpg face 0"
+    assert len(result.top_different_pairs) == 5
+    assert result.median_same_person_pair == pytest.approx(0.55, abs=1e-5)
+
+
+@pytest.mark.parametrize(("bench_cosine", "passes"), [(0.9, False), (0.1, True)])
+def test_a_different_person_pair_over_the_median_same_person_pair_fails_the_run(
+    monkeypatch, capsys, bench_cosine, passes
+):
+    monkeypatch.setattr(calibrate, "versions", lambda: [])
+    bench = {"y.jpg": [face(0.1, 0.1, 0.9, vector(bench_cosine, 7))]}
+    result = calibrate.analyse(spread_team(), bench, detection_score=0.5)
+    assert calibrate.report(result, [], [], 0) is passes
+    assert ("same person twice" in capsys.readouterr().out) is not passes
+
+
 # Whose face is whose
 
 
@@ -237,6 +281,14 @@ def test_a_solo_photo_with_no_face_labels_nobody():
 def test_a_team_folder_inside_the_repo_is_refused():
     with pytest.raises(CalibrationError):
         calibrate.check_outside_repo(REPO / "worker" / "bench")
+
+
+def test_a_team_folder_that_is_not_a_folder_is_refused_with_its_path(tmp_path):
+    with pytest.raises(CalibrationError, match="not a folder"):
+        calibrate.check_outside_repo(tmp_path / "missing")
+    (tmp_path / "file.jpg").write_bytes(b"x")
+    with pytest.raises(CalibrationError, match="not a folder"):
+        calibrate.check_outside_repo(tmp_path / "file.jpg")
 
 
 def test_a_team_folder_outside_the_repo_is_accepted(tmp_path):
