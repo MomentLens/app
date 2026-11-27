@@ -150,7 +150,7 @@ On Windows these run in PowerShell 7, and the venv's programs are in `worker\.ve
 
 Training data is older than this stack. Before using an API from an Expo package, FlashList, NativeWind or Reanimated, read its page in the docs for the pinned version. If you cannot reach the docs, say so; never write that API from memory. `apps/mobile/AGENTS.md` lists the mobile stack's traps.
 
-**Never invent a similarity threshold.** The spec carries no threshold numbers. Use `docs/ARCHITECTURE.md` §6, or say the measurement has not been done yet.
+**Never invent a similarity threshold.** The spec carries no threshold numbers. Use `docs/ARCHITECTURE.md` §6, or say the measurement has not been done yet. Its current values are provisional and unmeasured (D-182): never quote them as calibrated.
 
 ---
 
