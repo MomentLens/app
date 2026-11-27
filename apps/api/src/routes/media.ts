@@ -7,14 +7,17 @@ export interface MediaHandlers {
   status: RequestHandler;
   preflight: RequestHandler;
   complete: RequestHandler;
+  detail: RequestHandler;
+  remove: RequestHandler;
+  flag: RequestHandler;
   listAlbum: RequestHandler;
   listUploaders: RequestHandler;
   serveImages: RequestHandler;
 }
 
 // requireAuth runs on each route, before the body is read, so an unauthenticated request is
-// answered 401 without parsing anything it sent. Pre-flight reads JSON only, and completion reads no
-// body, so no image byte is ever read here (root invariant 5).
+// answered 401 without parsing anything it sent. Pre-flight reads JSON only, and completion,
+// detail, delete and flag read no body, so no image byte is ever read here (root invariant 5).
 export function mediaRouter(auth: RequestHandler, handlers: MediaHandlers): Router {
   const router = Router();
   router.get('/events/:eventId/media/uploaders', auth, handlers.listUploaders);
@@ -23,5 +26,8 @@ export function mediaRouter(auth: RequestHandler, handlers: MediaHandlers): Rout
   router.post('/events/:eventId/media/status', auth, jsonBody, handlers.status);
   router.post('/events/:eventId/media/preflight', auth, jsonBody, handlers.preflight);
   router.post('/media/:mediaId/complete', auth, handlers.complete);
+  router.post('/media/:mediaId/flags', auth, handlers.flag);
+  router.get('/media/:mediaId', auth, handlers.detail);
+  router.delete('/media/:mediaId', auth, handlers.remove);
   return router;
 }

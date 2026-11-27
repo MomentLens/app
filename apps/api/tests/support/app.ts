@@ -12,6 +12,7 @@ import type { EventStore } from '../../src/services/events';
 import type { InviteStore } from '../../src/services/invites';
 import type { MediaStore } from '../../src/services/media';
 import type { MediaImagesStore } from '../../src/services/media-images';
+import type { PhotoFlagStore } from '../../src/services/photo-flags';
 import type { ReferenceStore } from '../../src/services/references';
 import type { SubEventStore } from '../../src/services/sub-events';
 
@@ -61,6 +62,8 @@ const noMedia: MediaStore = {
   start: () => Promise.reject(new Error('no media store in this test')),
   findUpload: () => Promise.resolve(null),
   complete: () => Promise.reject(new Error('no media store in this test')),
+  detail: () => Promise.resolve({ outcome: 'not_found' }),
+  remove: () => Promise.reject(new Error('no media store in this test')),
 };
 
 const noAlbum: AlbumStore = {
@@ -70,6 +73,10 @@ const noAlbum: AlbumStore = {
 
 const noMediaImages: MediaImagesStore = {
   findForServing: () => Promise.reject(new Error('no media images store in this test')),
+};
+
+const noPhotoFlags: PhotoFlagStore = {
+  flag: () => Promise.reject(new Error('no photo flag store in this test')),
 };
 
 // A blur region store that knows no photos and fails any write.
@@ -126,6 +133,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     media: noMedia,
     album: noAlbum,
     mediaImages: noMediaImages,
+    photoFlags: noPhotoFlags,
     blurRegions: noBlurRegions,
     references: noReferences,
     presignGet: r2.presignGet,
