@@ -62,6 +62,12 @@ export default function AppLayout() {
         name="photo/[eventId]/[mediaId]"
         options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
       />
+      {/* The Review Queue's flagged-photo viewer, as the photo viewer above: a sideways swipe turns
+          the page (S-24). */}
+      <Stack.Screen
+        name="review-flag/[eventId]/[mediaId]"
+        options={{ presentation: 'fullScreenModal', gestureEnabled: false }}
+      />
       {/* No swipe down: a drag on the photo draws a blur region (S-19). */}
       <Stack.Screen
         name="blur/[eventId]/[mediaId]"
