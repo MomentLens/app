@@ -12,14 +12,6 @@ import { StatusCard } from './status-card';
 
 const IOS = Platform.OS === 'ios';
 
-// S-24 enables Review Queue. Until then its row announces that it is disabled (D-142).
-const LATER = {
-  disabled: true,
-  onPress: () => undefined,
-  accessibilityHint: 'Arrives in a later update.',
-  chevron: true,
-} as const;
-
 function HubGlyph({ name }: { name: GlyphName }) {
   return <Glyph name={name} size={22} tone="accentText" />;
 }
@@ -58,7 +50,10 @@ export function ManageHub({ eventId }: { eventId: string }) {
         <Row
           title={byPlatform('Review Queue', 'Review queue')}
           leading={<HubGlyph name={GLYPH.reviewQueue} />}
-          {...LATER}
+          chevron
+          onPress={() =>
+            router.push({ pathname: '/event/[id]/manage/review-queue', params: { id: eventId } })
+          }
         />
       </Section>
       <SectionGap />
