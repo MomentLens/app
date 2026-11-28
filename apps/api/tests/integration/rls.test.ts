@@ -6581,10 +6581,15 @@ if (project === null) {
 
       it('shows face_reference, face and dnp_subject to neither anon nor a signed-in member, and refuses their writes', async () => {
         const f = await fixture();
+        // A pending reference inserted with no message, so the dev server's worker never sets it
+        // rejected before the test reads its status back.
         const id = randomUUID();
-        const added = await references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
-        expect(added).toBe('added');
-        await dropMessages([id]);
+        const [subject] = await owner`
+          insert into public.subject (user_id) values (${f.g.id}) returning id`;
+        const subjectId = subject?.id as string;
+        await owner`
+          insert into public.face_reference (id, subject_id, event_id, photo_key)
+          values (${id}, ${subjectId}, ${f.event.id}, ${key(f.g.id, f.event.id, id)})`;
         // A face on a published photo, as the worker writes one from S-21.
         const subEventId = ((await subEvents.schedule(f.event.id)) ?? [])[0]?.id;
         if (subEventId === undefined) throw new Error('no sub-event found');
@@ -6613,9 +6618,6 @@ if (project === null) {
           values (${mediaId}, 0.1, 0.1, 0.2, 0.2,
             array_fill(0.01::real, array[512])::extensions.vector)`;
         // The guest's own subject file, as face_process writes one from S-21 (arch:dnp_subject).
-        // add_face_reference made the guest's subject row.
-        const [subject] = await owner`select id from public.subject where user_id = ${f.g.id}`;
-        const subjectId = subject?.id as string;
         await owner`
           insert into public.dnp_subject (media_id, subject_id, variant_key, variant_thumb_key)
           values (${mediaId}, ${subjectId}, ${`${mediaId}/${subjectId}_v1.jpg`},
