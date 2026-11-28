@@ -269,7 +269,13 @@ function RegionPreview({
               height: event.nativeEvent.layout.height,
             })
           }>
-          {box.width > 0 && image ? (
+          {/* A null answer means the photo was deleted or unpublished: nothing of it shows, the
+              card's thumbnail included. */}
+          {full.data === null ? (
+            <Text className="mt-24 px-8 text-center font-body text-body text-onPhoto">
+              This photo is no longer in the album.
+            </Text>
+          ) : box.width > 0 && image ? (
             <Outlined
               image={image}
               natural={size ?? FALLBACK}
@@ -281,11 +287,6 @@ function RegionPreview({
           ) : (
             <ActivityIndicator className="mt-24 text-onPhoto" />
           )}
-          {full.data === null ? (
-            <Text className="absolute bottom-6 left-8 right-8 text-center font-body text-body text-onPhoto">
-              This photo is no longer in the album.
-            </Text>
-          ) : null}
         </View>
       </View>
     </Modal>

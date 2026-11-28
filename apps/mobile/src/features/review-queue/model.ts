@@ -76,6 +76,12 @@ export function openCount(data: { pages: { openCount: number }[] } | undefined):
   return data?.pages[0]?.openCount ?? 0;
 }
 
+// A segment's label with its open count, so the Admin sees what waits in the other segment
+// without opening it (D-181). No count before the first page loads or when nothing is open.
+export function segmentLabel(label: string, count: number): string {
+  return count > 0 ? `${label} (${count})` : label;
+}
+
 // --- Dropping an item -----------------------------------------------------------------------
 
 // The pages with every entry `drop` matches taken out, and each page's count lowered by how many
