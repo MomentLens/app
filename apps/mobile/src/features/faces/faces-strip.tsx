@@ -27,12 +27,15 @@ export function FacesStrip({ eventId, mediaId }: { eventId: string; mediaId: str
   };
 
   return (
-    // Horizontal, so a photo with 40 faces scrolls instead of wrapping over the action bar. The 20
-    // inset lines the first chip up with the photo view's "Taken by" line.
+    // Horizontal, so a photo with 40 faces scrolls instead of wrapping over the action bar. The -16
+    // margin undoes the photo view's 16 padding so chips run to the screen edge, and the 20 inset
+    // lines the first chip up with its "Taken by" line. The margin sits here rather than on a
+    // wrapper there, so a photo with no faces leaves no empty child in that panel's gap.
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       accessibilityLabel="Recognized faces"
+      className="-mx-4"
       contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}>
       {faces.map((face) => (
         <FaceChip key={faceKey(face)} face={face} onPress={() => open(filterFor(face))} />
