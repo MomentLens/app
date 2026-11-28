@@ -93,6 +93,7 @@ import {
 } from '../../src/services/media';
 import type { NewUpload, StartResult } from '../../src/services/media';
 import { createPhotoFlagStore } from '../../src/services/photo-flags';
+import { createReviewQueueStore } from '../../src/services/review-queue';
 import {
   acceptConsent,
   createConsentStore,
@@ -7698,6 +7699,438 @@ if (project === null) {
         });
         await expect(media.detail(f.photo, f.out.id)).resolves.toEqual({ outcome: 'not_member' });
         await expect(media.detail(randomUUID(), f.g.id)).resolves.toEqual({ outcome: 'not_found' });
+      });
+    });
+
+    describe('S-24 review queue: manual_blur_region.state, keep_photo_flags, keep_blur_region and list queries (D-181)', () => {
+      const subEvents = createSubEventStore(db);
+      const blurRegions = createBlurRegionStore(db);
+      const photoFlags = createPhotoFlagStore(db);
+      const reviewQueue = createReviewQueueStore(db);
+      const RECT = { x: 0.1, y: 0.2, width: 0.3, height: 0.25 };
+
+      class Rollback extends Error {}
+
+      async function seedPhoto(
+        eventId: string,
+        subEventId: string,
+        uploader: string,
+        role: 'admin' | 'guest' | 'photographer',
+        { processed = true, capturedAt = new Date().toISOString() } = {},
+      ) {
+        const id = randomUUID();
+        const now = new Date().toISOString();
+        const result = await admin.from('media').insert({
+          id,
+          event_id: eventId,
+          sub_event_id: subEventId,
+          uploader_user_id: uploader,
+          uploader_role_at_upload: role,
+          captured_at: capturedAt,
+          content_hash: randomBytes(32).toString('hex'),
+          size_bytes: 100,
+          upload_key: `${id}/upload.jpg`,
+          upload_thumb_key: `${id}/upload_thumb.webp`,
+          uploaded_at: now,
+          public_key: processed ? `${id}/public_v1.jpg` : null,
+          public_thumb_key: processed ? `${id}/public_thumb_v1.webp` : null,
+          variant_version: processed ? 1 : 0,
+          processed_at: processed ? now : null,
+        });
+        expect(result.error).toBeNull();
+        return id;
+      }
+
+      async function fixture() {
+        const [a, g, g2, p, pen, blk, rem, out] = await Promise.all([
+          createNamedUser('S24 Admin'),
+          createNamedUser('S24 Guest'),
+          createNamedUser('S24 Other Guest'),
+          createNamedUser('S24 Photographer'),
+          createNamedUser('S24 Pending'),
+          createNamedUser('S24 Blocked'),
+          createNamedUser('S24 Removed'),
+          createNamedUser('S24 Outsider'),
+        ]);
+        const event = await createdEvent(a.id);
+        await createdEvent(out.id);
+        await addMember(event.id, g.id, 'guest', 'active');
+        await addMember(event.id, g2.id, 'guest', 'active');
+        await addMember(event.id, p.id, 'photographer', 'active');
+        await addMember(event.id, pen.id, 'guest', 'pending');
+        await addMember(event.id, blk.id, 'guest', 'blocked');
+        await addMember(event.id, rem.id, 'guest', 'removed');
+        const subEventId = ((await subEvents.schedule(event.id)) ?? [])[0]?.id;
+        if (subEventId === undefined) throw new Error('no sub-event found');
+        const photo = await seedPhoto(event.id, subEventId, g.id, 'guest');
+        return { a, g, g2, p, pen, blk, rem, out, event, subEventId, photo };
+      }
+
+      async function blurMessagesFor(sql: Sql | postgres.TransactionSql, mediaId: string) {
+        const rows = await sql`
+          select msg_id from pgmq.q_jobs
+          where message->>'job' = 'blur_region' and message->>'media_id' = ${mediaId}
+          union all
+          select msg_id from pgmq.a_jobs
+          where message->>'job' = 'blur_region' and message->>'media_id' = ${mediaId}`;
+        return rows.length;
+      }
+
+      async function rolledBack(body: (tx: postgres.TransactionSql) => Promise<void>) {
+        try {
+          await owner.begin(async (tx) => {
+            await body(tx);
+            throw new Rollback();
+          });
+        } catch (error) {
+          if (!(error instanceof Rollback)) throw error;
+        }
+      }
+
+      it('denies anon/authenticated read/write on photo_flag & manual_blur_region and execute on keep_photo_flags & keep_blur_region, and enforces state check', async () => {
+        const f = await fixture();
+        const regionId = randomUUID();
+        const seededRegion = await admin.from('manual_blur_region').insert({
+          id: regionId,
+          media_id: f.photo,
+          drawn_by_user_id: f.g.id,
+          ...RECT,
+        });
+        expect(seededRegion.error).toBeNull();
+        const seededFlag = await admin
+          .from('photo_flag')
+          .insert({ media_id: f.photo, flagged_by_user_id: f.g.id });
+        expect(seededFlag.error).toBeNull();
+
+        const guest = await signedInClient(f.g);
+        const adminClient = await signedInClient(f.a);
+        for (const client of [anon, guest, adminClient]) {
+          for (const table of ['photo_flag', 'manual_blur_region'] as const) {
+            const read = await client.from(table).select('*');
+            expect(read.error).toBeNull();
+            expect(read.data).toEqual([]);
+          }
+          const insFlag = await client
+            .from('photo_flag')
+            .insert({ media_id: f.photo, flagged_by_user_id: f.g2.id });
+          expect(insFlag.error).not.toBeNull();
+          await client.from('photo_flag').update({ state: 'kept' }).eq('media_id', f.photo);
+          await client.from('photo_flag').delete().eq('media_id', f.photo);
+
+          const insRegion = await client.from('manual_blur_region').insert({
+            id: randomUUID(),
+            media_id: f.photo,
+            drawn_by_user_id: f.g2.id,
+            ...RECT,
+          });
+          expect(insRegion.error).not.toBeNull();
+          await client.from('manual_blur_region').update({ state: 'kept' }).eq('id', regionId);
+          await client.from('manual_blur_region').delete().eq('id', regionId);
+
+          const rpcKeepFlags = await client.rpc('keep_photo_flags', {
+            p_media_id: f.photo,
+            p_user_id: f.a.id,
+          });
+          expect(rpcKeepFlags.error).not.toBeNull();
+          const rpcKeepRegion = await client.rpc('keep_blur_region', {
+            p_region_id: regionId,
+            p_user_id: f.a.id,
+          });
+          expect(rpcKeepRegion.error).not.toBeNull();
+        }
+
+        // manual_blur_region_state_check rejects invalid state and defaults to open.
+        const badState = await admin.from('manual_blur_region').insert({
+          id: randomUUID(),
+          media_id: f.photo,
+          drawn_by_user_id: f.g2.id,
+          state: 'removed',
+          ...RECT,
+        });
+        expect(badState.error?.code).toBe('23514');
+
+        const regionRow = await admin
+          .from('manual_blur_region')
+          .select('state')
+          .eq('id', regionId)
+          .single();
+        expect(regionRow.data).toEqual({ state: 'open' });
+      });
+
+      it('sets open vs kept state in add_blur_region for Guest vs Admin while BlurRegionStore.list returns both', async () => {
+        const f = await fixture();
+        const guestRegionId = randomUUID();
+        const adminRegionId = randomUUID();
+
+        await rolledBack(async (tx) => {
+          await tx`set local role service_role`;
+          try {
+            const [guestRow] = await tx`
+              select * from public.add_blur_region(
+                p_region_id => ${guestRegionId}, p_media_id => ${f.photo}, p_user_id => ${f.g.id},
+                p_x => ${RECT.x}, p_y => ${RECT.y}, p_width => ${RECT.width}, p_height => ${RECT.height}
+              )`;
+            expect(guestRow?.outcome).toBe('added');
+
+            const [adminRow] = await tx`
+              select * from public.add_blur_region(
+                p_region_id => ${adminRegionId}, p_media_id => ${f.photo}, p_user_id => ${f.a.id},
+                p_x => ${RECT.x}, p_y => ${RECT.y}, p_width => ${RECT.width}, p_height => ${RECT.height}
+              )`;
+            expect(adminRow?.outcome).toBe('added');
+
+            const states = await tx<{ id: string; state: string }[]>`
+              select id, state from public.manual_blur_region
+              where id in (${guestRegionId}, ${adminRegionId})`;
+            expect(new Map(states.map((s) => [s.id, s.state]))).toEqual(
+              new Map([
+                [guestRegionId, 'open'],
+                [adminRegionId, 'kept'],
+              ]),
+            );
+          } finally {
+            await tx`reset role`;
+          }
+        });
+
+        // Verify BlurRegionStore.list returns both open and kept regions for Admin.
+        await admin.from('manual_blur_region').insert([
+          {
+            id: guestRegionId,
+            media_id: f.photo,
+            drawn_by_user_id: f.g.id,
+            state: 'open',
+            ...RECT,
+          },
+          {
+            id: adminRegionId,
+            media_id: f.photo,
+            drawn_by_user_id: f.a.id,
+            state: 'kept',
+            ...RECT,
+          },
+        ]);
+        const allForAdmin = await blurRegions.list(f.photo, null);
+        expect(allForAdmin.map((r) => r.id).sort()).toEqual([adminRegionId, guestRegionId].sort());
+      });
+
+      it('enforces keep_photo_flags and keep_blur_region refusal order, idempotency, closed/archived allowance, and re-flagging', async () => {
+        const f = await fixture();
+        const unprocessed = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest', {
+          processed: false,
+        });
+        const deleted = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest');
+        await admin
+          .from('media')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', deleted);
+
+        const openRegionId = randomUUID();
+        const deletedPhotoRegionId = randomUUID();
+        await admin.from('manual_blur_region').insert([
+          { id: openRegionId, media_id: f.photo, drawn_by_user_id: f.g.id, state: 'open', ...RECT },
+          {
+            id: deletedPhotoRegionId,
+            media_id: deleted,
+            drawn_by_user_id: f.g.id,
+            state: 'open',
+            ...RECT,
+          },
+        ]);
+
+        // Two Guests flag the photo.
+        await expect(photoFlags.flag(f.photo, f.g.id)).resolves.toEqual({ outcome: 'flagged' });
+        await expect(photoFlags.flag(f.photo, f.g2.id)).resolves.toEqual({ outcome: 'flagged' });
+
+        // 404 not_found for unknown, unprocessed, deleted photo/region.
+        for (const badMedia of [randomUUID(), unprocessed, deleted]) {
+          await expect(reviewQueue.keepPhotoFlags(badMedia, f.a.id)).resolves.toEqual({
+            outcome: 'not_found',
+          });
+        }
+        for (const badRegion of [randomUUID(), deletedPhotoRegionId]) {
+          await expect(reviewQueue.keepBlurRegion(badRegion, f.a.id)).resolves.toEqual({
+            outcome: 'not_found',
+          });
+        }
+
+        // 403 not_member for non-active members.
+        for (const user of [f.pen, f.blk, f.rem, f.out]) {
+          await expect(reviewQueue.keepPhotoFlags(f.photo, user.id)).resolves.toEqual({
+            outcome: 'not_member',
+          });
+          await expect(reviewQueue.keepBlurRegion(openRegionId, user.id)).resolves.toEqual({
+            outcome: 'not_member',
+          });
+        }
+
+        // 403 wrong_role for active Guest and Photographer.
+        for (const user of [f.g, f.p]) {
+          await expect(reviewQueue.keepPhotoFlags(f.photo, user.id)).resolves.toEqual({
+            outcome: 'wrong_role',
+          });
+          await expect(reviewQueue.keepBlurRegion(openRegionId, user.id)).resolves.toEqual({
+            outcome: 'wrong_role',
+          });
+        }
+
+        // Allowed while album is closed and event is archived.
+        await admin
+          .from('event')
+          .update({ album_open: false, archived_at: new Date().toISOString() })
+          .eq('id', f.event.id);
+
+        await expect(reviewQueue.keepPhotoFlags(f.photo, f.a.id)).resolves.toEqual({
+          outcome: 'kept',
+          keptCount: 2,
+        });
+        await expect(reviewQueue.keepPhotoFlags(f.photo, f.a.id)).resolves.toEqual({
+          outcome: 'kept',
+          keptCount: 0,
+        });
+
+        // Guest whose flag is kept stays blocked from re-flagging; a third Guest brings photo back.
+        await expect(photoFlags.flag(f.photo, f.g.id)).resolves.toEqual({
+          outcome: 'already_flagged',
+        });
+        const g3 = await createNamedUser('S24 Third Guest');
+        await addMember(f.event.id, g3.id, 'guest', 'active');
+        await expect(photoFlags.flag(f.photo, g3.id)).resolves.toEqual({ outcome: 'flagged' });
+        const flagsPage = await reviewQueue.listFlags(f.event.id, { limit: 50 });
+        expect(flagsPage.openCount).toBe(1);
+        expect(flagsPage.rows[0]?.flagCount).toBe(1);
+
+        // keep_blur_region sets state='kept' without enqueuing blur_region, and is idempotent.
+        await expect(reviewQueue.keepBlurRegion(openRegionId, f.a.id)).resolves.toEqual({
+          outcome: 'kept',
+        });
+        await expect(reviewQueue.keepBlurRegion(openRegionId, f.a.id)).resolves.toEqual({
+          outcome: 'kept',
+        });
+        expect(await blurMessagesFor(owner, f.photo)).toBe(0);
+        const keptRegion = await admin
+          .from('manual_blur_region')
+          .select('state')
+          .eq('id', openRegionId)
+          .single();
+        expect(keptRegion.data).toEqual({ state: 'kept' });
+
+        // Soft-deleted event answers not_found.
+        await admin
+          .from('event')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', f.event.id);
+        await expect(reviewQueue.keepPhotoFlags(f.photo, f.a.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+        await expect(reviewQueue.keepBlurRegion(openRegionId, f.a.id)).resolves.toEqual({
+          outcome: 'not_found',
+        });
+      });
+
+      it('lists and keyset-paginates open flags and blur regions against Postgres, excluding unpublished and deleted media', async () => {
+        const f = await fixture();
+        // Departed Guest uploaded and drew regions, then left; their name must still resolve.
+        const departedPhoto = await seedPhoto(f.event.id, f.subEventId, f.rem.id, 'guest');
+        const clearedPhoto = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest');
+        const deletedPhoto = await seedPhoto(f.event.id, f.subEventId, f.g.id, 'guest');
+        await admin.from('media').update({ processed_at: null }).eq('id', clearedPhoto);
+        await admin
+          .from('media')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('id', deletedPhoto);
+
+        // Two photos sharing the exact same millisecond in created_at to test tie-breaking.
+        const sharedTs = '2026-12-10T15:00:00.123456+00:00';
+        const olderTs = '2026-12-10T14:59:59.999999+00:00';
+        await admin.from('photo_flag').insert([
+          { media_id: f.photo, flagged_by_user_id: f.g.id, created_at: olderTs },
+          { media_id: departedPhoto, flagged_by_user_id: f.g.id, created_at: sharedTs },
+          { media_id: departedPhoto, flagged_by_user_id: f.g2.id, created_at: olderTs },
+          { media_id: clearedPhoto, flagged_by_user_id: f.g.id, created_at: sharedTs },
+          { media_id: deletedPhoto, flagged_by_user_id: f.g.id, created_at: sharedTs },
+        ]);
+
+        const flagPage1 = await reviewQueue.listFlags(f.event.id, { limit: 1 });
+        expect(flagPage1.openCount).toBe(2);
+        expect(flagPage1.rows).toHaveLength(2);
+        expect(flagPage1.rows[0]?.media.id).toBe(departedPhoto);
+        expect(flagPage1.rows[0]?.media.uploaderName).toBe('S24 Removed');
+        expect(flagPage1.rows[0]?.flagCount).toBe(2);
+
+        const flagPage2 = await reviewQueue.listFlags(f.event.id, {
+          limit: 1,
+          cursor: {
+            latestFlaggedAt: flagPage1.rows[0]!.latestFlaggedAt,
+            mediaId: flagPage1.rows[0]!.media.id,
+          },
+        });
+        expect(flagPage2.openCount).toBe(2);
+        expect(flagPage2.rows).toHaveLength(1);
+        expect(flagPage2.rows[0]?.media.id).toBe(f.photo);
+
+        // Blur regions: 2 open (same timestamp tie-break), 1 kept, 1 on cleared photo, 1 on deleted photo.
+        const r1 = randomUUID();
+        const r2 = randomUUID();
+        const [firstId, secondId] = r1 > r2 ? [r1, r2] : [r2, r1];
+        await admin.from('manual_blur_region').insert([
+          {
+            id: firstId,
+            media_id: departedPhoto,
+            drawn_by_user_id: f.rem.id,
+            state: 'open',
+            created_at: sharedTs,
+            ...RECT,
+          },
+          {
+            id: secondId,
+            media_id: f.photo,
+            drawn_by_user_id: f.g.id,
+            state: 'open',
+            created_at: sharedTs,
+            ...RECT,
+          },
+          {
+            id: randomUUID(),
+            media_id: f.photo,
+            drawn_by_user_id: f.a.id,
+            state: 'kept',
+            created_at: sharedTs,
+            ...RECT,
+          },
+          {
+            id: randomUUID(),
+            media_id: clearedPhoto,
+            drawn_by_user_id: f.g.id,
+            state: 'open',
+            created_at: sharedTs,
+            ...RECT,
+          },
+          {
+            id: randomUUID(),
+            media_id: deletedPhoto,
+            drawn_by_user_id: f.g.id,
+            state: 'open',
+            created_at: sharedTs,
+            ...RECT,
+          },
+        ]);
+
+        const regPage1 = await reviewQueue.listBlurRegions(f.event.id, { limit: 1 });
+        expect(regPage1.openCount).toBe(2);
+        expect(regPage1.rows).toHaveLength(2);
+        expect(regPage1.rows[0]?.region.id).toBe(firstId);
+
+        const regPage2 = await reviewQueue.listBlurRegions(f.event.id, {
+          limit: 1,
+          cursor: {
+            createdAt: regPage1.rows[0]!.region.createdAt,
+            regionId: regPage1.rows[0]!.region.id,
+          },
+        });
+        expect(regPage2.openCount).toBe(2);
+        expect(regPage2.rows).toHaveLength(1);
+        expect(regPage2.rows[0]?.region.id).toBe(secondId);
       });
     });
   });
