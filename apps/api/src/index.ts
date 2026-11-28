@@ -19,6 +19,7 @@ import { createMediaImagesStore } from './services/media-images';
 import { createPhotoFlagStore } from './services/photo-flags';
 import { createConsentStore, createFindProfile, createSetAvatar } from './services/profiles';
 import { createReferenceStore } from './services/references';
+import { createReviewQueueStore } from './services/review-queue';
 import { createSubEventStore } from './services/sub-events';
 import { createVenueQrStore } from './services/venue-qrs';
 
@@ -82,6 +83,7 @@ createApp({
   mediaImages: createMediaImagesStore(sql),
   photoFlags: createPhotoFlagStore(sql),
   blurRegions: createBlurRegionStore(sql),
+  reviewQueue: createReviewQueueStore(sql),
   references: createReferenceStore(sql),
   presignGet: r2.presignGet,
   presignPut: r2.presignPut,

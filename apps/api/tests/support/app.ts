@@ -15,6 +15,7 @@ import type { MediaStore } from '../../src/services/media';
 import type { MediaImagesStore } from '../../src/services/media-images';
 import type { PhotoFlagStore } from '../../src/services/photo-flags';
 import type { ReferenceStore } from '../../src/services/references';
+import type { ReviewQueueStore } from '../../src/services/review-queue';
 import type { SubEventStore } from '../../src/services/sub-events';
 
 // R2 settings that presign for real, with no network and no account. A URL signed with them
@@ -93,6 +94,13 @@ const noBlurRegions: BlurRegionStore = {
   remove: () => Promise.reject(new Error('no blur region store in this test')),
 };
 
+const noReviewQueue: ReviewQueueStore = {
+  listFlags: () => Promise.reject(new Error('no review queue store in this test')),
+  keepPhotoFlags: () => Promise.reject(new Error('no review queue store in this test')),
+  listBlurRegions: () => Promise.reject(new Error('no review queue store in this test')),
+  keepBlurRegion: () => Promise.reject(new Error('no review queue store in this test')),
+};
+
 // A reference store with no rows that fails any write.
 const noReferences: ReferenceStore = {
   list: () => Promise.resolve([]),
@@ -142,6 +150,7 @@ export function testDeps(overrides: Partial<AppDeps> = {}): AppDeps {
     mediaImages: noMediaImages,
     photoFlags: noPhotoFlags,
     blurRegions: noBlurRegions,
+    reviewQueue: noReviewQueue,
     references: noReferences,
     presignGet: r2.presignGet,
     presignPut: r2.presignPut,

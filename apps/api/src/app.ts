@@ -64,6 +64,12 @@ import {
   removeReferenceController,
 } from './controllers/references';
 import {
+  keepBlurRegionController,
+  keepPhotoFlagsController,
+  listFlaggedPhotosController,
+  listReviewBlurRegionsController,
+} from './controllers/review-queue';
+import {
   addSubEventController,
   deleteSubEventController,
   listSubEventsController,
@@ -83,6 +89,7 @@ import { joinRequestsRouter } from './routes/join-requests';
 import { mediaRouter } from './routes/media';
 import { profilesRouter } from './routes/profiles';
 import { referencesRouter } from './routes/references';
+import { reviewQueueRouter } from './routes/review-queue';
 import { subEventsRouter } from './routes/sub-events';
 import { venueQrsRouter } from './routes/venue-qrs';
 import type { AlbumStore } from './services/album';
@@ -98,6 +105,7 @@ import type { MediaImagesStore } from './services/media-images';
 import type { PhotoFlagStore } from './services/photo-flags';
 import type { ConsentStore, FindProfile, SetAvatar } from './services/profiles';
 import type { ReferenceStore } from './services/references';
+import type { ReviewQueueStore } from './services/review-queue';
 import type { SubEventStore } from './services/sub-events';
 import type { VenueQrStore } from './services/venue-qrs';
 
@@ -123,6 +131,7 @@ export interface AppDeps {
   mediaImages: MediaImagesStore;
   photoFlags: PhotoFlagStore;
   blurRegions: BlurRegionStore;
+  reviewQueue: ReviewQueueStore;
   references: ReferenceStore;
   presignGet: PresignGet;
   presignPut: PresignPut;
@@ -219,6 +228,14 @@ export function createApp(deps: AppDeps): Express {
       add: addBlurRegionController(deps.blurRegions),
       list: listBlurRegionsController(deps.blurRegions),
       remove: removeBlurRegionController(deps.blurRegions),
+    }),
+  );
+  app.use(
+    reviewQueueRouter(auth, {
+      listFlags: listFlaggedPhotosController(deps.events, deps.reviewQueue),
+      keepFlags: keepPhotoFlagsController(deps.reviewQueue),
+      listBlurRegions: listReviewBlurRegionsController(deps.events, deps.reviewQueue),
+      keepBlurRegion: keepBlurRegionController(deps.reviewQueue),
     }),
   );
   const referenceDeps = {
