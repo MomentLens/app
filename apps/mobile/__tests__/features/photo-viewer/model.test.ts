@@ -9,6 +9,8 @@ import {
   maxOffset,
   nextAnchor,
   pagerWindow,
+  photoFilters,
+  photoRouteParams,
   removeFromAlbum,
   shouldLoadMore,
   viewerActions,
@@ -182,5 +184,41 @@ describe('zoom', () => {
     // A point 100pt right of centre, unmoved, at 1x sits at 100. At 2x, offset -100 keeps it there.
     expect(zoomAbout(100, 0, 1, 2)).toBe(-100);
     expect(100 * 2 + zoomAbout(100, 0, 1, 2)).toBe(100);
+  });
+});
+
+// Home opens the photo view with its filters as route params, and the photo route turns them back
+// into the album's filters, so the pager pages through exactly what the grid shows (spec §2.5.6).
+describe('photoRouteParams and photoFilters', () => {
+  const event = 'event-1';
+  const media = 'media-1';
+
+  it('carries a People filter by person to the pager', () => {
+    const filters = { subEventId: 'sub-1', uploaderId: 'up-1', personId: 'person-1' };
+    const params = photoRouteParams(event, media, filters);
+    expect(params).toEqual({
+      eventId: event,
+      mediaId: media,
+      subEventId: 'sub-1',
+      uploaderId: 'up-1',
+      personId: 'person-1',
+    });
+    expect(photoFilters(params)).toEqual(filters);
+  });
+
+  it('carries an Unknown cluster filter to the pager', () => {
+    const params = photoRouteParams(event, media, { clusterId: 'cluster-1' });
+    expect(params).toEqual({ eventId: event, mediaId: media, clusterId: 'cluster-1' });
+    expect(photoFilters(params)).toEqual({ clusterId: 'cluster-1' });
+  });
+
+  it('leaves out a filter that is not set, so the route gets no empty param', () => {
+    const params = photoRouteParams(event, media, {
+      subEventId: undefined,
+      uploaderId: undefined,
+      personId: undefined,
+    });
+    expect(params).toEqual({ eventId: event, mediaId: media });
+    expect(photoFilters(params)).toEqual({});
   });
 });
