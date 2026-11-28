@@ -1272,7 +1272,9 @@ if (project === null) {
         'Family Home',
         'Pearl Continental',
       ]);
-    });
+      // About 60 calls in a row, each a round trip through the SSH tunnel, on a pool other tests
+      // share. Alone it takes about 19 s; beside 15 others it passed 30 s in 3 of 6 runs.
+    }, 60_000);
 
     describe('invite, join_event and join requests', () => {
       const invites = createInviteStore(db);
