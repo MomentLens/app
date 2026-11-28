@@ -5,6 +5,7 @@ import { AppState } from 'react-native';
 import { albumStatusQueryKey } from '@/features/album/use-album-switch';
 import { recheckEvent } from '@/features/event-shell/use-event';
 import { applyMediaChange, refreshMediaStatus } from '@/features/my-media/status';
+import { reviewQueueKey } from '@/features/review-queue/model';
 import { getMediaStatus } from '@/lib/api';
 import { getQueue } from '@/features/upload-queue/queue';
 import { queryClient } from '@/lib/query-client';
@@ -77,6 +78,9 @@ export function useMediaRealtime(eventId: string) {
       void queryClient.invalidateQueries({ queryKey: ['album', eventId] });
       void queryClient.invalidateQueries({ queryKey: ['uploaders', eventId] });
       void queryClient.invalidateQueries({ queryKey: albumStatusQueryKey(eventId), exact: true });
+      // The Admin's Review Queue: a delete, an unpublish or a regenerated version changes it
+      // (D-181). Only queries on screen refetch, so a Guest's phone fetches nothing.
+      void queryClient.invalidateQueries({ queryKey: reviewQueueKey(eventId) });
     }
 
     function scheduleRefetch() {
