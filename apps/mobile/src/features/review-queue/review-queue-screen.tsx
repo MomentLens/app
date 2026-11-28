@@ -36,7 +36,16 @@ import { byPlatform } from '@/lib/copy';
 import { presignedSource } from '@/lib/images';
 
 import { BlurRegionCard } from './blur-region-card';
-import { flaggedPhotos, flagSummary, openCount, reviewBlurRegions, uniqueMedia } from './model';
+import {
+  canReview,
+  flaggedPhotos,
+  flagSummary,
+  openCount,
+  reviewBlurRegions,
+  segmentLabel,
+  uniqueMedia,
+  whenText,
+} from './model';
 import {
   keepRegion,
   removeRegion,
@@ -49,21 +58,16 @@ const IOS = Platform.OS === 'ios';
 
 type Segment = 'flags' | 'regions';
 
-const SEGMENTS = [
-  { value: 'flags' as const, label: 'Flagged' },
-  { value: 'regions' as const, label: byPlatform('Blurred Areas', 'Blurred areas') },
-];
+const FLAGGED = 'Flagged';
+const BLURRED = byPlatform('Blurred Areas', 'Blurred areas');
+const COLUMNS = 2;
 
 const OFFLINE = 'Connect to the internet to review.';
 const FAILED = 'That did not save. Check your connection and try again.';
 
-function plural(count: number, one: string, many: string) {
-  return `${count} ${count === 1 ? one : many}`;
-}
-
-// The Admin's Review Queue (spec §2.5.7, design 25). Two segments, each its own paged list: photos
-// Guests flagged, one row per photo however many flagged it, and blur regions Guests drew, one
-// card per region (D-181). Opening a flagged photo shows it full screen with Keep and Delete. A
+// The Admin's Review Queue (spec §2.5.7, design 25). Two segments, each its own paged list and
+// each labelled with its open count: photos Guests flagged, a 2-column grid with one card per photo
+// however many flagged it, and blur regions Guests drew, one card per region (D-181). Opening a flagged photo shows it full screen with Keep and Delete. A
 // region is kept or removed here. Every action needs a connection and is never queued.
 export function ReviewQueueScreen({ eventId }: { eventId: string }) {
   const router = useRouter();
@@ -94,14 +98,22 @@ export function ReviewQueueScreen({ eventId }: { eventId: string }) {
   const photoThumbs = useThumbnailMap(eventId, photoMedia);
   const areaThumbs = useThumbnailMap(eventId, areaMedia);
 
-  // Back from the viewer, or back to the app: the lists may have moved.
+  // Back from the viewer, or back to the app: the lists may have moved. The first focus is the
+  // mount, which fetches anyway, and `refetch` ignores `enabled`, so it waits for the Admin role.
   const refetchFlags = flags.refetch;
   const refetchRegions = regions.refetch;
+  const admin = canReview(event.data?.event.role);
+  const focusedOnce = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      if (!focusedOnce.current) {
+        focusedOnce.current = true;
+        return;
+      }
+      if (!admin) return;
       void refetchFlags();
       void refetchRegions();
-    }, [refetchFlags, refetchRegions]),
+    }, [admin, refetchFlags, refetchRegions]),
   );
 
   // Only the Admin stays here. Anyone else, or someone who lost the event, goes back to the shell,
@@ -213,7 +225,10 @@ export function ReviewQueueScreen({ eventId }: { eventId: string }) {
       ) : null}
       <View className="px-4 pb-3 pt-2">
         <Segmented
-          options={SEGMENTS}
+          options={[
+            { value: 'flags', label: segmentLabel(FLAGGED, openCount(flags.data)) },
+            { value: 'regions', label: segmentLabel(BLURRED, openCount(regions.data)) },
+          ]}
           value={segment}
           onChange={setSegment}
           accessibilityLabel="Show flagged photos or blurred areas"
@@ -230,24 +245,19 @@ export function ReviewQueueScreen({ eventId }: { eventId: string }) {
           data={photos}
           keyExtractor={(entry) => entry.media.id}
           extraData={photoThumbs.images}
+          numColumns={COLUMNS}
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+          contentContainerStyle={{ paddingTop: 4, paddingBottom: insets.bottom + 24 }}
           onEndReachedThreshold={0.5}
           onEndReached={() => {
             if (flags.hasNextPage && !flags.isFetching && !flags.isError)
               void flags.fetchNextPage();
           }}
-          ListHeaderComponent={
-            photos.length > 0 ? (
-              <CountHeader text={plural(openCount(flags.data), 'Photo', 'Photos')} />
-            ) : null
-          }
           renderItem={({ item, index }) => (
-            <FlaggedRow
+            <FlaggedCard
               entry={item}
               image={photoThumbs.images[item.media.id]}
-              first={index === 0}
-              last={index === photos.length - 1}
+              left={index % COLUMNS === 0}
               onPress={openPhoto}
               onImageError={photoThumbs.retry}
             />
@@ -277,18 +287,13 @@ export function ReviewQueueScreen({ eventId }: { eventId: string }) {
           keyExtractor={(entry) => entry.region.id}
           extraData={{ images: areaThumbs.images, busy, online }}
           contentInsetAdjustmentBehavior="automatic"
-          contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+          contentContainerStyle={{ paddingTop: 4, paddingBottom: insets.bottom + 24 }}
           ItemSeparatorComponent={() => <View className="h-4" />}
           onEndReachedThreshold={0.5}
           onEndReached={() => {
             if (regions.hasNextPage && !regions.isFetching && !regions.isError)
               void regions.fetchNextPage();
           }}
-          ListHeaderComponent={
-            areas.length > 0 ? (
-              <CountHeader text={plural(openCount(regions.data), 'Area', 'Areas')} />
-            ) : null
-          }
           renderItem={({ item }) => (
             <BlurRegionCard
               eventId={eventId}
@@ -320,14 +325,6 @@ export function ReviewQueueScreen({ eventId }: { eventId: string }) {
         />
       )}
     </View>
-  );
-}
-
-function CountHeader({ text }: { text: string }) {
-  return (
-    <Text className="px-9 pb-3 pt-2 font-fieldLabel text-fieldLabel ios:text-textSecondary android:text-accentText">
-      {text}
-    </Text>
   );
 }
 
@@ -414,41 +411,33 @@ function Footer({ query, text }: { query: ListQuery; text: string }) {
   );
 }
 
-// One flagged photo, however many Guests flagged it, naming none of them (D-181). The rows sit in
-// one grouped card, as design 25 draws them.
-const FlaggedRow = memo(function FlaggedRow({
+// One flagged photo in the 2-column grid, however many Guests flagged it, naming none of them
+// (D-181). The thumbnail is center-cropped to square like the album's, so every card in a row has
+// the same height. The count shows on the photo only when more than one Guest flagged it.
+const FlaggedCard = memo(function FlaggedCard({
   entry,
   image,
-  first,
-  last,
+  left,
   onPress,
   onImageError,
 }: {
   entry: FlaggedPhoto;
   image: MediaImage | undefined;
-  first: boolean;
-  last: boolean;
+  left: boolean;
   onPress: (mediaId: string) => void;
   onImageError: (mediaId: string) => void;
 }) {
-  const radius = IOS ? 26 : 20;
-  const shape = {
-    borderTopLeftRadius: first ? radius : 0,
-    borderTopRightRadius: first ? radius : 0,
-    borderBottomLeftRadius: last ? radius : 0,
-    borderBottomRightRadius: last ? radius : 0,
-  };
   const summary = flagSummary(entry.flagCount, entry.latestFlaggedAt);
   const heading = `${entry.subEventName} · ${entry.media.uploaderName}`;
   return (
-    <View className="mx-4 bg-surface" style={shape}>
+    <View className={`pb-4 ${left ? 'pl-4 pr-2' : 'pl-2 pr-4'}`}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${heading}. ${summary}`}
         accessibilityHint="Opens the photo to keep or delete it."
         onPress={() => onPress(entry.media.id)}
-        className="min-h-[88px] flex-row items-center gap-4 px-4 py-3 active:opacity-70">
-        <View className="h-16 w-16 overflow-hidden rounded-xl bg-surfaceMuted">
+        className="overflow-hidden ios:rounded-[20px] android:rounded-[16px] bg-surface active:opacity-70">
+        <View className="aspect-square w-full bg-surfaceMuted">
           {image ? (
             <Image
               source={presignedSource(image)}
@@ -459,21 +448,25 @@ const FlaggedRow = memo(function FlaggedRow({
               style={StyleSheet.absoluteFill}
             />
           ) : null}
+          {entry.flagCount > 1 ? (
+            <View className="absolute right-2 top-2 flex-row items-center gap-1 rounded-full bg-scrim/70 px-2 py-1">
+              <Glyph name={GLYPH.flagged} size={12} tone="onPhoto" />
+              <Text className="font-caption text-caption text-onPhoto">{entry.flagCount}</Text>
+            </View>
+          ) : null}
         </View>
-        <View className="flex-1 gap-1">
-          <Text numberOfLines={1} className="font-body text-body text-textPrimary">
-            <Text className="font-buttonLabel">{entry.subEventName}</Text> ·{' '}
+        <View className="gap-0.5 px-3 pb-3 pt-2">
+          <Text numberOfLines={1} className="font-buttonLabel text-bodySecondary text-textPrimary">
+            {entry.subEventName}
+          </Text>
+          <Text numberOfLines={1} className="font-caption text-caption text-textSecondary">
             {entry.media.uploaderName}
           </Text>
-          <Text
-            numberOfLines={1}
-            className="font-bodySecondary text-bodySecondary text-textSecondary">
-            {summary}
+          <Text numberOfLines={1} className="font-caption text-caption text-textSecondary">
+            {whenText(entry.latestFlaggedAt)}
           </Text>
         </View>
-        <Glyph name={GLYPH.chevron} size={IOS ? 14 : 24} tone={IOS ? 'textMuted' : 'textPrimary'} />
       </Pressable>
-      {!last ? <View className="ml-24 h-px bg-border" /> : null}
     </View>
   );
 });
