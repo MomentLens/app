@@ -21,6 +21,7 @@ import { cachedThumbnail } from '@/features/album/use-album-images';
 import { tabHref } from '@/features/event-shell/tabs';
 import { lostAccess, useEvent } from '@/features/event-shell/use-event';
 import { formatDay, formatTime } from '@/features/events/format';
+import { FacesStrip } from '@/features/faces/faces-strip';
 
 import { blurNotice } from './model';
 import { PhotoPager } from './photo-pager';
@@ -35,9 +36,9 @@ const DELETE_DETAIL = 'It’s removed from the album for everyone and can’t be
 
 // Home's single photo view, for Guests and the Admin (spec §2.5.6, design 18). A full-screen pager
 // over what Home's grid shows under the same filters, with the photo's sub-event, capture time and
-// uploader, the self-visible marker, the blur notice behind ⓘ, and Blur a region, Flag and Delete.
-// A tap shows or hides everything but the marker, which stays (D-26). Download and Share are
-// S-28's and are not drawn yet (D-179). The Recognized Faces strip waits for S-23 (D-176).
+// uploader, the self-visible marker, the blur notice behind ⓘ, the Recognized Faces strip (D-176),
+// and Blur a region, Flag and Delete. A tap shows or hides everything but the marker, which stays
+// (D-26). Download and Share are S-28's and are not drawn yet (D-179).
 export function PhotoViewerScreen({
   eventId,
   mediaId,
@@ -268,6 +269,11 @@ export function PhotoViewerScreen({
               className="font-bodySecondary text-bodySecondary text-onPhoto/70">
               {viewer.isOwnPhoto ? 'Taken by you' : `Taken by ${current.uploaderName}`}
             </Text>
+          </View>
+          {/* Edge to edge, so chips scroll past the screen edge. It draws nothing for a photo
+              with no face to name. */}
+          <View className="-mx-4">
+            <FacesStrip eventId={eventId} mediaId={current.id} />
           </View>
           <ActionBar>
             {actions.blur ? <Action label="Blur" glyph={GLYPH.blur} onPress={openBlur} /> : null}
