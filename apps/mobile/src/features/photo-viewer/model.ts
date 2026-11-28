@@ -56,6 +56,13 @@ export function shouldLoadMore(index: number, length: number): boolean {
 
 const FILTER_KEYS = ['subEventId', 'uploaderId', 'personId', 'clusterId'] as const;
 
+// A type alias, not an interface: Expo Router's typed route for /photo/[eventId]/[mediaId] needs
+// eventId and mediaId as known keys, and photoFilters reads the result through an index
+// signature, which only an alias satisfies.
+export type PhotoRouteParams = { eventId: string; mediaId: string } & Partial<
+  Record<(typeof FILTER_KEYS)[number], string>
+>;
+
 // The photo route's params for a photo Home opened under these filters. Every filter Home applies
 // goes along, People included, so the pager pages through exactly the photos the grid shows
 // (spec §2.5.6). A filter that is not set is left out rather than sent empty.
@@ -63,8 +70,8 @@ export function photoRouteParams(
   eventId: string,
   mediaId: string,
   filters: AlbumFilters,
-): Record<string, string> {
-  const params: Record<string, string> = { eventId, mediaId };
+): PhotoRouteParams {
+  const params: PhotoRouteParams = { eventId, mediaId };
   for (const key of FILTER_KEYS) {
     const value = filters[key];
     if (value) params[key] = value;
