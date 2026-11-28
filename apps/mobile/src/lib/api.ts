@@ -18,6 +18,10 @@ import {
   GetEventResponse,
   GetEventSettingsResponse,
   FlagPhotoResponse,
+  KeepBlurRegionResponse,
+  KeepPhotoFlagsResponse,
+  ListFlaggedPhotosResponse,
+  ListReviewBlurRegionsResponse,
   ForceVerifyAttendeeResponse,
   HealthResponse,
   JoinEventResponse,
@@ -58,6 +62,8 @@ import {
   type ForceVerifyAttendeeRequest,
   type JoinEventRequest,
   type ListAttendeesRequest,
+  type ListFlaggedPhotosRequest,
+  type ListReviewBlurRegionsRequest,
   type MediaImagesRequest,
   type MediaStatusRequest,
   type PreflightUploadRequest,
@@ -1047,6 +1053,64 @@ export async function removeBlurRegion(regionId: string): Promise<ListBlurRegion
     throw await errorFrom('DELETE /blur-regions/{regionId}', response);
   }
   return parseBody('DELETE /blur-regions/{regionId}', response, ListBlurRegionsResponse);
+}
+
+// GET /events/{eventId}/review-queue/flags, for the event's Admin only (D-181). One page of
+// photos with open flags, newest flag first, each collapsed into one entry that names no flagger.
+export async function listFlaggedPhotos(
+  eventId: string,
+  query: ListFlaggedPhotosRequest = {},
+  signal?: AbortSignal,
+): Promise<ListFlaggedPhotosResponse> {
+  const cursor = query.cursor ? `?cursor=${encodeURIComponent(query.cursor)}` : '';
+  const path = `/events/${encodeURIComponent(eventId)}/review-queue/flags${cursor}`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/review-queue/flags', response);
+  }
+  return parseBody('GET /events/{eventId}/review-queue/flags', response, ListFlaggedPhotosResponse);
+}
+
+// POST /media/{mediaId}/flags/keep, for the Admin only. Marks every open flag on the photo kept.
+// A repeat answers 200 with keptCount 0, so a resend is safe (D-181).
+export async function keepPhotoFlags(mediaId: string): Promise<KeepPhotoFlagsResponse> {
+  const path = `/media/${encodeURIComponent(mediaId)}/flags/keep`;
+  const response = await authenticatedRequest(path, { method: 'POST' });
+  if (response.status !== 200) {
+    throw await errorFrom('POST /media/{mediaId}/flags/keep', response);
+  }
+  return parseBody('POST /media/{mediaId}/flags/keep', response, KeepPhotoFlagsResponse);
+}
+
+// GET /events/{eventId}/review-queue/blur-regions, for the Admin only (D-181). One page of open
+// Guest-drawn regions, newest first. The Admin's own regions start kept and never appear.
+export async function listReviewBlurRegions(
+  eventId: string,
+  query: ListReviewBlurRegionsRequest = {},
+  signal?: AbortSignal,
+): Promise<ListReviewBlurRegionsResponse> {
+  const cursor = query.cursor ? `?cursor=${encodeURIComponent(query.cursor)}` : '';
+  const path = `/events/${encodeURIComponent(eventId)}/review-queue/blur-regions${cursor}`;
+  const response = await authenticatedRequest(path, { signal });
+  if (response.status !== 200) {
+    throw await errorFrom('GET /events/{eventId}/review-queue/blur-regions', response);
+  }
+  return parseBody(
+    'GET /events/{eventId}/review-queue/blur-regions',
+    response,
+    ListReviewBlurRegionsResponse,
+  );
+}
+
+// POST /blur-regions/{regionId}/keep, for the Admin only. The region leaves the queue and stays on
+// the photo (root invariant 6). A repeat answers 200, so a resend is safe (D-181).
+export async function keepBlurRegion(regionId: string): Promise<KeepBlurRegionResponse> {
+  const path = `/blur-regions/${encodeURIComponent(regionId)}/keep`;
+  const response = await authenticatedRequest(path, { method: 'POST' });
+  if (response.status !== 200) {
+    throw await errorFrom('POST /blur-regions/{regionId}/keep', response);
+  }
+  return parseBody('POST /blur-regions/{regionId}/keep', response, KeepBlurRegionResponse);
 }
 
 // The caller's own reference photos in one event, any status (D-141). Nobody else's rows ever come
