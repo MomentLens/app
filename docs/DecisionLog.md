@@ -1904,7 +1904,7 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 **Rejected.** Keeping the worker fail-closed until the photos exist, which blocks those slices. D-104 rejected a provisional number because nobody remembers to replace it; here the open issue, the word "provisional" in arch §6 and this entry are the reminder.
 **Cost.** The values come from typical `buffalo_l` scores, not this project's photos. 0.35 may still miss a subject in low light or profile, leaving that face unblurred with nothing to report it, and may blur and name a relative. 0.50 may split one guest into several Unknowns. No demo or real event runs on them. When calibration changes the match threshold, the dev project's photos are wiped again (D-180), because `reprocess` does not run on a threshold change.
 **Reopen if.** S-26's calibration has not run by the first real event; then that event waits for it.
-### D-176: S-23 reads S-21's Do Not Publish flag, and S-22 mounts S-23's strip
+### D-176: S-23 reads S-21's Do Not Publish flag and mounts its strip on S-22's photo view
 **Decision.** Specifies spec §4.11.3, spec §2.5.2 and spec §2.5.6 for S-23. Ukasha ruled on these on 2026-11-25, at S-23's read-back.
 - S-23 depends on S-21. S-21's migration adds `membership.dnp_activated_at`, which `face_process` reads, so S-23's viewer-scoped rule reads the same column from its first build. Nothing in the app sets it before S-29, so S-23's tests set it directly.
 - One SQL function decides whether a `face` row is hidden from a viewer: it is hidden when the matched subject's membership in the photo's event has Do Not Publish on and the subject's `user_id` is not the viewer's. The album's person filter, the People list and the Recognized Faces strip all call it (root invariant 4, D-46).
@@ -1912,11 +1912,11 @@ Ukasha ruled on each entry in this section on 2026-10-03, after the critique of 
 - A removed or blocked member is left off the People list and the strip, as the Uploader list leaves them off (D-148).
 - The strip lists each identity in the photo once, as a name or "Unknown", with no face crop and no face box. A face with neither a match nor an Unknown cluster is left off, so the strip is empty until `docs/ARCHITECTURE.md` §6 records thresholds (D-172).
 - Find My Photos with no accepted reference in the event says "still checking" while one is `pending` and otherwise opens S-20's reference photos screen. S-29 keeps that screen reachable from Event Preferences.
-- S-23 builds the strip and its endpoint and shows the strip on a development-only route. S-22 mounts it on the single photo view and deletes that route.
+- S-23 builds the strip and its endpoint, mounts the strip on S-22's single photo view, and deletes the development-only route it used before S-22 landed. Ukasha first gave the mounting to S-22. S-22 reached `main` on 2026-11-27 without the strip, so Ukasha moved it to S-23 on 2026-11-28.
 - S-23's integration tests write `face` rows as fixtures. Its device check waits until S-21 and S-26 are on `main`, because only `face_process` writes `face` rows for album photos and nothing matches before S-26 (D-104).
 **Why.** The read-back found S-23 reading three things no slice it depended on built: `face` rows for album photos, the event's Do Not Publish flag, and the screen the strip sits on. One predicate keeps the three reads from disagreeing about who is hidden.
 **Rejected.** Hiding every matched face from everyone but its subject until S-29, which S-21's column makes unnecessary. Treating nobody as a Do Not Publish subject until S-29, which shows a subject's name to every viewer if the upgrade is forgotten. Seeding fake `face` rows into the shared dev project for the device check. Making S-23 wait for S-22.
-**Cost.** S-23's stack cannot merge before S-21's, and its device check waits for S-26 as well. A match that changes without a `variant_version` bump reaches the app only when the sheet or the photo is opened again. S-22 mounts one more component.
+**Cost.** S-23's stack cannot merge before S-21's, and its device check waits for S-26 as well. A match that changes without a `variant_version` bump reaches the app only when the sheet or the photo is opened again. S-23 edits S-22's photo viewer to mount the strip, so S-23 depends on S-22.
 
 ## Open items that are not decisions yet
 
