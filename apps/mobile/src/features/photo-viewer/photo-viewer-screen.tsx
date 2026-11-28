@@ -271,10 +271,8 @@ export function PhotoViewerScreen({
             </Text>
           </View>
           {/* Edge to edge, so chips scroll past the screen edge. It draws nothing for a photo
-              with no face to name. */}
-          <View className="-mx-4">
-            <FacesStrip eventId={eventId} mediaId={current.id} />
-          </View>
+              with no face to name, so it adds no gap there either. */}
+          <FacesStrip eventId={eventId} mediaId={current.id} />
           <ActionBar>
             {actions.blur ? <Action label="Blur" glyph={GLYPH.blur} onPress={openBlur} /> : null}
             {actions.flag ? (
