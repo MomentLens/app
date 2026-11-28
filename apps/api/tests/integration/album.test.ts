@@ -528,6 +528,7 @@ describe('GET /events/:eventId/media with personId or clusterId', () => {
       eventId,
       subEventId: subEventId1,
       uploaderUserId: GUEST,
+      uploaderName: 'Guest Uploader',
       uploaderRole: 'guest' as const,
       capturedAt: `2026-10-06T11:${String(59 - i).padStart(2, '0')}:00+00:00`,
       startsAt: '2026-10-06T09:00:00+00:00',
