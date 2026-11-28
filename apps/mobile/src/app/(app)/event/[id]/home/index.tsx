@@ -28,6 +28,7 @@ import { peopleParams, useEventFilters, type PeopleFilter } from '@/features/alb
 import { UploaderSheet } from '@/features/album/uploader-sheet';
 import { useAlbum, useUploaders } from '@/features/album/use-album';
 import { useThumbnailMap } from '@/features/album/use-album-images';
+import { photoRouteParams } from '@/features/photo-viewer/model';
 import { nextStatusChange } from '@/features/schedule/schedule';
 import { useSubEvents } from '@/features/schedule/use-sub-events';
 import { useNow } from '@/hooks/use-now';
@@ -102,20 +103,18 @@ function HomeContent({
     [selectedUploaderId, people, owner],
   );
 
-  // A tap on a tile opens the single photo view over the same filters, so its pager follows the
-  // grid (spec §2.5.6).
+  // A tap on a tile opens the single photo view over the same filters, People included, so its
+  // pager follows the grid (spec §2.5.6).
   const openPhoto = useCallback(
     (mediaId: string) =>
       router.push({
         pathname: '/photo/[eventId]/[mediaId]',
-        params: {
-          eventId,
-          mediaId,
-          ...(selectedSubEventId ? { subEventId: selectedSubEventId } : {}),
-          ...(selectedUploaderId ? { uploaderId: selectedUploaderId } : {}),
-        },
+        params: photoRouteParams(eventId, mediaId, {
+          subEventId: selectedSubEventId ?? undefined,
+          ...identityFilters,
+        }),
       }),
-    [router, eventId, selectedSubEventId, selectedUploaderId],
+    [router, eventId, selectedSubEventId, identityFilters],
   );
 
   // Sheets
