@@ -13,7 +13,8 @@ import { usePhotoFaces } from './use-photo-faces';
 // returns to Home, which shows it as the People pill. The strip sits on a dark photo screen.
 //
 // It draws nothing while loading, on an error, or when the photo has no face to name, which is
-// every photo until arch §6 records thresholds (D-172). S-22 mounts it on the single photo view.
+// every photo until arch §6 records thresholds (D-172). The single photo view mounts it edge to
+// edge between the uploader line and the action bar, as design 18 draws it.
 export function FacesStrip({ eventId, mediaId }: { eventId: string; mediaId: string }) {
   const router = useRouter();
   const facesQuery = usePhotoFaces(eventId, mediaId);
@@ -26,12 +27,13 @@ export function FacesStrip({ eventId, mediaId }: { eventId: string; mediaId: str
   };
 
   return (
-    // Horizontal, so a photo with 40 faces scrolls instead of wrapping over the action bar.
+    // Horizontal, so a photo with 40 faces scrolls instead of wrapping over the action bar. The 20
+    // inset lines the first chip up with the photo view's "Taken by" line.
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
       accessibilityLabel="Recognized faces"
-      contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+      contentContainerStyle={{ paddingHorizontal: 20, gap: 8 }}>
       {faces.map((face) => (
         <FaceChip key={faceKey(face)} face={face} onPress={() => open(filterFor(face))} />
       ))}
