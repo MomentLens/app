@@ -91,6 +91,17 @@ it('refreshes the Manage upload count after a media change', async () => {
   expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ['album-status', 'event'], exact: true });
 });
 
+it('refreshes the Admin’s Review Queue after a media change, so a new version is signed again', async () => {
+  mockListeners.get('media')?.({
+    eventType: 'UPDATE',
+    new: { id: 'media', uploader_user_id: 'B', processed_at: 'now', deleted_at: null },
+  });
+  await renderer.act(async () => {
+    jest.advanceTimersByTime(1000);
+  });
+  expect(mockInvalidate).toHaveBeenCalledWith({ queryKey: ['review-queue', 'event'] });
+});
+
 it('reconciles missed publication, unpublication and deletion on rejoin with a session guard', async () => {
   mockStatus('SUBSCRIBED');
   expect(mockRefresh).not.toHaveBeenCalled();
