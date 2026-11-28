@@ -13,6 +13,7 @@ import {
   flagSummary,
   openCount,
   reviewBlurRegions,
+  segmentLabel,
   uniqueMedia,
   withoutFlaggedPhoto,
   withoutRegion,
@@ -170,5 +171,16 @@ describe('the card text', () => {
     const today = flagSummary(1, '2026-11-20T11:58:00.000Z', now);
     const earlier = flagSummary(1, '2026-11-18T11:58:00.000Z', now);
     expect(earlier.split(' · ').length).toBe(today.split(' · ').length + 1);
+  });
+});
+
+describe('the segment labels', () => {
+  it('carries the open count so the other segment shows what waits in it', () => {
+    expect(segmentLabel('Flagged', 3)).toBe('Flagged (3)');
+    expect(segmentLabel('Blurred areas', 1)).toBe('Blurred areas (1)');
+  });
+
+  it('shows no count before the first page loads or when nothing is open', () => {
+    expect(segmentLabel('Flagged', 0)).toBe('Flagged');
   });
 });
