@@ -1067,10 +1067,12 @@ def new_subject(conn):
     ).fetchone()[0]
 
 
+# Ordered by x, which each test sets apart per face. Faces written in one transaction share
+# created_at, so ordering by it falls to their random ids.
 def face_columns(conn, media_id):
     return conn.execute(
         "select matched_subject_id, similarity, cluster_id, dnp_subject_id from public.face"
-        " where media_id = %s order by created_at, id",
+        " where media_id = %s order by x, id",
         (media_id,),
     ).fetchall()
 
@@ -1091,7 +1093,8 @@ def test_finish_face_process_stores_each_faces_dnp_subject(conn, store, media_id
         )
 
     assert [r[3] for r in face_columns(conn, media_id)] == [subject, None]
-    assert [f.dnp_subject_id for f in store.faces(media_id)] == [subject, None]
+    by_x = sorted(store.faces(media_id), key=lambda f: f.x)
+    assert [f.dnp_subject_id for f in by_x] == [subject, None]
 
 
 def test_finish_blur_region_sets_each_faces_dnp_subject(conn, store, media_id):
