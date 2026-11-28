@@ -6502,8 +6502,9 @@ if (project === null) {
       const key = (userId: string, eventId: string, id: string) =>
         `users/${userId}/events/${eventId}/reference_${id}.jpg`;
 
-      // reference_process messages for these references, queued or archived. The dev server's
-      // worker has no reference_process job until S-20 merges, so it archives one it reads.
+      // reference_process messages for these references, queued or archived. R2 holds no object
+      // for a test's reference, so the dev server's worker archives any message it reads and sets
+      // the reference rejected as failed.
       async function messagesFor(sql: Sql | postgres.TransactionSql, ids: string[]) {
         const rows = await sql`
           select msg_id from pgmq.q_jobs
@@ -6809,22 +6810,36 @@ if (project === null) {
 
       it('runs through the store, and stores one of a 5th and 6th sent at once (D-95)', async () => {
         const f = await fixture();
-        const ids: string[] = [];
-        const addOne = async () => {
-          const id = randomUUID();
-          ids.push(id);
-          return references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
-        };
-        for (let i = 0; i < 4; i += 1) await expect(addOne()).resolves.toBe('added');
-        const both = await Promise.all([addOne(), addOne()]);
-        expect(both.sort()).toEqual(['added', 'too_many']);
-        expect(await messagesFor(owner, ids)).toBe(5);
-        await dropMessages(ids);
-        await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(5);
+        // Four pending references inserted with no message, so the dev server's worker never
+        // rejects one of them while the test counts them.
+        const [subject] = await owner`
+          insert into public.subject (user_id) values (${f.g.id}) returning id`;
+        const kept = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+        for (const id of kept) {
+          await owner`
+            insert into public.face_reference (id, subject_id, event_id, photo_key)
+            values (${id}, ${subject?.id as string}, ${f.event.id}, ${key(f.g.id, f.event.id, id)})`;
+        }
+
+        // The 5th and 6th at once: one is stored and sends one message.
+        const raced = [randomUUID(), randomUUID()];
+        const both = await Promise.all(
+          raced.map((id) => references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id))),
+        );
+        expect([...both].sort()).toEqual(['added', 'too_many']);
+        // The worker may already have set the stored one rejected, so count rows of any status.
+        const stored = await owner`
+          select id from public.face_reference where id = any(${raced}::uuid[])`;
+        expect(stored).toEqual([{ id: raced[both.indexOf('added')] }]);
+        expect(await messagesFor(owner, raced)).toBe(1);
+        // Deleted, so the rest of the test reads only rows no worker writes.
+        await owner`delete from public.face_reference where id = any(${raced}::uuid[])`;
+        await dropMessages(raced);
+        await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(4);
         await expect(references.countKept(f.event.id, f.g2.id)).resolves.toBe(0);
 
         const listed = await references.list(f.event.id, f.g.id);
-        expect(listed).toHaveLength(5);
+        expect(listed).toHaveLength(4);
         expect(listed[0]).toEqual({
           id: expect.any(String),
           status: 'pending',
@@ -6849,8 +6864,9 @@ if (project === null) {
           outcome: 'removed',
           photoKey: key(f.g.id, f.event.id, first),
         });
-        await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(4);
-        expect(await messagesFor(owner, ids)).toBeLessThanOrEqual(5);
+        await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(3);
+        // A delete sends no reference_process message.
+        expect(await messagesFor(owner, kept)).toBe(0);
       });
 
       it('sets an avatar only in the caller’s own folder, and answers false with no profile', async () => {

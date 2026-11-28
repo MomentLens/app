@@ -1090,8 +1090,14 @@ def test_finish_face_process_stores_each_faces_dnp_subject(conn, store, media_id
             [subject_row(media_id, subject, 1)],
         )
 
-    assert [r[3] for r in face_columns(conn, media_id)] == [subject, None]
-    assert [f.dnp_subject_id for f in store.faces(media_id)] == [subject, None]
+    # Both rows share one created_at, so order by x, which differs per face, not by insert order.
+    rows = conn.execute(
+        "select dnp_subject_id from public.face where media_id = %s order by x",
+        (media_id,),
+    ).fetchall()
+    assert [r[0] for r in rows] == [subject, None]
+    faces = sorted(store.faces(media_id), key=lambda f: f.x)
+    assert [f.dnp_subject_id for f in faces] == [subject, None]
 
 
 def test_finish_blur_region_sets_each_faces_dnp_subject(conn, store, media_id):
