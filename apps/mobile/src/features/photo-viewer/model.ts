@@ -6,6 +6,8 @@ import type {
 } from '@momentlens/shared-types';
 import type { InfiniteData } from '@tanstack/react-query';
 
+import type { AlbumFilters } from '@/features/album/use-album';
+
 // The single photo view's decisions with no React in them, so tests reach them directly
 // (spec §2.5.6, D-179).
 
@@ -48,6 +50,36 @@ export const PREFETCH_WITHIN = 5;
 
 export function shouldLoadMore(index: number, length: number): boolean {
   return index >= 0 && index >= length - PREFETCH_WITHIN;
+}
+
+// --- Opening the view -----------------------------------------------------------------------
+
+const FILTER_KEYS = ['subEventId', 'uploaderId', 'personId', 'clusterId'] as const;
+
+// The photo route's params for a photo Home opened under these filters. Every filter Home applies
+// goes along, People included, so the pager pages through exactly the photos the grid shows
+// (spec §2.5.6). A filter that is not set is left out rather than sent empty.
+export function photoRouteParams(
+  eventId: string,
+  mediaId: string,
+  filters: AlbumFilters,
+): Record<string, string> {
+  const params: Record<string, string> = { eventId, mediaId };
+  for (const key of FILTER_KEYS) {
+    const value = filters[key];
+    if (value) params[key] = value;
+  }
+  return params;
+}
+
+// The album filters back out of the photo route's params.
+export function photoFilters(params: Partial<Record<string, string>>): AlbumFilters {
+  const filters: AlbumFilters = {};
+  for (const key of FILTER_KEYS) {
+    const value = params[key];
+    if (value) filters[key] = value;
+  }
+  return filters;
 }
 
 // --- The action bar -------------------------------------------------------------------------
