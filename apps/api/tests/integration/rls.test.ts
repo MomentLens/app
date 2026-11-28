@@ -32,6 +32,8 @@
 // this file. Where CI runs it is Open since D-163, because GitHub's runners cannot reach Postgres
 // on the server.
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import { afterAll, describe, expect, it as jestIt, jest } from '@jest/globals';
 import { REALTIME_SUBSCRIBE_STATES } from '@supabase/supabase-js';
@@ -8131,6 +8133,42 @@ if (project === null) {
         expect(regPage2.openCount).toBe(2);
         expect(regPage2.rows).toHaveLength(1);
         expect(regPage2.rows[0]?.region.id).toBe(secondId);
+      });
+
+      it('sets regions the Admin drew before S-24 to kept and leaves Guest regions open', async () => {
+        const f = await fixture();
+        const adminRegionId = randomUUID();
+        const guestRegionId = randomUUID();
+        const migration = readFileSync(
+          path.resolve(
+            __dirname,
+            '../../../../supabase/migrations/20261128144156_review_queue_admin_regions_kept.sql',
+          ),
+          'utf8',
+        );
+
+        await rolledBack(async (tx) => {
+          // Both rows as S-19 wrote them, before add_blur_region knew the drawer's role.
+          await tx`
+            insert into public.manual_blur_region
+              (id, media_id, drawn_by_user_id, x, y, width, height, state)
+            values
+              (${adminRegionId}, ${f.photo}, ${f.a.id}, 0.1, 0.2, 0.3, 0.25, 'open'),
+              (${guestRegionId}, ${f.photo}, ${f.g.id}, 0.1, 0.2, 0.3, 0.25, 'open')`;
+          const before = await blurMessagesFor(tx, f.photo);
+
+          await tx.unsafe(migration);
+          await tx.unsafe(migration);
+
+          const rows = await tx`
+            select id, state from public.manual_blur_region
+            where id in (${adminRegionId}, ${guestRegionId})`;
+          const state = new Map(rows.map((row) => [row.id as string, row.state as string]));
+          expect(state.get(adminRegionId)).toBe('kept');
+          expect(state.get(guestRegionId)).toBe('open');
+          // The blur stays on the photo, so nothing is regenerated.
+          expect(await blurMessagesFor(tx, f.photo)).toBe(before);
+        });
       });
     });
   });
