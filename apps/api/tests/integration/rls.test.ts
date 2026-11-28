@@ -6503,8 +6503,7 @@ if (project === null) {
       const key = (userId: string, eventId: string, id: string) =>
         `users/${userId}/events/${eventId}/reference_${id}.jpg`;
 
-      // reference_process messages for these references, queued or archived. The dev server's
-      // worker has no reference_process job until S-20 merges, so it archives one it reads.
+      // reference_process messages for these references, queued or archived.
       async function messagesFor(sql: Sql | postgres.TransactionSql, ids: string[]) {
         const rows = await sql`
           select msg_id from pgmq.q_jobs
@@ -6517,12 +6516,30 @@ if (project === null) {
         return rows.length;
       }
 
-      // Deletes their queued messages, so the dev worker does not archive each and report it.
-      async function dropMessages(ids: string[]) {
-        await owner`
-          select pgmq.delete('jobs', msg_id) from pgmq.q_jobs
-          where message->>'job' = 'reference_process'
-            and message->>'face_reference_id' = any(${ids}::text[])`;
+      // Adds a reference through the store and commits it, deleting its reference_process message
+      // in the same transaction. The dev server's worker runs reference_process since S-20, so a
+      // message it read would find no photo in R2: it archives that on the first try, reports it
+      // to Sentry and rejects the reference as `failed` (arch §5), which takes the reference out of
+      // the cap of 5 at a moment no test controls. Deleting the message first means the worker
+      // never sees one, and the rows stay `pending`.
+      async function addUnread(userId: string, eventId: string, id: string): Promise<string> {
+        return owner.begin(async (tx) => {
+          await tx`set local role service_role`;
+          // The store makes only tagged-template calls, which a transaction answers as the pool does.
+          const outcome = await createReferenceStore(tx as unknown as Sql).add(
+            id,
+            eventId,
+            userId,
+            key(userId, eventId, id),
+          );
+          await tx`reset role`;
+          const deleted = await tx`
+            select pgmq.delete('jobs', msg_id) from pgmq.q_jobs
+            where message->>'job' = 'reference_process' and message->>'face_reference_id' = ${id}`;
+          // One message for a new reference, none for a refusal.
+          expect(deleted).toHaveLength(outcome === 'added' ? 1 : 0);
+          return outcome;
+        });
       }
 
       async function referenceIds(eventId: string) {
@@ -6582,9 +6599,7 @@ if (project === null) {
       it('shows face_reference, face and dnp_subject to neither anon nor a signed-in member, and refuses their writes', async () => {
         const f = await fixture();
         const id = randomUUID();
-        const added = await references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
-        expect(added).toBe('added');
-        await dropMessages([id]);
+        await expect(addUnread(f.g.id, f.event.id, id)).resolves.toBe('added');
         // A face on a published photo, as the worker writes one from S-21.
         const subEventId = ((await subEvents.schedule(f.event.id)) ?? [])[0]?.id;
         if (subEventId === undefined) throw new Error('no sub-event found');
@@ -6814,13 +6829,12 @@ if (project === null) {
         const addOne = async () => {
           const id = randomUUID();
           ids.push(id);
-          return references.add(id, f.event.id, f.g.id, key(f.g.id, f.event.id, id));
+          return addUnread(f.g.id, f.event.id, id);
         };
         for (let i = 0; i < 4; i += 1) await expect(addOne()).resolves.toBe('added');
+        // The second waits on the first's event lock until that commits, then counts five.
         const both = await Promise.all([addOne(), addOne()]);
         expect(both.sort()).toEqual(['added', 'too_many']);
-        expect(await messagesFor(owner, ids)).toBe(5);
-        await dropMessages(ids);
         await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(5);
         await expect(references.countKept(f.event.id, f.g2.id)).resolves.toBe(0);
 
@@ -6851,7 +6865,8 @@ if (project === null) {
           photoKey: key(f.g.id, f.event.id, first),
         });
         await expect(references.countKept(f.event.id, f.g.id)).resolves.toBe(4);
-        expect(await messagesFor(owner, ids)).toBeLessThanOrEqual(5);
+        // Nothing reached the worker, and a delete sends nothing until S-25 (D-172).
+        expect(await messagesFor(owner, ids)).toBe(0);
       });
 
       it('sets an avatar only in the caller’s own folder, and answers false with no profile', async () => {
